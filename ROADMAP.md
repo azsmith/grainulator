@@ -13,14 +13,14 @@ This roadmap outlines the development phases for Grainulator, from initial proto
 **Goal**: Establish basic macOS application with working audio I/O and Plaits integration
 
 #### Week 1-2: Project Setup & Basic Audio
-- [ ] **Xcode Project Setup**
+- [x] **Xcode Project Setup** ✅ *Completed 2026-02-01*
   - Create Xcode workspace
   - Configure build settings (Debug/Release)
   - Set up Swift Package Manager dependencies
   - Configure code signing
   - **Deliverable**: Buildable Xcode project
 
-- [ ] **CoreAudio Integration**
+- [x] **CoreAudio Integration** ✅ *Completed 2026-02-01*
   - Implement AudioEngine wrapper class
   - Set up audio callback with proper threading
   - Configure audio device selection
@@ -28,7 +28,7 @@ This roadmap outlines the development phases for Grainulator, from initial proto
   - Test audio throughput (silence → speakers)
   - **Deliverable**: Working audio I/O with <10ms latency
 
-- [ ] **Basic UI Shell**
+- [x] **Basic UI Shell** ✅ *Completed 2026-02-01*
   - Create main window with SwiftUI
   - Implement menu bar
   - Add audio settings panel
