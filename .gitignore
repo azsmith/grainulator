@@ -1,0 +1,38 @@
+# Xcode
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+*.xcworkspace/*
+!*.xcworkspace/contents.xcworkspacedata
+*.xcuserdata
+DerivedData/
+Build/
+
+# Swift
+*.swiftmodule
+*.swiftdoc
+.build/
+
+# macOS
+.DS_Store
+*.dSYM.zip
+*.dSYM
+
+# Dependencies
+Packages/
+.swiftpm/
+
+# User-specific
+*.perspectivev3
+*.mode1v3
+*.mode2v3
+
+# Audio samples (too large for git)
+Resources/Samples/*
+!Resources/Samples/Demo/
+!Resources/Samples/.gitkeep
+
+# Temporary files
+*.tmp
+*.bak
+*~
