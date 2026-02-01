@@ -36,3 +36,4 @@ Resources/Samples/*
 *.tmp
 *.bak
 *~
+temp/

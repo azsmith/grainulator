@@ -6,6 +6,7 @@
 //
 
 #include "AudioEngine.h"
+#include "Plaits/PlaitsVoice.h"
 #include <cstring>
 #include <cmath>
 #include <algorithm>
@@ -44,8 +45,11 @@ bool AudioEngine::initialize(int sampleRate, int bufferSize) {
     std::memset(m_processingBuffer[0], 0, kMaxBufferSize * sizeof(float));
     std::memset(m_processingBuffer[1], 0, kMaxBufferSize * sizeof(float));
 
+    // Initialize Plaits voice
+    m_plaitsVoice = std::make_unique<PlaitsVoice>();
+    m_plaitsVoice->Init(static_cast<float>(sampleRate));
+
     // TODO: Initialize granular engine
-    // TODO: Initialize Plaits
     // TODO: Initialize effects
 
     m_initialized.store(true);
@@ -57,8 +61,10 @@ void AudioEngine::shutdown() {
         return;
     }
 
+    // Cleanup Plaits voice
+    m_plaitsVoice.reset();
+
     // TODO: Cleanup granular engine
-    // TODO: Cleanup Plaits
     // TODO: Cleanup effects
 
     // Free processing buffers
@@ -87,12 +93,16 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
     std::memset(m_processingBuffer[0], 0, numFrames * sizeof(float));
     std::memset(m_processingBuffer[1], 0, numFrames * sizeof(float));
 
+    // Process Plaits voice
+    if (m_plaitsVoice) {
+        m_plaitsVoice->Render(m_processingBuffer[0], m_processingBuffer[1], numFrames);
+    }
+
     // TODO: Process granular voices
-    // TODO: Process Plaits
     // TODO: Apply effects
     // TODO: Mix voices
 
-    // For now, just output silence
+    // Copy to output buffers
     for (int ch = 0; ch < numChannels; ++ch) {
         std::memcpy(outputBuffers[ch], m_processingBuffer[ch % 2], numFrames * sizeof(float));
     }
@@ -103,12 +113,32 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
 }
 
 void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
-    // TODO: Route parameter changes to appropriate voice/effect
-    // For now, just clamp the value
     float clampedValue = std::max(0.0f, std::min(1.0f, value));
-    (void)id; // Unused for now
+
+    // Route Plaits parameters
+    if (m_plaitsVoice) {
+        switch (id) {
+            case ParameterID::PlaitsModel:
+                m_plaitsVoice->SetEngine(static_cast<int>(value * 15.0f)); // 0-15
+                break;
+            case ParameterID::PlaitsHarmonics:
+                m_plaitsVoice->SetHarmonics(clampedValue);
+                break;
+            case ParameterID::PlaitsTimbre:
+                m_plaitsVoice->SetTimbre(clampedValue);
+                break;
+            case ParameterID::PlaitsFrequency:
+                // Convert 0-1 to MIDI note range (24-96 = C1 to C7)
+                m_plaitsVoice->SetNote(24.0f + clampedValue * 72.0f);
+                break;
+            default:
+                // TODO: Handle other parameters
+                break;
+        }
+    }
+
+    // TODO: Route to granular voices, effects, mixer
     (void)voiceIndex;
-    (void)clampedValue;
 }
 
 float AudioEngine::getParameter(ParameterID id, int voiceIndex) const {

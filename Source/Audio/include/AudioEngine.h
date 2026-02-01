@@ -11,8 +11,12 @@
 #include <cstdint>
 #include <atomic>
 #include <array>
+#include <memory>
 
 namespace Grainulator {
+
+// Forward declarations
+class PlaitsVoice;
 
 // Constants
 constexpr int kSampleRate = 48000;
@@ -109,6 +113,9 @@ private:
 
     // Processing buffers
     float* m_processingBuffer[2];
+
+    // Synthesis voices
+    std::unique_ptr<PlaitsVoice> m_plaitsVoice;
 
     // Prevent copying
     AudioEngine(const AudioEngine&) = delete;
