@@ -1,0 +1,67 @@
+// swift-tools-version: 5.9
+// The swift-tools-version declares the minimum version of Swift required to build this package.
+
+import PackageDescription
+
+let package = Package(
+    name: "Grainulator",
+    platforms: [
+        .macOS(.v13)
+    ],
+    products: [
+        .executable(
+            name: "Grainulator",
+            targets: ["Grainulator"]
+        ),
+    ],
+    dependencies: [
+        // Add dependencies here as needed
+    ],
+    targets: [
+        // Main application target
+        .executableTarget(
+            name: "Grainulator",
+            dependencies: ["GrainulatorCore"],
+            path: "Source/Application",
+            exclude: [],
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency")
+            ]
+        ),
+
+        // Core audio and synthesis engine
+        .target(
+            name: "GrainulatorCore",
+            dependencies: [],
+            path: "Source/Audio",
+            exclude: [],
+            sources: ["Core/", "Synthesis/", "Effects/"],
+            publicHeadersPath: "include",
+            cxxSettings: [
+                .headerSearchPath("Core"),
+                .headerSearchPath("Synthesis"),
+                .define("AUDIO_SAMPLE_RATE", to: "48000"),
+                .define("MAX_GRAINS", to: "128"),
+            ],
+            swiftSettings: [
+                .interoperabilityMode(.Cxx)
+            ]
+        ),
+
+        // UI components
+        .target(
+            name: "GrainulatorUI",
+            dependencies: ["GrainulatorCore"],
+            path: "Source/UI",
+            exclude: []
+        ),
+
+        // Tests
+        .testTarget(
+            name: "GrainulatorTests",
+            dependencies: ["GrainulatorCore"],
+            path: "Tests"
+        ),
+    ],
+    cxxLanguageStandard: .cxx17
+)
