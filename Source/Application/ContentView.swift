@@ -141,15 +141,48 @@ struct StatusLabel: View {
 
 struct MultiVoiceView: View {
     var body: some View {
-        Text("Multi-Voice View")
-            .foregroundColor(.white)
+        ScrollView {
+            VStack(spacing: 20) {
+                // Plaits synthesizer
+                PlaitsView()
+
+                // Placeholders for granular voices
+                ForEach(0..<4, id: \.self) { index in
+                    VStack {
+                        Text("GRANULAR VOICE \(index + 1)")
+                            .font(.system(size: 18, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(hex: "#888888"))
+                        Text("Coming Soon")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundColor(Color(hex: "#666666"))
+                    }
+                    .frame(height: 150)
+                    .frame(maxWidth: .infinity)
+                    .background(Color(hex: "#0F0F11"))
+                    .cornerRadius(8)
+                }
+            }
+            .padding(20)
+        }
     }
 }
 
 struct FocusView: View {
     var body: some View {
-        Text("Focus View")
-            .foregroundColor(.white)
+        ScrollView {
+            VStack(spacing: 20) {
+                Text("FOCUS VIEW")
+                    .font(.system(size: 24, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(hex: "#4A9EFF"))
+
+                // Show Plaits in focus view too
+                PlaitsView()
+
+                Text("Full-width voice controls coming soon")
+                    .foregroundColor(Color(hex: "#888888"))
+            }
+            .padding(20)
+        }
     }
 }
 

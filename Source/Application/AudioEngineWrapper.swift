@@ -322,6 +322,7 @@ struct AudioDevice: Identifiable, Hashable {
 // MARK: - Parameter ID Enum (placeholder - will be replaced with C++ bridge)
 
 enum ParameterID {
+    // Granular parameters
     case slide
     case geneSize
     case morph
@@ -332,4 +333,12 @@ enum ParameterID {
     case jitter
     case filterCutoff
     case filterResonance
+
+    // Plaits parameters
+    case plaitsModel
+    case plaitsHarmonics
+    case plaitsTimbre
+    case plaitsMorph
+    case plaitsFrequency
+    case plaitsLevel
 }

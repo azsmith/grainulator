@@ -59,7 +59,9 @@ public:
         PlaitsModel,
         PlaitsHarmonics,
         PlaitsTimbre,
+        PlaitsMorph,
         PlaitsFrequency,
+        PlaitsLevel,
 
         // Effects parameters
         DelayTime,

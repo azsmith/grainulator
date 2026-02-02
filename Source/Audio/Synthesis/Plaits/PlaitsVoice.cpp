@@ -51,26 +51,79 @@ void PlaitsVoice::Init(float sample_rate) {
 }
 
 void PlaitsVoice::Render(float* out, float* aux, size_t size) {
-    // TODO: This is a placeholder implementation
+    // TODO: This is a placeholder implementation using simple synthesis
     // Real implementation will call plaits::Voice::Render()
 
-    // For now, generate a simple test tone (sine wave at note frequency)
-    static float phase = 0.0f;
+    // Calculate frequency from MIDI note
     float frequency = 440.0f * std::pow(2.0f, (note_ - 69.0f) / 12.0f);
     float phase_increment = frequency / sample_rate_;
 
+    // Simple envelope (decay based on trigger state)
+    static float envelope = 0.0f;
+    static float phase = 0.0f;
+    static float prev_trigger = false;
+
+    // Trigger detection
+    bool trigger_edge = trigger_state_ && !prev_trigger;
+    prev_trigger = trigger_state_;
+
     for (size_t i = 0; i < size; ++i) {
-        float sample = std::sin(phase * 2.0f * M_PI) * level_ * 0.3f;
+        // Simple envelope with attack/release
+        if (trigger_edge && i == 0) {
+            envelope = 1.0f;
+        }
+
+        // Decay envelope
+        float decay_rate = 0.9995f; // Adjust for longer/shorter decay
+        envelope *= decay_rate;
+
+        // Generate waveform based on engine selection
+        float sample = 0.0f;
+
+        switch (current_engine_ % 4) {
+            case 0: // Sine wave
+                sample = std::sin(phase * 2.0f * M_PI);
+                break;
+            case 1: // Saw wave
+                sample = (phase * 2.0f) - 1.0f;
+                break;
+            case 2: // Square wave (PWM based on morph)
+                sample = (phase < (0.5f + morph_ * 0.45f)) ? 1.0f : -1.0f;
+                break;
+            case 3: // Triangle wave
+                sample = (phase < 0.5f)
+                    ? (phase * 4.0f - 1.0f)
+                    : (3.0f - phase * 4.0f);
+                break;
+        }
+
+        // Apply harmonics (simple low-pass filtering effect)
+        static float filtered = 0.0f;
+        float cutoff = 0.1f + harmonics_ * 0.89f;
+        filtered += cutoff * (sample - filtered);
+        sample = filtered;
+
+        // Apply timbre (waveshaping)
+        float drive = 1.0f + timbre_ * 4.0f;
+        sample = std::tanh(sample * drive) / std::tanh(drive);
+
+        // Apply envelope and level
+        sample *= envelope * level_ * 0.3f;
 
         if (out) {
             out[i] = sample;
         }
         if (aux) {
-            aux[i] = sample * 0.5f; // Quieter on aux
+            // Aux output with different character (softer)
+            aux[i] = sample * 0.7f;
         }
 
-        phase += phase_increment;
-        if (phase >= 1.0f) {
+        // Advance phase
+        // Apply slight FM based on morph parameter for interest
+        float fm_amount = morph_ * 0.1f;
+        phase += phase_increment * (1.0f + fm_amount * std::sin(phase * 8.0f * M_PI));
+
+        while (phase >= 1.0f) {
             phase -= 1.0f;
         }
     }

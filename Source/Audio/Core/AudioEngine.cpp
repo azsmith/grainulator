@@ -127,9 +127,15 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
             case ParameterID::PlaitsTimbre:
                 m_plaitsVoice->SetTimbre(clampedValue);
                 break;
+            case ParameterID::PlaitsMorph:
+                m_plaitsVoice->SetMorph(clampedValue);
+                break;
             case ParameterID::PlaitsFrequency:
                 // Convert 0-1 to MIDI note range (24-96 = C1 to C7)
                 m_plaitsVoice->SetNote(24.0f + clampedValue * 72.0f);
+                break;
+            case ParameterID::PlaitsLevel:
+                m_plaitsVoice->SetLevel(clampedValue);
                 break;
             default:
                 // TODO: Handle other parameters
