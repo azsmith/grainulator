@@ -10,6 +10,31 @@ import SwiftUI
 import AVFoundation
 import CoreAudio
 
+// C Bridge functions from AudioEngineBridge.h
+@_silgen_name("AudioEngine_Create")
+func AudioEngine_Create() -> OpaquePointer
+
+@_silgen_name("AudioEngine_Destroy")
+func AudioEngine_Destroy(_ handle: OpaquePointer)
+
+@_silgen_name("AudioEngine_Initialize")
+func AudioEngine_Initialize(_ handle: OpaquePointer, _ sampleRate: Int32, _ bufferSize: Int32) -> Bool
+
+@_silgen_name("AudioEngine_Shutdown")
+func AudioEngine_Shutdown(_ handle: OpaquePointer)
+
+@_silgen_name("AudioEngine_Process")
+func AudioEngine_Process(_ handle: OpaquePointer, _ outputBuffers: UnsafeMutablePointer<UnsafeMutablePointer<Float>?>?, _ numChannels: Int32, _ numFrames: Int32)
+
+@_silgen_name("AudioEngine_SetParameter")
+func AudioEngine_SetParameter(_ handle: OpaquePointer, _ parameterId: Int32, _ voiceIndex: Int32, _ value: Float)
+
+@_silgen_name("AudioEngine_GetCPULoad")
+func AudioEngine_GetCPULoad(_ handle: OpaquePointer) -> Float
+
+@_silgen_name("AudioEngine_TriggerPlaits")
+func AudioEngine_TriggerPlaits(_ handle: OpaquePointer, _ state: Bool)
+
 /// Main audio engine wrapper that manages CoreAudio and the synthesis engine
 @MainActor
 class AudioEngineWrapper: ObservableObject {
@@ -32,7 +57,10 @@ class AudioEngineWrapper: ObservableObject {
     private var audioEngine: AVAudioEngine?
     private var inputNode: AVAudioInputNode?
     private var outputNode: AVAudioOutputNode?
-    private var mixerNode: AVAudioMixerNode?
+    private var sourceNode: AVAudioSourceNode?
+
+    // C++ Audio Engine Bridge
+    private var cppEngineHandle: OpaquePointer?
 
     // Audio buffer for processing
     private var audioFormat: AVAudioFormat?
@@ -45,9 +73,17 @@ class AudioEngineWrapper: ObservableObject {
     // MARK: - Initialization
 
     init() {
+        // Create C++ engine
+        cppEngineHandle = AudioEngine_Create()
+
         setupAudio()
         enumerateAudioDevices()
         setupPerformanceMonitoring()
+
+        // Initialize C++ engine
+        if let handle = cppEngineHandle {
+            _ = AudioEngine_Initialize(handle, Int32(sampleRate), Int32(bufferSize))
+        }
     }
 
     // MARK: - Audio Setup
@@ -56,11 +92,7 @@ class AudioEngineWrapper: ObservableObject {
         audioEngine = AVAudioEngine()
         guard let engine = audioEngine else { return }
 
-        inputNode = engine.inputNode
         outputNode = engine.outputNode
-        mixerNode = AVAudioMixerNode()
-
-        engine.attach(mixerNode!)
 
         // Configure audio format (48kHz, stereo, float)
         audioFormat = AVAudioFormat(
@@ -72,13 +104,31 @@ class AudioEngineWrapper: ObservableObject {
 
         guard let format = audioFormat else { return }
 
-        // Connect mixer to output
-        engine.connect(mixerNode!, to: outputNode!, format: format)
+        // Create source node that will generate audio
+        sourceNode = AVAudioSourceNode { [weak self] _, _, frameCount, audioBufferList in
+            guard let self = self else { return noErr }
 
-        // Install tap on mixer for processing
-        mixerNode?.installTap(onBus: 0, bufferSize: AVAudioFrameCount(bufferSize), format: format) { [weak self] buffer, time in
-            self?.processAudio(buffer: buffer, time: time)
+            let ablPointer = UnsafeMutableAudioBufferListPointer(audioBufferList)
+
+            // Create output buffer pointers for C++ engine
+            var outputPtrs = [UnsafeMutablePointer<Float>?](repeating: nil, count: Int(format.channelCount))
+            for i in 0..<Int(format.channelCount) {
+                outputPtrs[i] = ablPointer[i].mData?.assumingMemoryBound(to: Float.self)
+            }
+
+            // Call C++ engine
+            if let handle = self.cppEngineHandle {
+                outputPtrs.withUnsafeMutableBufferPointer { ptrs in
+                    AudioEngine_Process(handle, ptrs.baseAddress, Int32(format.channelCount), Int32(frameCount))
+                }
+            }
+
+            return noErr
         }
+
+        // Attach and connect source node to output
+        engine.attach(sourceNode!)
+        engine.connect(sourceNode!, to: outputNode!, format: format)
 
         // Prepare the engine
         engine.prepare()
@@ -140,28 +190,6 @@ class AudioEngineWrapper: ObservableObject {
         selectedOutputDevice = outputs.first
     }
 
-    // MARK: - Audio Processing
-
-    private func processAudio(buffer: AVAudioPCMBuffer, time: AVAudioTime) {
-        // This is where we'll call into the C++ audio engine
-        // For now, this is a placeholder that passes audio through
-
-        guard let channelData = buffer.floatChannelData else { return }
-        let frameCount = Int(buffer.frameLength)
-        let channelCount = Int(buffer.format.channelCount)
-
-        // TODO: Call C++ audio engine processing here
-        // engine.process(channelData, frameCount, channelCount)
-
-        // For now, just pass through (silence)
-        for channel in 0..<channelCount {
-            let channelBuffer = channelData[channel]
-            for frame in 0..<frameCount {
-                channelBuffer[frame] = 0.0 // Silence for now
-            }
-        }
-    }
-
     // MARK: - Control Methods
 
     func start() {
@@ -216,8 +244,21 @@ class AudioEngineWrapper: ObservableObject {
     // MARK: - Parameter Control
 
     func setParameter(id: ParameterID, value: Float) {
-        // TODO: Send parameter change to C++ engine via command queue
-        print("Set parameter \(id) to \(value)")
+        guard let handle = cppEngineHandle else { return }
+
+        // Map Swift ParameterID to C++ ParameterID (they match by design)
+        let cppParamId: Int32
+        switch id {
+        case .plaitsModel: cppParamId = 10
+        case .plaitsHarmonics: cppParamId = 11
+        case .plaitsTimbre: cppParamId = 12
+        case .plaitsMorph: cppParamId = 13
+        case .plaitsFrequency: cppParamId = 14
+        case .plaitsLevel: cppParamId = 15
+        default: return // Ignore other parameters for now
+        }
+
+        AudioEngine_SetParameter(handle, cppParamId, 0, value)
     }
 
     func loadAudioFile(url: URL, reelIndex: Int) {
@@ -225,11 +266,23 @@ class AudioEngineWrapper: ObservableObject {
         print("Load audio file: \(url.lastPathComponent) into reel \(reelIndex)")
     }
 
+    func triggerPlaits(_ state: Bool) {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_TriggerPlaits(handle, state)
+        print("✓ Trigger Plaits: \(state)")
+    }
+
     // MARK: - Cleanup
 
     deinit {
         performanceTimer?.invalidate()
         audioEngine?.stop()
+
+        // Cleanup C++ engine
+        if let handle = cppEngineHandle {
+            AudioEngine_Shutdown(handle)
+            AudioEngine_Destroy(handle)
+        }
     }
 }
 

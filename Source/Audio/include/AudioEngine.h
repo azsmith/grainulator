@@ -82,6 +82,9 @@ public:
     void setParameter(ParameterID id, int voiceIndex, float value);
     float getParameter(ParameterID id, int voiceIndex) const;
 
+    // Trigger control
+    void triggerPlaits(bool state);
+
     // Buffer management
     bool loadAudioFile(const char* filePath, int reelIndex);
     void clearReel(int reelIndex);

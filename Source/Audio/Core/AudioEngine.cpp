@@ -154,6 +154,12 @@ float AudioEngine::getParameter(ParameterID id, int voiceIndex) const {
     return 0.0f;
 }
 
+void AudioEngine::triggerPlaits(bool state) {
+    if (m_plaitsVoice) {
+        m_plaitsVoice->Trigger(state);
+    }
+}
+
 bool AudioEngine::loadAudioFile(const char* filePath, int reelIndex) {
     // TODO: Implement audio file loading
     (void)filePath;

@@ -120,7 +120,7 @@ struct PlaitsView: View {
             // Trigger button
             Button(action: {
                 isTriggered.toggle()
-                // TODO: Send trigger to audio engine
+                audioEngine.triggerPlaits(isTriggered)
             }) {
                 Text(isTriggered ? "GATE ON" : "TRIGGER")
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
