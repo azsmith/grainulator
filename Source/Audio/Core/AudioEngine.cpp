@@ -119,7 +119,8 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
     if (m_plaitsVoice) {
         switch (id) {
             case ParameterID::PlaitsModel:
-                m_plaitsVoice->SetEngine(static_cast<int>(value * 15.0f)); // 0-15
+                // Map 0-1 to engine range (0-11 for 12 engines)
+                m_plaitsVoice->SetEngine(static_cast<int>(value * 11.0f + 0.5f));
                 break;
             case ParameterID::PlaitsHarmonics:
                 m_plaitsVoice->SetHarmonics(clampedValue);

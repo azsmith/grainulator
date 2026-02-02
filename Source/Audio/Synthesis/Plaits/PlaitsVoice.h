@@ -80,8 +80,18 @@ private:
     float lpg_color_;
     float lpg_decay_;
 
-    // TODO: Add actual Plaits voice instance
-    // plaits::Voice voice_;
+    // Envelope state
+    float envelope_;
+    bool prev_trigger_;
+
+    // Engine instances (using void* to avoid header dependencies)
+    void* va_engine_;      // VirtualAnalogEngine
+    void* fm_engine_;      // FMEngine
+    void* ws_engine_;      // WaveshapingEngine
+    void* grain_engine_;   // GrainEngine
+
+    // Internal render helper
+    void RenderEngine(float* out, float* aux, size_t size);
 
     // Prevent copying
     PlaitsVoice(const PlaitsVoice&) = delete;

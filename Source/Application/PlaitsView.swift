@@ -9,6 +9,7 @@ import SwiftUI
 
 struct PlaitsView: View {
     @EnvironmentObject var audioEngine: AudioEngineWrapper
+    @EnvironmentObject var midiManager: MIDIManager
     @State private var selectedEngine: Int = 0
     @State private var note: Float = 60.0 // Middle C
     @State private var harmonics: Float = 0.5
@@ -18,10 +19,18 @@ struct PlaitsView: View {
     @State private var isTriggered: Bool = false
 
     let engineNames = [
-        "Sine Wave",
-        "Saw Wave",
-        "Square Wave",
-        "Triangle Wave"
+        "Virtual Analog",
+        "VA Bright",
+        "VA Warm",
+        "VA PWM",
+        "FM Classic",
+        "FM Bells",
+        "Waveshaper",
+        "WS Fold",
+        "Granular",
+        "Grain Cloud",
+        "Grain Sparse",
+        "Grain Dense"
     ]
 
     var body: some View {
@@ -34,6 +43,22 @@ struct PlaitsView: View {
 
                 Spacer()
 
+                // MIDI status indicator
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(midiManager.isEnabled ? Color.green : Color.red)
+                        .frame(width: 8, height: 8)
+                    Text("MIDI")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundColor(Color(hex: "#888888"))
+                    if midiManager.lastNote > 0 {
+                        Text(noteToName(Int(midiManager.lastNote)))
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(hex: "#4A9EFF"))
+                    }
+                }
+                .padding(.horizontal, 10)
+
                 // Engine selector
                 Picker("Engine", selection: $selectedEngine) {
                     ForEach(0..<engineNames.count, id: \.self) { index in
@@ -44,7 +69,7 @@ struct PlaitsView: View {
                 .pickerStyle(.menu)
                 .frame(width: 150)
                 .onChange(of: selectedEngine) { newValue in
-                    audioEngine.setParameter(id: .plaitsModel, value: Float(newValue) / 3.0)
+                    audioEngine.setParameter(id: .plaitsModel, value: Float(newValue) / Float(engineNames.count - 1))
                 }
             }
             .padding(.bottom, 10)
