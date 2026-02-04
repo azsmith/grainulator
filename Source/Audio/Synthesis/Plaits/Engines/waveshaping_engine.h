@@ -43,17 +43,20 @@ public:
         note_ = note;
     }
 
-    /// Harmonics controls the waveshaper selection
+    /// HARMONICS: Waveshaper type selection
+    /// Selects different waveshaping functions (soft clip, fold, etc.)
     void SetHarmonics(float harmonics) {
         harmonics_ = std::max(0.0f, std::min(1.0f, harmonics));
     }
 
-    /// Timbre controls the waveshaping amount/drive
+    /// TIMBRE: Wavefolding amount / drive
+    /// Controls how hard the signal is driven into the waveshaper
     void SetTimbre(float timbre) {
         timbre_ = std::max(0.0f, std::min(1.0f, timbre));
     }
 
-    /// Morph blends between triangle and sine source
+    /// MORPH: Asymmetry of the waveshaping
+    /// Controls the balance between positive and negative half-cycles
     void SetMorph(float morph) {
         morph_ = std::max(0.0f, std::min(1.0f, morph));
     }
@@ -64,25 +67,34 @@ public:
 
         oscillator_.SetFrequency(normalized_freq);
 
-        // Select waveshaper based on harmonics
+        // HARMONICS: Select waveshaper type (5 types)
         int shaper = static_cast<int>(harmonics_ * 4.99f);
 
-        // Drive amount from timbre
+        // TIMBRE: Drive amount (wavefolding intensity)
         float drive = 1.0f + timbre_ * 15.0f;
+
+        // MORPH: Asymmetry - how different positive and negative halves are treated
+        float asymmetry = morph_;
 
         // Post-filter to reduce harshness
         float filter_coef = 0.3f + (1.0f - timbre_) * 0.6f;
         lp_filter_.SetCoefficient(filter_coef);
 
         for (size_t i = 0; i < size; ++i) {
-            // Source oscillator (morph between triangle and sine)
+            // Source: sine oscillator
             float tri = oscillator_.Render(1);  // Triangle
-            float sine = std::sin(tri * 1.57079632679f); // Approximate sine from triangle
+            float source = std::sin(tri * 1.57079632679f);
 
-            float source = tri + morph_ * (sine - tri);
+            // Apply drive
+            float driven = source * drive;
 
-            // Apply waveshaping
-            float shaped = ApplyWaveshaper(source * drive, shaper);
+            // Apply asymmetry (morph) - treat positive and negative differently
+            float shaped;
+            if (driven >= 0.0f) {
+                shaped = ApplyWaveshaper(driven * (1.0f + asymmetry * 0.5f), shaper);
+            } else {
+                shaped = ApplyWaveshaper(driven * (1.0f - asymmetry * 0.3f), shaper);
+            }
 
             // Remove DC offset
             shaped = dc_blocker_.Process(shaped);
@@ -98,8 +110,8 @@ public:
             }
 
             if (aux) {
-                // Aux: less processed version
-                aux[i] = source * 0.7f;
+                // Aux: raw waveshaped output (pre-filter)
+                aux[i] = ApplyWaveshaper(source * drive, shaper) * 0.4f;
             }
         }
     }

@@ -12,6 +12,7 @@ struct GrainulatorApp: App {
     @StateObject private var appState = AppState()
     @StateObject private var audioEngine = AudioEngineWrapper()
     @StateObject private var midiManager = MIDIManager()
+    @StateObject private var sequencer = MetropolixSequencer()
 
     var body: some Scene {
         WindowGroup {
@@ -19,8 +20,10 @@ struct GrainulatorApp: App {
                 .environmentObject(appState)
                 .environmentObject(audioEngine)
                 .environmentObject(midiManager)
+                .environmentObject(sequencer)
                 .frame(minWidth: 1200, minHeight: 800)
                 .onAppear {
+                    sequencer.connect(audioEngine: audioEngine)
                     setupMIDICallbacks()
                 }
         }
@@ -35,27 +38,21 @@ struct GrainulatorApp: App {
                 .environmentObject(appState)
                 .environmentObject(audioEngine)
                 .environmentObject(midiManager)
+                .environmentObject(sequencer)
         }
     }
 
     private func setupMIDICallbacks() {
         // Connect MIDI note events to audio engine
+        // Using synchronous calls for low-latency MIDI response
         midiManager.onNoteOn = { [weak audioEngine] note, velocity in
-            Task { @MainActor in
-                // Set the note frequency
-                audioEngine?.setParameter(id: .plaitsFrequency, value: Float(note))
-                // Set level based on velocity
-                audioEngine?.setParameter(id: .plaitsLevel, value: Float(velocity) / 127.0)
-                // Trigger the envelope
-                audioEngine?.triggerPlaits(true)
-            }
+            // Trigger note with pitch and velocity (synchronous for low latency)
+            audioEngine?.noteOn(note: note, velocity: velocity)
         }
 
         midiManager.onNoteOff = { [weak audioEngine] note in
-            Task { @MainActor in
-                // Release the envelope (only if this was the last held note)
-                audioEngine?.triggerPlaits(false)
-            }
+            // Release specific note (for polyphony)
+            audioEngine?.noteOff(note: note)
         }
 
         midiManager.onControlChange = { [weak audioEngine] controller, value in

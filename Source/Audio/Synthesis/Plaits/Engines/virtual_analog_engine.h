@@ -8,6 +8,11 @@
 //  Based on Mutable Instruments code (MIT License)
 //  Copyright 2016 Émilie Gillet
 //
+//  REAL PLAITS PARAMETER MAPPING:
+//  - HARMONICS: Detuning between the two oscillators
+//  - TIMBRE: Variable square - narrow pulse to full square to hardsync formants
+//  - MORPH: Variable saw - triangle to saw with increasingly wide notch
+//
 
 #ifndef VIRTUAL_ANALOG_ENGINE_H
 #define VIRTUAL_ANALOG_ENGINE_H
@@ -19,8 +24,6 @@
 namespace Grainulator {
 namespace Engines {
 
-/// Virtual Analog synthesis engine
-/// Produces classic analog waveforms with variable waveshaping and sync
 class VirtualAnalogEngine {
 public:
     VirtualAnalogEngine()
@@ -29,128 +32,124 @@ public:
         , harmonics_(0.5f)
         , timbre_(0.5f)
         , morph_(0.5f)
+        , phase1_(0.0f)
+        , phase2_(0.0f)
     {
     }
 
     void Init(float sample_rate) {
         sample_rate_ = sample_rate;
-
-        primary_osc_.Init();
-        secondary_osc_.Init();
-        sub_osc_.Init();
-
-        lp_filter_.Init();
-        hp_filter_.Init();
-        dc_blocker_.Init();
-
-        // Initialize parameter smoothing
-        frequency_smoother_.Init();
+        phase1_ = 0.0f;
+        phase2_ = 0.0f;
     }
 
-    /// Set the MIDI note (0-127, fractional allowed for pitch bend)
     void SetNote(float note) {
         note_ = note;
     }
 
-    /// Set harmonics parameter (0-1)
-    /// Controls the balance between sub-oscillator and main oscillator
-    /// and affects filter brightness
+    /// HARMONICS: Detuning between the two oscillators
     void SetHarmonics(float harmonics) {
         harmonics_ = std::max(0.0f, std::min(1.0f, harmonics));
     }
 
-    /// Set timbre parameter (0-1)
-    /// Morphs between different waveform combinations
+    /// TIMBRE: Variable square - pulse width from narrow to wide
     void SetTimbre(float timbre) {
         timbre_ = std::max(0.0f, std::min(1.0f, timbre));
     }
 
-    /// Set morph parameter (0-1)
-    /// Controls PWM for square wave, detune for other waveforms
+    /// MORPH: Variable saw - triangle to saw with notch
     void SetMorph(float morph) {
         morph_ = std::max(0.0f, std::min(1.0f, morph));
     }
 
-    /// Render audio samples
     void Render(float* out, float* aux, size_t size) {
-        // Convert MIDI note to frequency
         float frequency = 440.0f * std::pow(2.0f, (note_ - 69.0f) / 12.0f);
-        float normalized_frequency = frequency / sample_rate_;
+        float base_inc = frequency / sample_rate_;
 
-        // Clamp frequency to prevent aliasing
-        normalized_frequency = std::min(normalized_frequency, 0.45f);
+        // HARMONICS controls detuning between oscillators
+        // 0 = unison, 0.5 = slight detune, 1 = major detuning (up to a 5th)
+        float detune_amount = harmonics_ * harmonics_ * 0.5f;  // Up to 50% = ~7 semitones
+        float inc1 = base_inc;
+        float inc2 = base_inc * (1.0f + detune_amount);
 
-        // Set oscillator frequencies
-        primary_osc_.SetFrequency(normalized_frequency);
+        // TIMBRE controls pulse width for the square component
+        // 0 = very narrow pulse, 0.5 = 50% duty cycle, 1 = wide pulse / sync-like
+        float pulse_width = 0.05f + timbre_ * 0.9f;  // 5% to 95%
 
-        // Secondary oscillator slightly detuned based on morph
-        float detune = 1.0f + (morph_ - 0.5f) * 0.02f;
-        secondary_osc_.SetFrequency(normalized_frequency * detune);
-
-        // Sub oscillator one octave down
-        sub_osc_.SetFrequency(normalized_frequency * 0.5f);
-
-        // Set pulse width for square wave based on morph
-        float pw = 0.5f + (morph_ - 0.5f) * 0.45f;
-        primary_osc_.SetPulseWidth(pw);
-        secondary_osc_.SetPulseWidth(pw);
-
-        // Determine waveform based on timbre
-        // 0.0-0.25: Saw
-        // 0.25-0.5: Saw + Square
-        // 0.5-0.75: Square
-        // 0.75-1.0: Square + Triangle
-        int primary_wave = DetermineWaveform(timbre_);
-        int secondary_wave = DetermineSecondaryWaveform(timbre_);
-        float wave_mix = GetWaveMix(timbre_);
-
-        // Filter coefficient based on harmonics
-        float filter_cutoff = 0.1f + harmonics_ * 0.8f;
-        lp_filter_.SetCoefficient(filter_cutoff);
+        // MORPH controls the variable saw shape
+        // 0 = triangle, 0.5 = saw, 1 = saw with notch (more harmonics)
+        float saw_shape = morph_;
 
         for (size_t i = 0; i < size; ++i) {
-            // Render primary oscillator with morph between waveforms
-            float primary = primary_osc_.RenderMorph(primary_wave, secondary_wave, wave_mix);
+            // Advance phases
+            phase1_ += inc1;
+            phase2_ += inc2;
+            if (phase1_ >= 1.0f) phase1_ -= 1.0f;
+            if (phase2_ >= 1.0f) phase2_ -= 1.0f;
 
-            // Render secondary oscillator for thickness
-            float secondary = secondary_osc_.RenderMorph(primary_wave, secondary_wave, wave_mix);
+            // ===== TIMBRE: Variable Square =====
+            // Pulse wave with variable width
+            float square1 = (phase1_ < pulse_width) ? 1.0f : -1.0f;
+            float square2 = (phase2_ < pulse_width) ? 1.0f : -1.0f;
 
-            // Render sub oscillator (always sine for smoothness)
-            float sub = sub_osc_.Render(0);
+            // Apply PolyBLEP for anti-aliasing
+            square1 -= PolyBlep(phase1_, inc1);
+            square1 += PolyBlep(std::fmod(phase1_ + (1.0f - pulse_width), 1.0f), inc1);
+            square2 -= PolyBlep(phase2_, inc2);
+            square2 += PolyBlep(std::fmod(phase2_ + (1.0f - pulse_width), 1.0f), inc2);
 
-            // Mix based on harmonics parameter
-            // Low harmonics = more sub, high harmonics = more main
-            float sub_level = (1.0f - harmonics_) * 0.7f;
-            float main_level = 0.5f + harmonics_ * 0.3f;
-            float secondary_level = morph_ * 0.3f;
+            // ===== MORPH: Variable Saw =====
+            float saw1, saw2;
+            if (saw_shape < 0.5f) {
+                // Triangle to Saw (0 = triangle, 0.5 = saw)
+                float tri1 = (phase1_ < 0.5f) ? (4.0f * phase1_ - 1.0f) : (3.0f - 4.0f * phase1_);
+                float raw_saw1 = 2.0f * phase1_ - 1.0f;
+                saw1 = tri1 * (1.0f - saw_shape * 2.0f) + raw_saw1 * (saw_shape * 2.0f);
 
-            float sample = primary * main_level +
-                          secondary * secondary_level +
-                          sub * sub_level;
+                float tri2 = (phase2_ < 0.5f) ? (4.0f * phase2_ - 1.0f) : (3.0f - 4.0f * phase2_);
+                float raw_saw2 = 2.0f * phase2_ - 1.0f;
+                saw2 = tri2 * (1.0f - saw_shape * 2.0f) + raw_saw2 * (saw_shape * 2.0f);
+            } else {
+                // Saw with increasing notch (0.5 = saw, 1 = saw with deep notch)
+                float notch_depth = (saw_shape - 0.5f) * 2.0f;
+                float notch_pos = 0.5f;
 
-            // Apply low-pass filter based on harmonics
-            sample = lp_filter_.Process(sample);
+                float raw_saw1 = 2.0f * phase1_ - 1.0f;
+                float notch1 = 1.0f - notch_depth * std::exp(-50.0f * (phase1_ - notch_pos) * (phase1_ - notch_pos));
+                saw1 = raw_saw1 * notch1;
 
-            // DC blocking
-            sample = dc_blocker_.Process(sample);
+                float raw_saw2 = 2.0f * phase2_ - 1.0f;
+                float notch2 = 1.0f - notch_depth * std::exp(-50.0f * (phase2_ - notch_pos) * (phase2_ - notch_pos));
+                saw2 = raw_saw2 * notch2;
+            }
 
-            // Soft limiting
-            sample = SoftLimit(sample);
+            // Apply PolyBLEP to saw
+            saw1 -= PolyBlep(phase1_, inc1);
+            saw2 -= PolyBlep(phase2_, inc2);
 
-            // Output
+            // Mix the two waveform types (square and saw)
+            // Main out: mixed, Aux: hardsync'd version
+            float osc1 = square1 * 0.5f + saw1 * 0.5f;
+            float osc2 = square2 * 0.5f + saw2 * 0.5f;
+
+            // Combine two oscillators
+            float sample = (osc1 + osc2) * 0.5f;
+
+            // Soft limit
+            sample = std::tanh(sample * 1.2f);
+
             if (out) {
                 out[i] = sample;
             }
 
-            // Aux output: high-passed version for variation
+            // AUX: Sum of hardsync'd waveforms (more aggressive)
             if (aux) {
-                float hp_sample = sample - hp_filter_.Process(sample);
-                aux[i] = hp_sample;
+                float sync_sample = square1 * square2 * 0.5f + saw1 * saw2 * 0.5f;
+                aux[i] = std::tanh(sync_sample);
             }
         }
     }
 
-    /// Get the engine type/name
     static const char* GetName() {
         return "Virtual Analog";
     }
@@ -162,50 +161,18 @@ private:
     float timbre_;
     float morph_;
 
-    DSP::PolyBlepOscillator primary_osc_;
-    DSP::PolyBlepOscillator secondary_osc_;
-    DSP::PolyBlepOscillator sub_osc_;
+    float phase1_;
+    float phase2_;
 
-    DSP::OnePole lp_filter_;
-    DSP::OnePole hp_filter_;
-    DSP::DCBlocker dc_blocker_;
-    DSP::OnePole frequency_smoother_;
-
-    int DetermineWaveform(float timbre) {
-        if (timbre < 0.33f) {
-            return 2; // Saw
-        } else if (timbre < 0.66f) {
-            return 3; // Square
-        } else {
-            return 1; // Triangle
+    float PolyBlep(float t, float dt) {
+        if (t < dt) {
+            t /= dt;
+            return t + t - t * t - 1.0f;
+        } else if (t > 1.0f - dt) {
+            t = (t - 1.0f) / dt;
+            return t * t + t + t + 1.0f;
         }
-    }
-
-    int DetermineSecondaryWaveform(float timbre) {
-        if (timbre < 0.33f) {
-            return 3; // Saw -> Square transition
-        } else if (timbre < 0.66f) {
-            return 1; // Square -> Triangle transition
-        } else {
-            return 0; // Triangle -> Sine transition
-        }
-    }
-
-    float GetWaveMix(float timbre) {
-        // Get fractional position within each waveform zone
-        float zone = timbre * 3.0f;
-        return zone - std::floor(zone);
-    }
-
-    float SoftLimit(float x) {
-        // Soft clipping using tanh
-        const float threshold = 0.7f;
-        if (x > threshold) {
-            return threshold + (1.0f - threshold) * std::tanh((x - threshold) / (1.0f - threshold));
-        } else if (x < -threshold) {
-            return -threshold + (threshold - 1.0f) * std::tanh((-x - threshold) / (1.0f - threshold));
-        }
-        return x;
+        return 0.0f;
     }
 };
 

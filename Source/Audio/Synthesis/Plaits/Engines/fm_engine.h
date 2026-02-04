@@ -43,20 +43,20 @@ public:
         note_ = note;
     }
 
-    /// Set harmonics parameter (0-1)
-    /// Controls the frequency ratio between carrier and modulator
+    /// HARMONICS: Modulator/carrier frequency ratio
+    /// Selects common FM ratios (0.5, 1, 2, 3, 4, 5, 6, 7, 8)
     void SetHarmonics(float harmonics) {
         harmonics_ = std::max(0.0f, std::min(1.0f, harmonics));
     }
 
-    /// Set timbre parameter (0-1)
-    /// Controls the modulation index (FM depth)
+    /// TIMBRE: FM modulation index (depth)
+    /// Low = subtle harmonics, High = rich/harsh timbres
     void SetTimbre(float timbre) {
         timbre_ = std::max(0.0f, std::min(1.0f, timbre));
     }
 
-    /// Set morph parameter (0-1)
-    /// Controls feedback amount for more complex timbres
+    /// MORPH: Feedback amount
+    /// Adds feedback to modulator for more complex, noisy timbres
     void SetMorph(float morph) {
         morph_ = std::max(0.0f, std::min(1.0f, morph));
     }

@@ -18,20 +18,60 @@ struct PlaitsView: View {
     @State private var level: Float = 0.8
     @State private var isTriggered: Bool = false
 
+    // LPG parameters
+    @State private var lpgColor: Float = 0.5
+    @State private var lpgAttack: Float = 0.0
+    @State private var lpgDecay: Float = 0.5
+    @State private var lpgBypass: Bool = false
+
+    // Real Plaits engine names (16 models)
+    // Bank 1 (0-7): Pitched/sustained synth voices
+    // Bank 2 (8-15): Noise and percussion models
     let engineNames = [
-        "Virtual Analog",
-        "VA Bright",
-        "VA Warm",
-        "VA PWM",
-        "FM Classic",
-        "FM Bells",
-        "Waveshaper",
-        "WS Fold",
-        "Granular",
-        "Grain Cloud",
-        "Grain Sparse",
-        "Grain Dense"
+        "Virtual Analog",    // 0: Two detuned oscillators
+        "Waveshaper",        // 1: Triangle through waveshaper/folder
+        "Two-Op FM",         // 2: Phase modulation + feedback
+        "Granular Formant",  // 3: VOSIM/Pulsar synthesis
+        "Harmonic",          // 4: Additive with 24 harmonics
+        "Wavetable",         // 5: 4 banks of 8x8 wavetables
+        "Chords",            // 6: Four-note chord generator
+        "Speech",            // 7: Formant/SAM/LPC speech
+        "Granular Cloud",    // 8: Swarm of enveloped grains
+        "Filtered Noise",    // 9: Clocked noise + resonant filter
+        "Particle Noise",    // 10: Dust through filters
+        "String",            // 11: Karplus-Strong (TRIGGERED)
+        "Modal",             // 12: Modal resonator (TRIGGERED)
+        "Bass Drum",         // 13: Analog kick (TRIGGERED)
+        "Snare Drum",        // 14: Analog snare (TRIGGERED)
+        "Hi-Hat"             // 15: Analog hihat (TRIGGERED)
     ]
+
+    // Dynamic parameter labels per engine
+    // Format: [HARMONICS, TIMBRE, MORPH]
+    // Based on actual parameter usage in each engine
+    let parameterLabels: [[String]] = [
+        ["DETUNE", "PULSE W", "SAW"],        // 0: Virtual Analog
+        ["SHAPE", "FOLD", "ASYM"],           // 1: Waveshaper
+        ["RATIO", "MOD IDX", "FEEDBK"],      // 2: Two-Op FM
+        ["FORMANT", "FREQ", "WIDTH"],        // 3: Granular Formant
+        ["BUMPS", "BRIGHT", "WIDTH"],        // 4: Harmonic
+        ["BANK", "ROW", "COLUMN"],           // 5: Wavetable
+        ["CHORD", "INVERT", "WAVE"],         // 6: Chords
+        ["TYPE", "SPECIES", "PHONEME"],      // 7: Speech
+        ["PITCH R", "DENSITY", "DURATN"],    // 8: Granular Cloud
+        ["FILTER", "CLOCK", "RESON"],        // 9: Filtered Noise
+        ["FREQ R", "DENSITY", "FILTER"],     // 10: Particle Noise
+        ["INHARM", "BRIGHT", "DECAY"],       // 11: String - morph=decay
+        ["INHARM", "BRIGHT", "DECAY"],       // 12: Modal - morph=decay
+        ["PUNCH", "DECAY", "TONE"],          // 13: Bass Drum - timbre=decay, morph=tone
+        ["SNARES", "TONE", "DECAY"],         // 14: Snare Drum - morph=decay
+        ["METAL", "DECAY", "DECAY+"],        // 15: Hi-Hat - timbre=main decay (open/closed), morph=fine tune
+    ]
+
+    // Whether engine uses LPG (engines 0-10) or has internal envelope (11-15)
+    var usesLPG: Bool {
+        selectedEngine < 11
+    }
 
     var body: some View {
         VStack(spacing: 20) {
@@ -60,29 +100,47 @@ struct PlaitsView: View {
                 .padding(.horizontal, 10)
 
                 // Engine selector
-                Picker("Engine", selection: $selectedEngine) {
+                Menu {
                     ForEach(0..<engineNames.count, id: \.self) { index in
-                        Text(engineNames[index])
-                            .tag(index)
+                        Button(action: {
+                            selectedEngine = index
+                            audioEngine.setParameter(id: .plaitsModel, value: Float(index) / Float(engineNames.count - 1))
+                        }) {
+                            HStack {
+                                Text(engineNames[index])
+                                if selectedEngine == index {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
                     }
-                }
-                .pickerStyle(.menu)
-                .frame(width: 150)
-                .onChange(of: selectedEngine) { newValue in
-                    audioEngine.setParameter(id: .plaitsModel, value: Float(newValue) / Float(engineNames.count - 1))
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(engineNames[selectedEngine])
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundColor(.white)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 10))
+                            .foregroundColor(Color(hex: "#888888"))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color(hex: "#333333"))
+                    .cornerRadius(6)
                 }
             }
             .padding(.bottom, 10)
 
             // Parameter controls
-            HStack(spacing: 30) {
+            HStack(spacing: 24) {
                 // Note control
-                VStack {
+                VStack(spacing: 8) {
                     Text("NOTE")
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundColor(Color(hex: "#888888"))
 
                     Slider(value: $note, in: 24...96, step: 1)
+                        .tint(Color(hex: "#4A9EFF"))
                         .onChange(of: note) { newValue in
                             audioEngine.setParameter(id: .plaitsFrequency, value: (newValue - 24.0) / 72.0)
                         }
@@ -91,11 +149,11 @@ struct PlaitsView: View {
                         .font(.system(size: 14, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(hex: "#4A9EFF"))
                 }
-                .frame(width: 120)
+                .frame(width: 140)
 
-                // Harmonics
-                ParameterKnob(
-                    label: "HARMONICS",
+                // Harmonics (dynamic label)
+                ParameterSlider(
+                    label: parameterLabels[selectedEngine][0],
                     value: $harmonics,
                     color: Color(hex: "#4A9EFF")
                 )
@@ -103,9 +161,9 @@ struct PlaitsView: View {
                     audioEngine.setParameter(id: .plaitsHarmonics, value: newValue)
                 }
 
-                // Timbre
-                ParameterKnob(
-                    label: "TIMBRE",
+                // Timbre (dynamic label)
+                ParameterSlider(
+                    label: parameterLabels[selectedEngine][1],
                     value: $timbre,
                     color: Color(hex: "#FF6B6B")
                 )
@@ -113,9 +171,9 @@ struct PlaitsView: View {
                     audioEngine.setParameter(id: .plaitsTimbre, value: newValue)
                 }
 
-                // Morph
-                ParameterKnob(
-                    label: "MORPH",
+                // Morph (dynamic label)
+                ParameterSlider(
+                    label: parameterLabels[selectedEngine][2],
                     value: $morph,
                     color: Color(hex: "#4ECDC4")
                 )
@@ -124,37 +182,84 @@ struct PlaitsView: View {
                 }
 
                 // Level
-                VStack {
-                    Text("LEVEL")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundColor(Color(hex: "#888888"))
+                ParameterSlider(
+                    label: "LEVEL",
+                    value: $level,
+                    color: Color(hex: "#FFD93D")
+                )
+                .onChange(of: level) { newValue in
+                    audioEngine.setParameter(id: .plaitsLevel, value: newValue)
+                }
 
-                    VStack {
-                        Slider(value: $level, in: 0...1)
-                            .rotationEffect(.degrees(-90))
-                            .frame(width: 40, height: 100)
+                // Divider
+                Rectangle()
+                    .fill(Color(hex: "#333333"))
+                    .frame(width: 1, height: 100)
+
+                // LPG section (dimmed for triggered engines 11-15)
+                Group {
+                    // LPG Attack
+                    ParameterSlider(
+                        label: "ATTACK",
+                        value: $lpgAttack,
+                        color: usesLPG ? Color(hex: "#9B59B6") : Color(hex: "#444444")
+                    )
+                    .onChange(of: lpgAttack) { newValue in
+                        audioEngine.setParameter(id: .plaitsLPGAttack, value: newValue)
                     }
-                    .frame(height: 100)
 
-                    Text(String(format: "%.0f%%", level * 100))
-                        .font(.system(size: 12, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white)
+                    // LPG Decay
+                    ParameterSlider(
+                        label: usesLPG ? "DECAY" : "(n/a)",
+                        value: $lpgDecay,
+                        color: usesLPG ? Color(hex: "#9B59B6") : Color(hex: "#444444")
+                    )
+                    .onChange(of: lpgDecay) { newValue in
+                        audioEngine.setParameter(id: .plaitsLPGDecay, value: newValue)
+                    }
+
+                    // LPG Color
+                    ParameterSlider(
+                        label: "LPG",
+                        value: $lpgColor,
+                        color: usesLPG ? Color(hex: "#E67E22") : Color(hex: "#444444")
+                    )
+                    .onChange(of: lpgColor) { newValue in
+                        audioEngine.setParameter(id: .plaitsLPGColor, value: newValue)
+                    }
+                }
+                .opacity(usesLPG ? 1.0 : 0.5)
+            }
+
+            // Bottom controls row
+            HStack(spacing: 20) {
+                // Trigger button
+                Button(action: {
+                    isTriggered.toggle()
+                    audioEngine.triggerPlaits(isTriggered)
+                }) {
+                    Text(isTriggered ? "GATE ON" : "TRIGGER")
+                        .font(.system(size: 14, weight: .bold, design: .monospaced))
+                        .foregroundColor(isTriggered ? Color(hex: "#1A1A1D") : .white)
+                        .frame(width: 120, height: 40)
+                        .background(isTriggered ? Color(hex: "#4A9EFF") : Color(hex: "#333333"))
+                        .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                // LPG Bypass toggle (for testing)
+                Toggle(isOn: $lpgBypass) {
+                    Text("LPG BYPASS")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundColor(lpgBypass ? Color(hex: "#FF6B6B") : Color(hex: "#888888"))
+                }
+                .toggleStyle(SwitchToggleStyle(tint: Color(hex: "#FF6B6B")))
+                .onChange(of: lpgBypass) { newValue in
+                    audioEngine.setParameter(id: .plaitsLPGBypass, value: newValue ? 1.0 : 0.0)
                 }
             }
-
-            // Trigger button
-            Button(action: {
-                isTriggered.toggle()
-                audioEngine.triggerPlaits(isTriggered)
-            }) {
-                Text(isTriggered ? "GATE ON" : "TRIGGER")
-                    .font(.system(size: 14, weight: .bold, design: .monospaced))
-                    .foregroundColor(isTriggered ? Color(hex: "#1A1A1D") : .white)
-                    .frame(width: 120, height: 40)
-                    .background(isTriggered ? Color(hex: "#4A9EFF") : Color(hex: "#333333"))
-                    .cornerRadius(4)
-            }
-            .buttonStyle(.plain)
         }
         .padding(20)
         .background(Color(hex: "#0F0F11"))
@@ -169,43 +274,61 @@ struct PlaitsView: View {
     }
 }
 
-// Simple knob component
-struct ParameterKnob: View {
+// Vertical slider parameter control - more trackpad friendly
+struct ParameterSlider: View {
     let label: String
     @Binding var value: Float
     let color: Color
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             Text(label)
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .foregroundColor(Color(hex: "#888888"))
 
-            ZStack {
-                // Background circle
-                Circle()
-                    .stroke(Color(hex: "#333333"), lineWidth: 2)
-                    .frame(width: 60, height: 60)
+            // Custom vertical slider
+            GeometryReader { geometry in
+                ZStack(alignment: .bottom) {
+                    // Track background
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color(hex: "#252528"))
+                        .frame(width: 8)
 
-                // Value arc
-                Circle()
-                    .trim(from: 0, to: CGFloat(value))
-                    .stroke(color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .frame(width: 56, height: 56)
-                    .rotationEffect(.degrees(-90))
+                    // Center marker (50% / 12 o'clock position)
+                    Rectangle()
+                        .fill(Color(hex: "#555555"))
+                        .frame(width: 16, height: 2)
+                        .offset(y: -geometry.size.height * 0.5)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
 
-                // Value text
-                Text(String(format: "%.2f", value))
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white)
+                    // Value fill
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(color)
+                        .frame(width: 8, height: geometry.size.height * CGFloat(value))
+
+                    // Thumb
+                    Circle()
+                        .fill(color)
+                        .frame(width: 16, height: 16)
+                        .shadow(color: color.opacity(0.5), radius: 4)
+                        .offset(y: -geometry.size.height * CGFloat(value) + 8)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
+                }
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { gesture in
+                            let newValue = 1.0 - Float(gesture.location.y / geometry.size.height)
+                            value = max(0, min(1, newValue))
+                        }
+                )
             }
-            .gesture(
-                DragGesture()
-                    .onChanged { gesture in
-                        let delta = Float(gesture.translation.height) / -100.0
-                        value = max(0, min(1, value + delta))
-                    }
-            )
+            .frame(width: 50, height: 80)
+
+            Text(String(format: "%.0f%%", value * 100))
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .foregroundColor(color)
         }
     }
 }

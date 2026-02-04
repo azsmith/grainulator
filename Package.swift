@@ -40,10 +40,12 @@ let package = Package(
             cxxSettings: [
                 .headerSearchPath("Core"),
                 .headerSearchPath("Synthesis"),
+                .headerSearchPath("Synthesis/Rings"),
                 .headerSearchPath("Synthesis/Plaits"),
                 .headerSearchPath("Synthesis/Plaits/Core"),
                 .headerSearchPath("Synthesis/Plaits/Engines"),
                 .headerSearchPath("Synthesis/Plaits/stmlib"),
+                .headerSearchPath("Synthesis/Granular"),
                 .define("AUDIO_SAMPLE_RATE", to: "48000"),
                 .define("MAX_GRAINS", to: "128"),
             ],

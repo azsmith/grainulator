@@ -69,4 +69,109 @@ void AudioEngine_TriggerPlaits(AudioEngineHandle handle, bool state) {
     }
 }
 
+void AudioEngine_NoteOn(AudioEngineHandle handle, int note, int velocity) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->noteOn(note, velocity);
+    }
+}
+
+void AudioEngine_NoteOff(AudioEngineHandle handle, int note) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->noteOff(note);
+    }
+}
+
+void AudioEngine_ScheduleNoteOn(AudioEngineHandle handle, int note, int velocity, uint64_t sampleTime) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->scheduleNoteOn(note, velocity, sampleTime);
+    }
+}
+
+void AudioEngine_ScheduleNoteOff(AudioEngineHandle handle, int note, uint64_t sampleTime) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->scheduleNoteOff(note, sampleTime);
+    }
+}
+
+void AudioEngine_ScheduleNoteOnTarget(AudioEngineHandle handle, int note, int velocity, uint64_t sampleTime, uint8_t targetMask) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->scheduleNoteOnTarget(note, velocity, sampleTime, targetMask);
+    }
+}
+
+void AudioEngine_ScheduleNoteOffTarget(AudioEngineHandle handle, int note, uint64_t sampleTime, uint8_t targetMask) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->scheduleNoteOffTarget(note, sampleTime, targetMask);
+    }
+}
+
+void AudioEngine_ClearScheduledNotes(AudioEngineHandle handle) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->clearScheduledNotes();
+    }
+}
+
+uint64_t AudioEngine_GetCurrentSampleTime(AudioEngineHandle handle) {
+    if (!handle) return 0;
+    return static_cast<AudioEngine*>(handle)->getCurrentSampleTime();
+}
+
+// ========== Granular Buffer Management ==========
+
+bool AudioEngine_LoadAudioData(AudioEngineHandle handle, int reelIndex, const float* leftChannel, const float* rightChannel, size_t numSamples, float sampleRate) {
+    if (!handle) return false;
+    return static_cast<AudioEngine*>(handle)->loadAudioData(reelIndex, leftChannel, rightChannel, numSamples, sampleRate);
+}
+
+void AudioEngine_ClearReel(AudioEngineHandle handle, int reelIndex) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->clearReel(reelIndex);
+    }
+}
+
+size_t AudioEngine_GetReelLength(AudioEngineHandle handle, int reelIndex) {
+    if (!handle) return 0;
+    return static_cast<AudioEngine*>(handle)->getReelLength(reelIndex);
+}
+
+void AudioEngine_GetWaveformOverview(AudioEngineHandle handle, int reelIndex, float* output, size_t outputSize) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->getWaveformOverview(reelIndex, output, outputSize);
+    }
+}
+
+void AudioEngine_SetGranularPlaying(AudioEngineHandle handle, int voiceIndex, bool playing) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setGranularPlaying(voiceIndex, playing);
+    }
+}
+
+void AudioEngine_SetGranularPosition(AudioEngineHandle handle, int voiceIndex, float position) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setGranularPosition(voiceIndex, position);
+    }
+}
+
+int AudioEngine_GetActiveGrainCount(AudioEngineHandle handle) {
+    if (!handle) return 0;
+    return static_cast<AudioEngine*>(handle)->getActiveGrainCount();
+}
+
+float AudioEngine_GetGranularPosition(AudioEngineHandle handle, int voiceIndex) {
+    if (!handle) return 0.0f;
+    return static_cast<AudioEngine*>(handle)->getGranularPosition(voiceIndex);
+}
+
+// ========== Level Metering ==========
+
+float AudioEngine_GetChannelLevel(AudioEngineHandle handle, int channelIndex) {
+    if (!handle) return 0.0f;
+    return static_cast<AudioEngine*>(handle)->getChannelLevel(channelIndex);
+}
+
+float AudioEngine_GetMasterLevel(AudioEngineHandle handle, int channel) {
+    if (!handle) return 0.0f;
+    return static_cast<AudioEngine*>(handle)->getMasterLevel(channel);
+}
+
 } // extern "C"

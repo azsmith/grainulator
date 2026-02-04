@@ -9,6 +9,7 @@
 #define AUDIOENGINEBRIDGE_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -35,6 +36,30 @@ float AudioEngine_GetCPULoad(AudioEngineHandle handle);
 
 // Trigger control
 void AudioEngine_TriggerPlaits(AudioEngineHandle handle, bool state);
+
+// Polyphonic note control
+void AudioEngine_NoteOn(AudioEngineHandle handle, int note, int velocity);
+void AudioEngine_NoteOff(AudioEngineHandle handle, int note);
+void AudioEngine_ScheduleNoteOn(AudioEngineHandle handle, int note, int velocity, uint64_t sampleTime);
+void AudioEngine_ScheduleNoteOff(AudioEngineHandle handle, int note, uint64_t sampleTime);
+void AudioEngine_ScheduleNoteOnTarget(AudioEngineHandle handle, int note, int velocity, uint64_t sampleTime, uint8_t targetMask);
+void AudioEngine_ScheduleNoteOffTarget(AudioEngineHandle handle, int note, uint64_t sampleTime, uint8_t targetMask);
+void AudioEngine_ClearScheduledNotes(AudioEngineHandle handle);
+uint64_t AudioEngine_GetCurrentSampleTime(AudioEngineHandle handle);
+
+// Granular buffer management
+bool AudioEngine_LoadAudioData(AudioEngineHandle handle, int reelIndex, const float* leftChannel, const float* rightChannel, size_t numSamples, float sampleRate);
+void AudioEngine_ClearReel(AudioEngineHandle handle, int reelIndex);
+size_t AudioEngine_GetReelLength(AudioEngineHandle handle, int reelIndex);
+void AudioEngine_GetWaveformOverview(AudioEngineHandle handle, int reelIndex, float* output, size_t outputSize);
+void AudioEngine_SetGranularPlaying(AudioEngineHandle handle, int voiceIndex, bool playing);
+void AudioEngine_SetGranularPosition(AudioEngineHandle handle, int voiceIndex, float position);
+int AudioEngine_GetActiveGrainCount(AudioEngineHandle handle);
+float AudioEngine_GetGranularPosition(AudioEngineHandle handle, int voiceIndex);
+
+// Level metering
+float AudioEngine_GetChannelLevel(AudioEngineHandle handle, int channelIndex);
+float AudioEngine_GetMasterLevel(AudioEngineHandle handle, int channel);
 
 #ifdef __cplusplus
 }

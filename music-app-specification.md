@@ -29,658 +29,339 @@ A macOS music application combining granular synthesis, wavetable synthesis, eff
 
 ### 2.1 Granular Synthesis Engine
 
-The granular synthesis engine synthesizes the technical implementation of Mangl (multi-track granular sampler) with the user control paradigm of Make Noise Morphagene, creating a unified, musically-oriented granular processor. The engine emphasizes musical playability through comprehensive pitch/interval quantization and intuitive performance controls.
+The granular synthesis engine is based on the Mangl/MGlut architecture - a multi-track granular sample player with straightforward, direct controls. Each voice can load a sample and granulate it with independent parameters.
+
+**Reference**: justmat's Mangl for Norns (https://github.com/justmat/mangl)
 
 ---
 
-#### 2.1.1 Audio Buffer Architecture (Morphagene Hierarchy)
+#### 2.1.1 Audio Buffer Architecture
 
-The engine implements a three-level hierarchical structure:
+**Simple Buffer Model**
+- **Per-voice buffers**: Each granular voice has its own stereo audio buffer
+- **Capacity**: Up to 2.5 minutes per buffer at 48kHz
+- **Storage**: In-memory during playback
+- **Operations**: Load from file, clear
+- **Display**: Waveform overview with playhead position
 
-**Reels (Top Level)**
-- **Definition**: RAM-based audio buffers containing recorded or loaded audio
-- **Capacity**: Up to 32 reels per project
-- **Length**: 2.5 minutes per reel at 48kHz (approximately 14.4 million samples)
-- **Storage**: In-memory during playback, saved to disk with project
-- **Operations**: Load, save, record, clear, duplicate
-- **Display**: Waveform overview with splice markers visible
-
-**Splices (Middle Level)**
-- **Definition**: Subsections within a reel, defining loop regions and playback zones
-- **Capacity**: Up to 300 splices per reel
-- **Functionality**:
-  - Define start/end boundaries for looping
-  - Allow non-destructive organization of audio material
-  - Can be navigated sequentially or randomly
-  - Support independent playback settings
-- **Visual representation**: Colored regions in waveform display
-- **Metadata**: Name, color, loop on/off state
-
-**Genes (Bottom Level - Individual Grains)**
-- **Definition**: Individual grains of audio extracted and played from active splice
-- **Size**: 1ms - 5000ms (typically 20-200ms for classic granular textures)
-- **Windowing**: Adjustable envelope shapes to prevent clicks
-- **Polyphony**: Up to 64 concurrent genes/grains (configurable)
+**Loop Points** (Optional)
+- **Loop In/Out**: Define a region within the buffer for looped playback
+- **Behavior**: When playhead reaches loop_out, it jumps back to loop_in
+- **Direction**: Respects current speed direction (forward or reverse)
 
 ---
 
-#### 2.1.2 Core Parameters (Morphagene Control Set)
+#### 2.1.2 Core Parameters (Per Voice)
 
-**SLIDE** (Playback Position)
-- **Function**: Determines where within the active splice grain playback begins
-- **Range**: 0% - 100% of splice length
+Each granular voice has the following independent parameters:
+
+**POSITION (pos)**
+- **Function**: Current playback position within the buffer
+- **Range**: 0.0 - 1.0 (normalized to buffer length)
 - **Behavior**:
-  - Manual control: Direct scrubbing through splice
-  - Modulated: Creates evolving textures by scanning position
-  - At 0%: Grains start at splice beginning
-  - At 100%: Grains start at splice end
-- **CV/Modulation**: Accepts external modulation for animated scanning
+  - Automatically advances based on SPEED
+  - Can be manually "seeked" to jump to a specific location
+  - Wraps around at buffer boundaries (or loop points if set)
 - **Visual**: Real-time playhead indicator in waveform display
 
-**GENE SIZE** (Grain Size)
-- **Function**: Sets the duration of each individual grain
-- **Range**: 1ms - 5000ms
+**SPEED**
+- **Function**: Playback speed (tape-style: affects both speed and pitch)
+- **Range**: -300% to +300%
+- **Behavior**:
+  - 100% = normal playback
+  - 0% = frozen (grains trigger but position doesn't advance)
+  - Negative values = reverse playback
+  - Pitch changes proportionally (tape behavior)
+- **Display**: Percentage with direction indicator
+
+**PITCH**
+- **Function**: Independent pitch shift (does NOT affect playback speed)
+- **Range**: -24 to +24 semitones (±2 octaves)
+- **Implementation**: Pitch ratio = 2^(semitones/12)
+- **Interaction**: Combines with SPEED's inherent pitch change
+- **Display**: Semitones (e.g., "+7 st", "-12 st")
+
+**SIZE**
+- **Function**: Duration of each grain
+- **Range**: 1ms - 500ms
 - **Sweet spots**:
-  - 1-10ms: Spectral/formant effects
-  - 20-200ms: Classic granular clouds
-  - 500-2000ms: Recognizable phrases with texture
-  - 2000ms+: Near-continuous playback with subtle granulation
-- **Interaction**: Works with Morph to determine grain overlap
-- **Quantize option**: Snap to musical divisions (1/4, 1/8, 1/16, etc.)
+  - 1-20ms: Spectral/buzzy effects
+  - 20-100ms: Classic granular clouds
+  - 100-300ms: Recognizable fragments
+  - 300-500ms: Near-continuous with subtle granulation
+- **Display**: Milliseconds
 
-**MORPH** (Grain Spacing, Density & Time-Stretch)
-- **Function**: Multi-function control that changes behavior across its range
-- **Range**: 0% - 100% with distinct regions
-- **Behavior zones**:
-
-  *0% - 40% (Gene-Shifting Mode)*:
-  - Discrete grain triggering with gaps
-  - Lower values = more space between grains
-  - Grains alternate between left/right channels
-  - Pitch shifting artifacts present
-  - Clock-syncable for rhythmic effects
-
-  *50% (Neutral)*:
-  - Grains just begin to overlap
-  - Transition point between modes
-
-  *60% - 100% (Time-Stretch Mode)*:
-  - Overlapping grains create continuous sound
-  - Higher values = more overlap/density
-  - Pitch preservation active (time-stretch without pitch change)
-  - Smoother, more sustained textures
-  - Stereo spread increases with value
-
-- **Internal calculations**:
-  - Grain trigger rate = f(Gene Size, Morph value)
-  - Overlap count = automatic based on Morph
-  - Panning = alternating or spread based on mode
-
-**VARISPEED** (Playback Speed & Pitch - Unified Control)
-- **Function**: Controls playback speed of individual grains (tape-style, coupled speed/pitch)
-- **Range**: -400% to +400% (speed multiplier, ±2 octaves)
-- **Center position** (12 o'clock): 100% = normal playback
-- **Zero point**: 0% = freeze (no playback)
+**DENSITY**
+- **Function**: Grain trigger rate
+- **Range**: 0 - 512 Hz
 - **Behavior**:
-  - Below 100%: Slower playback, lower pitch
-  - Above 100%: Faster playback, higher pitch
-  - Negative values: Reverse playback with pitch shift
-- **Quantization Modes** (Musical Focus):
-  - **Off**: Continuous speed/pitch (vintage tape feel)
-  - **Chromatic**: Semitone steps (12-TET)
-  - **Octaves Only**: 25%, 50%, 100%, 200%, 400% (pure octave ratios)
-  - **Octaves + Fifths**: Add 150% (fifth up), 300% (octave+fifth), etc.
-  - **Octaves + Fourths**: Add 133% (fourth up), 266% (octave+fourth), etc.
-  - **Custom Ratios**: User-definable speed multipliers
-- **Coupled vs. Decoupled**:
-  - *Coupled* (default): Speed and pitch change together (classic tape/Morphagene behavior)
-  - *Decoupled*: PITCH parameter handles pitch independently via time-stretching
-- **Use cases**:
-  - Octaves Only mode: Clean harmonic doubling (-1 oct, unison, +1 oct)
-  - Octaves + Fifths: Power chord textures across multiple tracks
-  - Continuous mode: Tape wobble, lo-fi effects
+  - Higher values = more grains per second = denser texture
+  - Lower values = sparse, rhythmic grains
+  - Combined with SIZE determines overlap amount
+- **Typical values**: 1-20 Hz for rhythmic, 20-100 Hz for clouds
+- **Display**: Hz
 
-**ORGANIZE** (Splice Selection)
-- **Function**: Navigates through splices within the active reel
-- **Range**: Discrete selection of all available splices (1-300)
+**JITTER**
+- **Function**: Random position offset applied to each grain
+- **Range**: 0 - 500ms
 - **Behavior**:
-  - Manual: Turn to select specific splice
-  - CV/Modulation: Sequence through splices
-  - Quantized: Always selects complete splice (no in-between)
-- **Display**: Shows splice number and name
-- **Integration**: Works with Shift trigger for automatic advancing
+  - 0ms: All grains start at exact playhead position
+  - Higher values: Grains scatter around playhead position
+  - Creates "smeared" or "cloud-like" textures
+- **Display**: Milliseconds
 
----
-
-#### 2.1.3 Extended Parameters (Unified Approach)
-
-These parameters extend the core Morphagene controls with multi-track capabilities and enhanced musical control:
-
-**PITCH** (Musical Transposition)
-- **Function**: Independent pitch shift WITHOUT speed change (time-stretch algorithm)
-- **Range**: ±4 octaves (±48 semitones)
-- **Algorithm**: Phase vocoder with formant preservation option
-- **Quantization Modes** (Musical Focus):
-  - **Off**: Continuous pitch shift (±0.01 semitone resolution)
-  - **Chromatic**: 12-tone equal temperament (semitone steps)
-  - **Octaves Only**: -4, -3, -2, -1, 0, +1, +2, +3, +4 octaves
-  - **Octaves + Fifths**: Octaves plus perfect fifth intervals (0, +7, +12, +19, +24, etc.)
-  - **Octaves + Fourths**: Octaves plus perfect fourth intervals (0, +5, +12, +17, +24, etc.)
-  - **Major Scale**: Quantize to major scale degrees relative to root
-  - **Minor Scale**: Quantize to natural minor scale degrees
-  - **Pentatonic**: Quantize to pentatonic scale
-  - **Custom Intervals**: User-definable interval set (e.g., 0, +3, +7, +12 for minor triads)
-- **Root Note**: Set reference pitch for scale-based quantization (C, C#, D, etc.)
-- **Per-track**: Each track can have independent pitch and quantization settings
-- **Use cases**:
-  - Octave doubling for thickness
-  - Harmonic layering (octaves + fifths for power chord textures)
-  - Melodic transposition with scale constraints
-  - Multi-track harmonization
-
-**SPREAD** (Grain Position Randomization)
-- **Function**: Random deviation from Slide position within the splice
-- **Range**: 0% - 100% of splice length
-- **Behavior**:
-  - 0%: All grains at exact Slide position (precise, focused)
-  - 25%: Grains within ±25% of Slide position (slight shimmer)
-  - 50%: Wide cloud around Slide position (diffuse texture)
-  - 100%: Grains anywhere in splice (maximum chaos)
-- **Distribution**: Gaussian (default) or uniform (user-selectable)
-- **Musical Application**: Creates ensemble/chorus effects while maintaining pitch center
-
-**JITTER** (Grain Timing Randomization)
-- **Function**: Randomizes grain trigger timing
+**SPREAD**
+- **Function**: Stereo spread (random pan per grain)
 - **Range**: 0% - 100%
 - **Behavior**:
-  - 0%: Perfect metronomic grain triggering
-  - 25%: Slight humanization (natural feel)
-  - 50%: Moderate timing variation
-  - 100%: Maximum randomization (cloud-like, ambient)
-- **Interaction**: Works with Morph density to create organic vs. mechanical textures
-- **Quantize option**: Can snap jitter to tempo subdivisions (8th, 16th, 32nd notes)
+  - 0%: All grains at center (mono)
+  - 100%: Grains randomly panned hard left/right
+- **Display**: Percentage
 
-**FILTER** (Per-Grain Filtering)
-- **Function**: Low-pass filter applied to grain output
-- **Type**: Resonant low-pass (12dB or 24dB/octave, user-selectable)
+**PAN**
+- **Function**: Base stereo position
+- **Range**: -100% (left) to +100% (right)
+- **Interaction**: SPREAD randomizes around this center point
+- **Display**: L/C/R percentage
+
+**GAIN**
+- **Function**: Voice volume
+- **Range**: -60dB to +20dB
+- **Display**: dB
+
+**FILTER CUTOFF**
+- **Function**: Low-pass filter cutoff frequency
+- **Range**: 20Hz - 20kHz
+- **Type**: 4-pole (24dB/octave) low-pass
+- **Display**: Hz
+
+**FILTER Q**
+- **Function**: Filter resonance
+- **Range**: 0.0 - 1.0
+- **Behavior**: Higher values create resonant peak at cutoff
+- **Display**: 0-100%
+
+**SEND**
+- **Function**: Effect send level (to delay/reverb)
+- **Range**: 0.0 - 1.0
+- **Display**: 0-100%
+
+**ENVELOPE SCALE (envscale)**
+- **Function**: Attack/decay time for voice amplitude envelope
+- **Range**: 1ms - 9000ms
+- **Behavior**: Smooth fade in/out when voice is gated on/off
+- **Display**: Milliseconds
+
+---
+
+#### 2.1.3 Voice Control
+
+**GATE (Play)**
+- **Function**: Enable/disable grain generation for this voice
+- **Behavior**:
+  - Gate ON: Grains continuously trigger at DENSITY rate
+  - Gate OFF: Voice silences (with envelope release)
+- **Use**: Toggle voices on/off, trigger from MIDI
+
+**SEEK**
+- **Function**: Jump playhead to a specific position
+- **Behavior**: Immediately moves position and resets Phasor
+- **Use**: Manual scrubbing, external position control
+
+**FREEZE**
+- **Function**: Stop position advancement while continuing grain generation
+- **Behavior**: Like SPEED=0 but explicitly freezes current position
+- **Use**: Sustain a particular moment in the sample
+
+---
+
+#### 2.1.4 Multi-Voice Architecture
+
+**Voice Configuration**
+- **Count**: 4 independent granular voices (expandable to 7)
+- **Independence**: Each voice has completely independent parameters
+- **Sample assignment**: Each voice loads its own audio file
+
+**Per-Voice Features**
+- Independent sample/buffer
+- Independent position and speed
+- Independent grain parameters (size, density, jitter)
+- Independent pitch shift
+- Independent filter settings
+- Independent panning and gain
+- Independent effect send
+
+**Voice Management**
+- **Enable/Mute**: Gate on/off per voice
+- **Solo**: Isolate single voice for auditioning
+- **Visual feedback**: Per-voice waveform with playhead
+
+---
+
+#### 2.1.5 Grain Window (Envelope)
+
+Each grain is shaped by a Hanning window envelope to prevent clicks:
+
+**Window Characteristics**
+- **Type**: Hanning (cosine-based bell curve)
+- **Application**: Amplitude envelope applied to each grain
+- **Behavior**: Smooth fade-in and fade-out
+
+*Future enhancement: Selectable window types*
+
+---
+
+#### 2.1.6 DSP Implementation (Based on MGlut)
+
+**Grain Generation (from SuperCollider GrainBuf)**
+```
+grain_trig = Impulse.kr(density)           // Trigger grains at density rate
+buf_pos = Phasor.kr(rate: speed)           // Advance position through buffer
+jitter_offset = TRand.kr(-jitter, jitter)  // Random position offset per grain
+pan_offset = TRand.kr(-spread, spread)     // Random pan per grain
+
+signal = GrainBuf.ar(
+    trigger: grain_trig,
+    dur: size,
+    buf: buffer,
+    rate: pitch_ratio,
+    pos: buf_pos + jitter_offset
+)
+
+output = Pan2.ar(signal, pan + pan_offset)
+output = LowPass.ar(output, cutoff, q)
+```
+
+**Key Implementation Details**
+- **Phasor**: Continuously advances position based on speed
+- **Impulse**: Triggers grains at regular intervals (density Hz)
+- **TRand**: Generates new random values on each trigger (for jitter/spread)
+- **GrainBuf**: Core granular synthesis (SuperCollider built-in)
+
+---
+
+#### 2.1.7 Effect Bus (Greyhole Delay)
+
+**Built-in Effect** (from MGlut)
+- **Type**: Greyhole algorithmic reverb/delay
 - **Parameters**:
-  - **Cutoff**: 20Hz - 20kHz
-  - **Resonance**: 0% - 90% (approaching self-oscillation at high values)
-  - **Key tracking**: Optional pitch following (higher grain pitches = higher cutoff)
-- **Application**: Pre-mix (each grain filtered individually)
-- **Musical Use**: Spectral shaping, vowel-like formants, subtractive synthesis
+  - **Delay Time**: 0.0 - 60.0 seconds
+  - **Damping**: 0.0 - 1.0 (high frequency absorption)
+  - **Size**: 0.5 - 5.0 (reverb size)
+  - **Diffusion**: 0.0 - 1.0 (echo density)
+  - **Feedback**: 0.0 - 1.0
+  - **Mod Depth**: 0.0 - 1.0 (pitch modulation)
+  - **Mod Freq**: 0.0 - 10.0 Hz
+  - **Volume**: Effect return level
+
+**Per-Voice Send**
+- Each voice has independent send level to effect bus
+- Effect output mixed with dry signal at master output
 
 ---
 
-#### 2.1.4 Recording & Sound-on-Sound
-
-**Recording Modes**
-
-*Basic Record*
-- **Trigger**: Press Record to start/stop
-- **Input source**: Live input or internal resampling
-- **Behavior**: Overwrites existing reel content
-- **Length**: Records until buffer full (2.5 min) or manually stopped
-- **Auto-normalize**: Optional gain adjustment after recording
-
-*Clock-Synced Record*
-- **Trigger**: Arm recording, wait for clock pulse to begin
-- **Quantization**: Start/stop aligned to clock divisions
-- **Use**: Perfect loop recording synchronized to tempo
-- **Clock source**: Internal clock, MIDI clock, or external trigger
-
-*Sound-on-Sound (SOS)*
-- **Function**: Blends live input with current playback for overdubbing
-- **Parameter**: SOS amount (0% = input only, 100% = playback only)
-- **Feedback**: Create delay/loop effects by balancing input and playback
-- **Use cases**:
-  - 50%: Equal mix (build up layers)
-  - 90%: Long delay effect (mostly playback)
-  - 10%: Overdub with minimal existing audio
-- **Recording**: Can record the SOS mix back into buffer (resampling)
-
-**Splice Creation During Recording**
-- **Manual**: Press Splice button to mark current position
-- **Auto-splice**: Automatically create splices at regular intervals
-- **Trigger-based**: External trigger creates splice markers
-- **Result**: Recorded audio pre-divided into navigable sections
-
----
-
-#### 2.1.5 Gates, Triggers & Modulation I/O
-
-**PLAY** (Grain Trigger Input)
-- **Function**: Manual or triggered grain generation
-- **Modes**:
-  - *Gate*: Continuous grain generation while high
-  - *Trigger*: Generate one grain per trigger
-  - *Free-running*: Auto-trigger based on Morph (density)
-- **Rising edge behavior**: Resets grain playback position
-- **Use**: Rhythmic grain triggering, performance control
-
-**RECORD** (Record Gate/Trigger)
-- **Gate mode**: Record while high, stop when low
-- **Trigger mode**: Toggle record on/off with each trigger
-- **Clock integration**: Start on next clock pulse
-
-**SHIFT** (Splice Advance Trigger)
-- **Function**: Advances to next splice
-- **Timing**: Trigger can be immediate or wait for end-of-gene
-- **Direction**: Forward, reverse, or random (user setting)
-- **Use**: Create evolving textures by sequencing through splices
-
-**SPLICE** (Create Splice Marker)
-- **Function**: Add new splice point at current playback position
-- **Behavior**: Divides active splice into two new splices
-- **Limit**: Maximum 300 splices per reel
-- **Visual**: Immediate update in waveform display
-
-**CV Outputs** (Morphagene-inspired)
-- **Envelope Follower**: Amplitude CV follows gene/grain output
-  - Response time: Fast (for percussive) or Slow (for sustained)
-  - Range: 0-5V or 0-10V (normalized to DAW parameters)
-
-- **End-of-Gene (EOG) Gate**: Trigger pulse at end of each grain
-  - Duration: 10ms pulse
-  - Use: Sync other modules/parameters to grain boundaries
-
-- **End-of-Splice (EOS) Gate**: Trigger pulse when splice ends
-  - Use: Chain splice navigation, create macro-structures
-
----
-
-#### 2.1.6 Window Shapes & Grain Envelopes
-
-To prevent clicks/pops, each grain is shaped by an amplitude envelope:
-
-**Available Window Types**
-1. **Linear**: Simple linear fade in/out
-2. **Hanning**: Smooth bell curve (cosine-based)
-3. **Hamming**: Similar to Hanning with slightly different characteristics
-4. **Gaussian**: Very smooth, narrow peak
-5. **Tukey**: Flat top with cosine edges (adjustable taper)
-6. **Trapezoid**: Linear ramps with sustain section
-
-**Envelope Parameters**
-- **Attack**: Fade-in time (0-50% of grain)
-- **Release**: Fade-out time (0-50% of grain)
-- **Shape**: Window type selection
-- **Asymmetry**: Different attack vs. release curves (advanced)
-
-**Presets**
-- "Smooth" (Hanning, 40% attack/release)
-- "Punchy" (Linear, 10% attack/release)
-- "Pad" (Gaussian, 45% attack/release)
-
----
-
-#### 2.1.7 Multi-Track Architecture (Mangl-Inspired)
-
-Unlike the single-voice Morphagene, the engine supports multiple independent tracks:
-
-**Track Configuration**
-- **Count**: 4 independent granular tracks (expandable to 7 in future)
-- **Per-track parameters**: Each track has full independent parameter set
-  - Independent reel/splice selection
-  - Independent grain parameters: Gene Size, Morph, Slide, Organize
-  - Independent pitch: VARISPEED and/or PITCH with per-track quantization
-  - Individual filter settings (cutoff, resonance, key tracking)
-  - Separate Spread, Jitter amounts
-  - Individual output routing and level
-
-**Track Management**
-- **Enable/Mute**: Activate or silence individual tracks
-- **Solo**: Isolate single track for editing and auditioning
-- **Link**: Lock parameters across multiple tracks (e.g., link Slide for unified scrubbing)
-- **Copy**: Duplicate complete track settings to another track
-- **Output routing**:
-  - Individual outputs (for multi-channel processing)
-  - Mixed stereo output
-  - Send to different effect buses per track
-
-**Musical Use Cases**
-- **Octave Layering**: Same reel, Track 1 at unison, Track 2 at +1 octave, Track 3 at -1 octave
-- **Harmonic Stacking**: Octaves + Fifths quantization for rich, consonant textures
-  - Track 1: Unison (0 semitones)
-  - Track 2: +7 semitones (perfect fifth)
-  - Track 3: +12 semitones (octave)
-  - Track 4: +19 semitones (octave + fifth)
-- **Rhythmic Polyrhythms**: Different grain sizes and densities per track
-- **Textural Contrast**: Track 1 (tight, focused), Track 2 (wide Spread, ambient cloud)
-- **Call and Response**: Alternate between different splices on different tracks
-
----
-
-#### 2.1.8 Sample Management & File I/O
+#### 2.1.8 Sample Management
 
 **Loading Audio**
 - **Supported formats**: WAV, AIFF, FLAC, MP3, M4A, OGG
-- **Sample rate conversion**: Automatic resampling to project rate
-- **Bit depth**: Convert to 32-bit float internal
+- **Sample rate support**: 22.05kHz, 44.1kHz, 48kHz, 88.2kHz, 96kHz (auto-resampled to project rate)
+- **Bit depth**: 16-bit, 24-bit, 32-bit float (converted to 32-bit float internal)
 - **Stereo handling**:
-  - Load as stereo
+  - Load as stereo (left and right channels into separate buffers)
   - Convert to mono (L+R mix or L/R selection)
-  - Load L and R into separate reels
+- **Drag & drop**: Import by dropping files onto voice waveform
+- **File browser**: Click waveform to open file picker
 
-**Reel Library**
-- **Browser**: Visual browser with waveform previews
-- **Metadata**: Name, tags, duration, sample rate
-- **Collections**: Organize reels into user-defined groups
-- **Search**: Filter by name, tags, duration
-- **Drag & drop**: Import from Finder
-
-**Export Options**
-- **Bounce to file**: Render current reel with all processing
-- **Export splice**: Extract individual splice as audio file
-- **Batch export**: Export all splices as individual files
-- **Format**: WAV (16/24/32-bit), AIFF, FLAC
+**Per-Voice Loading**
+- Each voice can load a different sample
+- Or multiple voices can use the same sample with different parameters
 
 ---
 
-#### 2.1.9 Advanced Features
+#### 2.1.9 User Interface Components
 
-**Loop Modes (Per-Splice)**
-- **Forward**: Standard playback direction
-- **Reverse**: Grains play backwards through splice
-- **Ping-pong**: Alternate forward/reverse on each grain
-- **Random**: Each grain chooses random direction
+**Per-Voice Waveform Display**
+- **Waveform**: Visual representation of loaded audio
+- **Playhead**: Real-time position indicator
+- **Loop markers**: Optional loop in/out points (if set)
+- **Color coding**: Each voice has distinct color
 
-**Grain Stereo Processing**
-- **Panning**:
-  - Alternating L/R (Morph gene-shift mode)
-  - Spread (width increases with Morph in time-stretch mode)
-  - Random pan per grain
-  - Fixed pan position
+**Parameter Controls**
+- **Primary**: Position (scrub), Speed, Size, Density
+- **Extended**: Pitch, Jitter, Spread, Filter, Send
+- **Voice controls**: Gate (play/stop), Gain, Pan
 
-- **Stereo width**: Control overall stereo field (0% = mono, 100% = full width)
-
-**Freeze Mode**
-- **Function**: Capture current grain output and loop infinitely
-- **Trigger**: Button or external gate
-- **Use**: Create sustained pads from transient material
-- **Interaction**: Freeze layer can be mixed with live granulation
-
-**Musical Quantization System**
-
-The engine includes comprehensive quantization to ensure musical results:
-
-*Pitch/Interval Quantization*
-- **Global or per-track**: Apply quantization globally or per individual track
-- **Quantization targets**: VARISPEED and/or PITCH parameters
-- **Interval Sets** (user-selectable):
-  - **Octaves**: -2 oct, -1 oct, unison, +1 oct, +2 oct (clean, simple)
-  - **Octaves + Fifths**: Perfect intervals for power chords and open voicings
-  - **Octaves + Fourths**: Alternative perfect interval set
-  - **Chromatic**: All 12 semitones (full harmonic palette)
-  - **Diatonic Scales**: Major, natural minor, harmonic minor, melodic minor
-  - **Pentatonic**: Major and minor pentatonic scales
-  - **Custom**: User defines specific interval set (e.g., [0, +3, +7, +12] for minor triads)
-- **Root note**: C, C#, D, D#, E, F, F#, G, G#, A, A#, B
-- **Snap behavior**: Immediate or gradual (glide to nearest quantized value)
-
-*Rhythmic Quantization*
-- **Grain trigger sync**: Align grain triggering to tempo grid
-  - Whole notes, half notes, quarter notes, 8th, 16th, 32nd, triplets
-- **Clock source**: Internal tempo, MIDI clock, or manual tap tempo
-- **Swing**: Add rhythmic feel (50-75% swing amount)
-
-*Splice Quantization*
-- **Auto-splice**: Create splice markers at beat divisions
-- **Divisions**: 1 bar, 2 bars, 4 bars, or custom length
-- **Use**: Automatically organize loops and phrases musically
+**Simple Layout**
+- One waveform + controls per voice
+- Collapsible advanced parameters
+- Clear visual feedback for active voices
 
 ---
 
-#### 2.1.10 DSP Implementation Notes
+#### 2.1.10 Controller Mappings
 
-**Grain Scheduling**
-- **Algorithm**: Priority queue with microsecond precision
-- **Look-ahead**: 100ms grain pre-calculation for smooth triggering
-- **Overlap management**: Dynamic voice allocation up to max polyphony
-- **Anti-aliasing**: Sinc interpolation for pitch-shifting
-
-**Time-Stretching Algorithm**
-- **Method**: Phase vocoder (PSOLA or similar)
-- **FFT size**: 2048-4096 samples (quality vs. CPU trade-off)
-- **Hop size**: Adaptive based on stretch ratio
-- **Formant preservation**: Optional for vocal material
-
-**Pitch-Shifting Algorithm**
-- **Method**: Decoupled pitch shift uses time-domain pitch shifting or phase vocoder
-- **Varispeed method**: Simple resampling (coupled speed/pitch, classic tape behavior)
-- **Formant preservation**: Optional (essential for musical vocal/instrument content)
-- **Quality modes**:
-  - Low-latency (lighter CPU, simple interpolation, suitable for real-time performance)
-  - High-quality (higher CPU, phase vocoder with formant correction)
-- **Quantization**: Applied post-algorithm to snap to musical intervals
-  - Lookup table for semitone → frequency ratio conversions
-  - Interpolation for smooth transitions between quantized values (if glide enabled)
-
-**Buffer Management**
-- **Circular buffers**: For efficient memory usage
-- **Lock-free design**: Audio thread never blocks on memory allocation
-- **Double-buffering**: UI can read waveform data without blocking audio
-
----
-
-#### 2.1.11 User Interface Components
-
-**Waveform Display**
-- **Overview**: Full reel with all splices visible
-- **Zoom**: Drill down to sample-level precision
-- **Splice markers**: Draggable regions with color coding
-- **Playhead**: Real-time Slide position indicator
-- **Spray visualization**: Cloud showing grain distribution
-- **Recording meter**: Level indication during record
-
-**Parameter Panel**
-- **Primary controls**: Large knobs for Slide, Gene Size, Morph, Varispeed, Organize
-- **Extended parameters**: Expandable section for Pitch, Spread, Jitter, Filter
-- **Quantization indicators**: Visual feedback showing active quantization (e.g., "Octaves" badge)
-- **Modulation indicators**: Visual feedback when parameters are being modulated
-- **Value readouts**: Numeric display with units and interval notation
-  - Pitch displays: "+12 st (1 oct)", "+7 st (P5)", etc.
-  - Varispeed displays: "200% (+1 oct)" when quantized
-
-**Splice Manager**
-- **List view**: All splices with name, length, loop status
-- **Edit**: Rename, recolor, set loop points
-- **Reorder**: Drag to change Organize sequence
-- **Actions**: Delete, duplicate, merge, split
-
-**Track Mixer (for multi-track mode)**
-- **Per-track strip**: Volume, pan, solo, mute
-- **Visual feedback**: Level meters, activity indicators
-- **Routing**: Output destination selection
-
----
-
-#### 2.1.12 Controller Mappings
-
-**Monome Grid (128) - Granular Page (Revised)**
-
-*Layout*
+**Arc (4-encoder) - Primary Mode**
 ```
-Row 1-2: Buffer scrubbing (128 positions across active splice)
-         - Brightness = playhead position
-         - Touch = jump to position (Slide control)
+Encoder 1: SPEED
+           - Center = normal (100%)
+           - CCW = slower/reverse
+           - CW = faster
+           - Press = reset to 100%
 
-Row 3:   Gene Size (16 preset values)
-         - Brightness = selected size
-         - Values: 5ms, 10ms, 20ms, 40ms, 80ms, 120ms, 200ms, 350ms,
-                   500ms, 750ms, 1000ms, 1500ms, 2000ms, 3000ms, 4000ms, 5000ms
+Encoder 2: PITCH
+           - Center = no shift (0 semitones)
+           - CCW = pitch down
+           - CW = pitch up
+           - Press = reset to 0
 
-Row 4:   Morph (16 values from gene-shift to time-stretch)
-         - Dimmer at low values (gene-shift zone)
-         - Brighter at high values (time-stretch zone)
-         - Mid-brightness at 50% transition
-
-Row 5:   Varispeed (16 values)
-         - Left half = reverse, right half = forward
-         - Center = freeze (off)
-         - Brightness = speed amount
-
-Row 6:   Track selection (columns 1-4) + Track mute (columns 5-8)
-         - Bright = selected/unmuted
-         - Dim = unselected/muted
-         - Columns 9-12: Quantization mode (off/chromatic/octaves/oct+5ths)
-         - Columns 13-16: Loop mode (forward/reverse/ping-pong/random)
-
-Row 7:   Splice triggers (16 quick-access splices)
-         - Press = jump to splice (Organize)
-         - Brightness = current splice indicator
-         - Hold + Row 1-2 = set splice boundaries
-
-Row 8:   Transport & recording
-         - Col 1-2: Record (press=toggle, bright=recording)
-         - Col 3-4: Play mode (gate/trigger/free-running)
-         - Col 5-6: Splice create (press=add splice at playhead)
-         - Col 7-8: Shift (advance splice)
-         - Col 9-10: SOS amount (5 levels: 0%, 25%, 50%, 75%, 100%)
-         - Col 11-12: Freeze mode
-         - Col 13-16: Page navigation (to Plaits/Mixer/etc.)
-```
-
-**Monome Arc (4-encoder) - Granular Configuration (Revised)**
-
-*Primary Mode*
-```
-Encoder 1: SLIDE (buffer position)
-           - LED ring shows position in splice
-           - Full rotation = full splice length
-           - Press = reset to center
-
-Encoder 2: GENE SIZE
-           - LED ring shows size amount (logarithmic)
-           - Small values = few LEDs, large values = many LEDs
+Encoder 3: SIZE
+           - LED ring shows grain duration
            - Press = default (100ms)
 
-Encoder 3: VARISPEED
-           - LED ring centered at 12 o'clock (normal speed)
-           - Clockwise = faster forward
-           - Counter-clockwise = faster reverse
-           - Press = reset to 0% (freeze)
-
-Encoder 4: MORPH
-           - LED ring shows density/overlap
-           - Low values = sparse LEDs (gene-shift)
-           - High values = dense LEDs (time-stretch)
-           - Press = 50% (neutral)
+Encoder 4: DENSITY
+           - LED ring shows trigger rate
+           - Press = default (20 Hz)
 ```
 
-*Alt Mode (Hold Grid button or keyboard modifier)*
+**Arc (4-encoder) - Alt Mode**
 ```
-Encoder 1: SPREAD (grain position randomization)
-           - LED ring shows amount
-           - Press = 0% (reset)
-
-Encoder 2: PITCH (independent pitch shift with quantization)
-           - Centered at 12 o'clock (no shift)
-           - ±4 octaves range
-           - LED ring snaps to quantized intervals when enabled
-           - Octaves Only mode: Shows discrete LED segments at octave positions
-           - Octaves + Fifths: Additional LED segments at fifth intervals
-
-Encoder 3: FILTER CUTOFF
-           - Full range = full LED ring
-           - Low cutoff = few LEDs
-           - Key tracking option follows PITCH setting
-
-Encoder 4: JITTER (timing randomization)
-           - More LEDs = more randomization
-           - Press = 0% (reset)
+Encoder 1: Scrub (seek position)
+Encoder 2: Fine tune (pitch cents)
+Encoder 3: SPREAD
+Encoder 4: JITTER
 ```
 
-**MIDI Control**
-- **Note On**: Trigger grain playback (if in trigger mode)
-- **Note Pitch**: Transpose grain pitch (chromatic, overrides PITCH parameter)
-  - Respects global quantization settings if enabled
-  - Can set "reference pitch" (e.g., C3 = unison, C4 = +1 oct)
-- **Velocity**: Modulate grain amplitude and/or filter cutoff
-- **Aftertouch**: Assignable (default: Morph or Filter Cutoff)
-- **Mod Wheel (CC1)**: Assigned to Morph by default
-- **Expression (CC11)**: Assigned to Slide by default
-- **Sustain Pedal (CC64)**: Hold current grains, freeze mode
-- **CC Learn**: Map any CC to any parameter
-- **MIDI Clock**: Sync grain triggering and tempo-based quantization
+**Grid - Quick Access**
+```
+Row 1-2: Position scrub (32 positions across buffer)
+Row 3:   Size presets (16 values)
+Row 4:   Density presets (16 values)
+Row 5:   Speed presets (reverse/slow/normal/fast)
+Row 6:   Voice select (1-4) + mute toggles
+Row 7:   Pitch presets (semitone steps)
+Row 8:   Transport + page navigation
+```
+
+**MIDI**
+- **Note On**: Trigger voice gate
+- **Note pitch**: Control pitch parameter
+- **Velocity**: Modulate gain and/or filter
+- **CC1 (Mod)**: Density
+- **CC11 (Expr)**: Position scrub
+- **CC74 (Cutoff)**: Filter cutoff
 
 ---
 
-#### 2.1.13 Presets & Recall
+#### 2.1.11 Future Enhancements
 
-**Preset Structure**
-Each preset contains:
-- All parameter values (Slide, Gene Size, Morph, Varispeed, etc.)
-- Reel reference (path to audio file or embedded audio data)
-- All splice markers and metadata
-- Track configuration (for multi-track mode)
-- Modulation assignments
-- Controller mappings
+These features are not part of the initial implementation but could be added later:
 
-**Preset Categories**
-- **Textures**: Ambient, pad-like granular clouds
-- **Rhythmic**: Synced, percussive grain patterns
-- **Pitched/Harmonic**: Musical, melodic granulation with quantization presets
-  - "Octave Doubler" (multiple tracks at octave intervals)
-  - "Power Chords" (octaves + fifths stacking)
-  - "Vocal Harmonizer" (formant-preserved pitch shifts)
-- **Experimental**: Extreme, glitchy, chaotic
-- **User**: Custom saved presets
-
-**Preset Morphing**
-- **A/B comparison**: Load two presets, crossfade between them
-- **Morph amount**: Interpolate all parameters
-- **Use**: Smooth transitions, performance tool
-
----
-
-#### 2.1.14 Performance Features
-
-**Macro Controls**
-- **Complexity**: Master control over Morph, Jitter, and Spread
-  - Low = simple, predictable, musical
-  - High = chaotic, evolving, experimental
-
-- **Brightness**: Master control over Filter Cutoff and high-frequency content
-  - Can be linked to key tracking for musical filtering
-
-- **Movement**: Master control over Slide modulation rate and Spread
-  - Tempo-syncable for musical movement
-
-- **Harmony** (NEW): Master control over multi-track pitch relationships
-  - Presets: "Unison", "Octaves", "Octaves+5ths", "Triad", "Cluster"
-  - Instantly configure all track pitch offsets for harmonic stacking
-
-**Randomization**
-- **Per-parameter**: Randomize individual parameters within range
-- **Organized chaos**: Randomize with musically-sensible constraints
-- **Dice roll**: Completely randomize all parameters
-- **Undo**: Return to pre-randomization state
-
-**Scene Recall**
-- **8 scene slots**: Store complete engine state
-- **Instant recall**: Single button press to load scene
-- **Morphing**: Smooth interpolation between scenes
-- **Use**: Live performance, A/B/C/D arrangement sections
-
----
-
-#### 2.1.15 Output & Routing
-
-**Direct Outputs**
-- **Main stereo**: Summed output of all tracks
-- **Individual tracks**: Separate outputs for external processing
-- **Aux outputs**: Pre-fader sends to effects
-
-**Internal Routing**
-- **To mixer**: Granular engine channel with full mixer controls
-- **To effects**: Send levels to delay/reverb/distortion
-- **Sidechain**: Granular output can modulate other parameters
-
-**Export Rendering**
-- **Offline bounce**: Render to file faster than real-time
-- **Stem export**: Each track as separate audio file
-- **Effect rendering**: Render with or without effects
+- **Splice/marker system** (Morphagene-style)
+- **Sound-on-Sound recording**
+- **Pitch quantization** (chromatic, scales)
+- **LFO modulation** per parameter
+- **Pattern recording** (sequence parameter changes)
+- **Additional window types**
 
 ---
 
@@ -1149,17 +830,31 @@ Based on Mutable Instruments Plaits (open source):
 ---
 
 ## Document Version
-- **Version**: 1.2
-- **Date**: 2026-02-01
-- **Status**: Unified granular specification with musical focus
-- **Changes from v1.1**:
-  - Rationalized Morphagene and Mangl approaches into unified parameter set
-  - Removed redundant SPEED parameter (functionality merged into VARISPEED)
-  - Removed DENSITY parameter (functionality handled by MORPH)
-  - Comprehensive musical quantization system for pitch/intervals
-  - Octaves, Octaves+Fifths, Octaves+Fourths, and custom interval quantization
-  - Per-track or global quantization settings
-  - Enhanced multi-track architecture for harmonic layering and octave doubling
-  - Harmony macro control for instant harmonic stack configuration
-  - MIDI note input with quantization support
-  - Updated controller mappings to reflect unified approach
+- **Version**: 2.0
+- **Date**: 2026-02-02
+- **Status**: Simplified to Mangl-based granular engine
+- **Changes from v1.2**:
+  - **Simplified granular architecture** to match Mangl/MGlut behavior
+  - Removed complex Morphagene hierarchy (Reels → Splices → Genes)
+  - Replaced with simple per-voice buffers with optional loop points
+  - **Direct parameter set** based on MGlut engine:
+    - POSITION (pos) - playback position (0-1)
+    - SPEED - playback speed with tape-style pitch coupling
+    - PITCH - independent pitch shift (semitones)
+    - SIZE - grain duration (ms)
+    - DENSITY - grain trigger rate (Hz)
+    - JITTER - random position offset per grain
+    - SPREAD - stereo spread (random pan)
+    - PAN - base pan position
+    - GAIN - volume
+    - FILTER (cutoff/Q) - low-pass filter
+    - SEND - effect send level
+    - ENVELOPE SCALE - attack/decay time
+  - Removed complex MORPH parameter (gene-shift vs time-stretch modes)
+  - Removed VARISPEED (replaced with simpler SPEED + PITCH)
+  - Removed ORGANIZE/SLIDE (replaced with POSITION)
+  - Removed Sound-on-Sound, splice creation, CV outputs
+  - Removed complex quantization system (future enhancement)
+  - Added Greyhole-style effect bus from MGlut
+  - Simplified DSP implementation notes based on SuperCollider GrainBuf
+  - Simplified controller mappings for direct parameter control

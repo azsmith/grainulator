@@ -56,8 +56,13 @@ public:
     void SetMorphModAmount(float amount);
 
     // LPG (Low-Pass Gate) control
-    void SetLPGColor(float color);     // 0.0 = LP, 1.0 = VCA
-    void SetLPGDecay(float decay);      // 0.0-1.0
+    void SetLPGColor(float color);      // 0.0 = VCA only, 1.0 = VCA + LP filter
+    void SetLPGDecay(float decay);      // 0.0 = short, 1.0 = long decay
+    void SetLPGAttack(float attack);    // 0.0 = instant, 1.0 = slow attack
+
+    // LPG Bypass (for testing) - when true, audio passes through without LPG processing
+    void SetLPGBypass(bool bypass);
+    bool GetLPGBypass() const { return lpg_bypass_; }
 
 private:
     float sample_rate_;
@@ -79,19 +84,44 @@ private:
     // LPG parameters
     float lpg_color_;
     float lpg_decay_;
+    float lpg_attack_;
+    bool lpg_bypass_;  // When true, bypass LPG entirely (for testing)
 
     // Envelope state
     float envelope_;
+    float envelope_target_;
     bool prev_trigger_;
+    int trigger_count_;  // Counts pending triggers (for fast repeated notes)
+
+    // LPG filter state
+    float lpg_filter_state_;
 
     // Engine instances (using void* to avoid header dependencies)
-    void* va_engine_;      // VirtualAnalogEngine
-    void* fm_engine_;      // FMEngine
-    void* ws_engine_;      // WaveshapingEngine
-    void* grain_engine_;   // GrainEngine
+    void* va_engine_;         // VirtualAnalogEngine (0)
+    void* ws_engine_;         // WaveshapingEngine (1)
+    void* fm_engine_;         // FMEngine (2)
+    void* formant_engine_;    // FormantEngine (3)
+    void* harmonic_engine_;   // HarmonicEngine (4)
+    void* wavetable_engine_;  // WavetableEngine (5)
+    void* chord_engine_;      // ChordEngine (6)
+    void* speech_engine_;     // SpeechEngine (7)
+    void* grain_engine_;      // GrainEngine (8)
+    void* noise_engine_;      // NoiseEngine (9, 10)
+    void* string_engine_;     // StringEngine (11, 12)
+    void* percussion_engine_; // PercussionEngine (13, 14, 15)
 
     // Internal render helper
     void RenderEngine(float* out, float* aux, size_t size);
+
+    // Check if current engine is percussion (kick, snare, hihat)
+    bool IsPercussionEngine() const;
+
+    // Check if current engine is a triggered engine (11-15) with internal envelope
+    // These engines bypass the LPG and manage their own decay
+    bool IsTriggeredEngine() const;
+
+    // Check if current engine is granular (8-10)
+    bool IsGranularEngine() const;
 
     // Prevent copying
     PlaitsVoice(const PlaitsVoice&) = delete;
