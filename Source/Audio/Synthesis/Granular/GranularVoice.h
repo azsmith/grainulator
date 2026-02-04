@@ -81,6 +81,12 @@ public:
         , envscale_(1.0f)       // Envelope time scale in seconds
         , window_type_(WindowType::Hanning)  // Grain envelope shape
         , decay_rate_(5.0f)    // Envelope decay rate (1.0 - 10.0)
+        // Modulation inputs
+        , speed_mod_(0.0f)
+        , pitch_mod_(0.0f)
+        , size_mod_(0.0f)
+        , density_mod_(0.0f)
+        , filter_mod_(0.0f)
         // Loop points (optional)
         , loop_in_(0.0f)
         , loop_out_(1.0f)
@@ -156,13 +162,13 @@ public:
         pitch_ = std::pow(2.0f, semitones / 12.0f);
     }
 
-    /// SIZE: Grain duration in SECONDS (0.001 - 1.0)
+    /// SIZE: Grain duration in SECONDS (0.001 - 3.0)
     void SetSize(float seconds) {
-        size_ = std::max(0.001f, std::min(1.0f, seconds));
+        size_ = std::max(0.001f, std::min(3.0f, seconds));
     }
     float GetSize() const { return size_; }
 
-    /// Set size in milliseconds (1 - 500)
+    /// Set size in milliseconds (1 - 3000)
     void SetSizeMs(float ms) {
         SetSize(ms / 1000.0f);
     }
@@ -248,6 +254,69 @@ public:
         send_ = std::max(0.0f, std::min(1.0f, value));
     }
     float GetSend() const { return send_; }
+
+    // ========== Modulation Inputs (bipolar -1 to +1) ==========
+
+    /// Set speed modulation amount (bipolar)
+    void SetSpeedMod(float mod) {
+        speed_mod_ = std::max(-1.0f, std::min(1.0f, mod));
+    }
+
+    /// Set pitch modulation amount (bipolar, in semitones range)
+    void SetPitchMod(float mod) {
+        pitch_mod_ = std::max(-1.0f, std::min(1.0f, mod));
+    }
+
+    /// Set size modulation amount (bipolar)
+    void SetSizeMod(float mod) {
+        size_mod_ = std::max(-1.0f, std::min(1.0f, mod));
+    }
+
+    /// Set density modulation amount (bipolar)
+    void SetDensityMod(float mod) {
+        density_mod_ = std::max(-1.0f, std::min(1.0f, mod));
+    }
+
+    /// Set filter cutoff modulation amount (bipolar)
+    void SetFilterMod(float mod) {
+        filter_mod_ = std::max(-1.0f, std::min(1.0f, mod));
+    }
+
+    /// Get effective speed with modulation applied
+    float GetEffectiveSpeed() const {
+        // Modulation adds ±2 to speed range
+        return std::max(-2.0f, std::min(2.0f, speed_ + speed_mod_ * 2.0f));
+    }
+
+    /// Get effective pitch with modulation applied
+    float GetEffectivePitch() const {
+        // Modulation adds ±1 octave (±12 semitones)
+        float mod_semitones = pitch_mod_ * 12.0f;
+        float mod_ratio = std::pow(2.0f, mod_semitones / 12.0f);
+        return std::max(0.25f, std::min(4.0f, pitch_ * mod_ratio));
+    }
+
+    /// Get effective size with modulation applied
+    float GetEffectiveSize() const {
+        // Modulation scales size by ±50%
+        float scale = 1.0f + size_mod_ * 0.5f;
+        return std::max(0.001f, std::min(3.0f, size_ * scale));
+    }
+
+    /// Get effective density with modulation applied
+    float GetEffectiveDensity() const {
+        // Modulation scales density by ±200%
+        float scale = 1.0f + density_mod_ * 2.0f;
+        return std::max(0.1f, std::min(512.0f, density_ * scale));
+    }
+
+    /// Get effective filter cutoff with modulation applied
+    float GetEffectiveCutoff() const {
+        // Modulation adds ±4 octaves to cutoff
+        float mod_octaves = filter_mod_ * 4.0f;
+        float mod_ratio = std::pow(2.0f, mod_octaves);
+        return std::max(20.0f, std::min(20000.0f, cutoff_ * mod_ratio));
+    }
 
     /// ENVSCALE: Voice envelope time scale in seconds (0.001 - 9.0)
     void SetEnvScale(float seconds) {
@@ -339,19 +408,23 @@ public:
             float env_target = gate_ ? 1.0f : 0.0f;
             envelope_level_ += env_coef * (env_target - envelope_level_);
 
+            // Get effective modulated values
+            float effective_speed = GetEffectiveSpeed();
+            float effective_density = GetEffectiveDensity();
+
             // Advance phasor position (like SC's Phasor.kr)
             // Rate = speed / buffer_duration (so at speed=1, takes buf_dur to go 0→1)
             if (!freeze_ && gate_) {
-                float phasor_rate = speed_ / (buffer_duration * sample_rate_);
+                float phasor_rate = effective_speed / (buffer_duration * sample_rate_);
                 position_ += phasor_rate;
 
                 // Wrap position
                 if (loop_enabled_) {
                     float loop_length = loop_out_ - loop_in_;
                     if (loop_length > 0.001f) {
-                        if (speed_ > 0.0f && position_ >= loop_out_) {
+                        if (effective_speed > 0.0f && position_ >= loop_out_) {
                             position_ = loop_in_ + std::fmod(position_ - loop_in_, loop_length);
-                        } else if (speed_ < 0.0f && position_ < loop_in_) {
+                        } else if (effective_speed < 0.0f && position_ < loop_in_) {
                             position_ = loop_out_ - std::fmod(loop_in_ - position_, loop_length);
                         }
                     }
@@ -362,12 +435,13 @@ public:
             }
 
             // Trigger grains at density rate (like SC's Impulse.kr)
-            if (gate_ && density_ > 0.0f) {
+            // Recalculate interval based on modulated density
+            float mod_grain_interval = (effective_density <= 0.1f) ? sample_rate_ * 10.0f : sample_rate_ / effective_density;
+            if (gate_ && effective_density > 0.0f) {
                 grain_timer_ += 1.0f;
-                if (grain_timer_ >= grain_interval_) {
+                if (grain_timer_ >= mod_grain_interval) {
                     SpawnGrain();
                     grain_timer_ = 0.0f;
-                    CalculateGrainInterval();
                 }
             }
 
@@ -433,9 +507,10 @@ public:
             sample_l *= gain_;
             sample_r *= gain_;
 
-            // Apply 4-pole Moog-style ladder low-pass filter
-            if (cutoff_ < 19500.0f) {
-                ApplyFilter(sample_l, sample_r);
+            // Apply 4-pole Moog-style ladder low-pass filter with modulation
+            float effective_cutoff = GetEffectiveCutoff();
+            if (effective_cutoff < 19500.0f) {
+                ApplyFilterWithCutoff(sample_l, sample_r, effective_cutoff);
             }
 
             // Soft clip output
@@ -480,6 +555,13 @@ private:
     float envscale_;    // Envelope time
     WindowType window_type_;  // Grain envelope shape
     float decay_rate_;  // Envelope decay rate for pluck/decay envelopes
+
+    // Modulation inputs (bipolar -1 to +1)
+    float speed_mod_;
+    float pitch_mod_;
+    float size_mod_;
+    float density_mod_;
+    float filter_mod_;
 
     // Loop points
     float loop_in_;
@@ -581,8 +663,9 @@ private:
             while (grain_position < 0.0f) grain_position += buffer_length;
         }
 
-        // Grain duration in samples
-        float duration_samples = size_ * sample_rate_;
+        // Grain duration in samples (use modulated size)
+        float effective_size = GetEffectiveSize();
+        float duration_samples = effective_size * sample_rate_;
 
         // Initialize grain
         Grain& grain = grains_[slot];
@@ -592,7 +675,8 @@ private:
         grain.phase = 0.0f;
         grain.duration_samples = duration_samples;
 
-        float grainPitchRatio = pitch_;
+        // Use modulated pitch as base
+        float grainPitchRatio = GetEffectivePitch();
         if (morphPitchActive) {
             // Discrete octave choices for morph pitch: unison, -1 octave, +1 octave.
             const float octaveChoices[3] = {1.0f, 0.5f, 2.0f};
@@ -677,7 +761,34 @@ private:
     }
 
     void ApplyFilter(float& sample_l, float& sample_r) {
+        ApplyFilterWithCutoff(sample_l, sample_r, cutoff_);
+    }
+
+    void ApplyFilterWithCutoff(float& sample_l, float& sample_r, float cutoff) {
         if (!filter_l_ || !filter_r_) return;
+
+        // Model-specific stability limits
+        float cutoffLimit = 0.45f;
+        switch (filter_model_) {
+            case FilterModel::Simplified:         cutoffLimit = 0.40f; break;
+            case FilterModel::Huovilainen:        cutoffLimit = 0.38f; break;
+            case FilterModel::Stilson:            cutoffLimit = 0.45f; break;
+            case FilterModel::Microtracker:       cutoffLimit = 0.45f; break;
+            case FilterModel::Krajeski:           cutoffLimit = 0.45f; break;
+            case FilterModel::MusicDSP:           cutoffLimit = 0.42f; break;
+            case FilterModel::OberheimVariation:  cutoffLimit = 0.40f; break;
+            case FilterModel::Improved:           cutoffLimit = 0.40f; break;
+            case FilterModel::RKSimulation:       cutoffLimit = 0.35f; break;
+            case FilterModel::Hyperion:           cutoffLimit = 0.42f; break;
+            case FilterModel::Count: break;
+        }
+
+        const float nyquist = sample_rate_ * 0.5f;
+        const float safeCutoff = std::max(20.0f, std::min(cutoff, nyquist * cutoffLimit));
+
+        // Update filter cutoff for modulation
+        filter_l_->SetCutoff(safeCutoff);
+        filter_r_->SetCutoff(safeCutoff);
 
         sample_l = std::max(-8.0f, std::min(8.0f, sample_l));
         sample_r = std::max(-8.0f, std::min(8.0f, sample_r));

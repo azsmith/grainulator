@@ -11,6 +11,18 @@
 #include "Granular/ReelBuffer.h"
 #include "Rings/RingsVoice.h"
 #include "Looper/LooperVoice.h"
+// Moog ladder filter models for master filter
+#include "Granular/MoogLadders/LadderFilterBase.h"
+#include "Granular/MoogLadders/SimplifiedModel.h"
+#include "Granular/MoogLadders/HuovilainenModel.h"
+#include "Granular/MoogLadders/StilsonModel.h"
+#include "Granular/MoogLadders/MicrotrackerModel.h"
+#include "Granular/MoogLadders/KrajeskiModel.h"
+#include "Granular/MoogLadders/MusicDSPModel.h"
+#include "Granular/MoogLadders/OberheimVariationModel.h"
+#include "Granular/MoogLadders/ImprovedModel.h"
+#include "Granular/MoogLadders/RKSimulationModel.h"
+#include "Granular/MoogLadders/HyperionModel.h"
 #include <cstring>
 #include <cmath>
 #include <algorithm>
@@ -109,6 +121,10 @@ AudioEngine::AudioEngine()
         m_channelGain[i] = 1.0f;  // Unity gain
         m_channelPan[i] = 0.0f;   // Center
         m_channelSend[i] = 0.0f;
+        m_channelDelaySamples[i] = 0;
+        m_channelDelayWritePos[i] = 0;
+        m_channelDelayBufferL[i].fill(0.0f);
+        m_channelDelayBufferR[i].fill(0.0f);
         m_channelMute[i] = false;
         m_channelSolo[i] = false;
         m_channelLevels[i].store(0.0f);
@@ -116,6 +132,45 @@ AudioEngine::AudioEngine()
     m_masterGain = 1.0f;  // Default master at unity
     m_masterLevelL.store(0.0f);
     m_masterLevelR.store(0.0f);
+
+    // Initialize master filter defaults
+    m_masterFilterCutoff = 20000.0f;   // Wide open by default
+    m_masterFilterResonance = 0.0f;    // No resonance by default
+    m_masterFilterModel = 2;           // Stilson model by default
+
+    // Initialize master clock
+    m_clockBPM.store(120.0f);
+    m_clockRunning.store(false);
+    m_clockSwing = 0.0f;
+    m_clockStartSample = 0;
+
+    // Initialize clock outputs
+    for (int i = 0; i < kNumClockOutputs; ++i) {
+        m_clockOutputs[i].mode = 0;              // Clock mode
+        m_clockOutputs[i].waveform = 0;          // Gate
+        m_clockOutputs[i].divisionIndex = 9;    // x1
+        m_clockOutputs[i].level = 1.0f;
+        m_clockOutputs[i].offset = 0.0f;
+        m_clockOutputs[i].phase = 0.0f;
+        m_clockOutputs[i].width = 0.5f;
+        m_clockOutputs[i].destination = 0;       // None
+        m_clockOutputs[i].modulationAmount = 0.5f;
+        m_clockOutputs[i].muted = false;
+        m_clockOutputs[i].slowMode = false;
+        m_clockOutputs[i].phaseAccumulator = 0.0;
+        m_clockOutputs[i].currentValue = 0.0f;
+        m_clockOutputs[i].sampleHoldValue = 0.0f;
+        m_clockOutputs[i].smoothedRandomValue = 0.0f;
+        m_clockOutputs[i].randomTarget = 0.0f;
+        m_clockOutputs[i].randomState = 0x12345678u + static_cast<uint32_t>(i * 12345);
+        m_clockOutputs[i].lastPhaseForSH = 0.0;
+        m_clockOutputValues[i].store(0.0f);
+    }
+
+    // Initialize modulation values
+    for (int i = 0; i < static_cast<int>(ModulationDestination::NumDestinations); ++i) {
+        m_modulationValues[i] = 0.0f;
+    }
 }
 
 AudioEngine::~AudioEngine() {
@@ -175,6 +230,9 @@ bool AudioEngine::initialize(int sampleRate, int bufferSize) {
 
     // Initialize effects
     initEffects();
+
+    // Initialize master filter
+    initMasterFilter();
 
     m_initialized.store(true);
     return true;
@@ -395,31 +453,60 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
         return;
     }
 
+    // Process master clock and update modulation values
+    processClockOutputs(numFrames);
+    applyModulation();
+
     const uint64_t bufferStartSample = m_currentSampleTime.load(std::memory_order_relaxed);
     const uint64_t bufferEndSample = bufferStartSample + static_cast<uint64_t>(numFrames);
 
     // Pop all queued note events that fall within this buffer.
+    // NOTE: Events may be enqueued out of chronological order (e.g., noteOn for track1,
+    // noteOff for track1, noteOn for track2). We must read ALL due events, not break early.
     std::array<ScheduledNoteEvent, kScheduledEventCapacity> dueEvents{};
     int dueEventCount = 0;
-    while (dueEventCount < static_cast<int>(kScheduledEventCapacity)) {
-        const uint32_t read = m_scheduledReadIndex.load(std::memory_order_relaxed);
-        const uint32_t write = m_scheduledWriteIndex.load(std::memory_order_acquire);
-        if (read == write) {
-            break;
-        }
 
+    // First, collect all events that are due (sampleTime < bufferEndSample)
+    // We need to scan past future events to find all due events
+    uint32_t read = m_scheduledReadIndex.load(std::memory_order_relaxed);
+    const uint32_t write = m_scheduledWriteIndex.load(std::memory_order_acquire);
+
+    // Temporary storage for events we need to keep (not yet due)
+    std::array<ScheduledNoteEvent, kScheduledEventCapacity> futureEvents{};
+    int futureEventCount = 0;
+
+    while (read != write && (dueEventCount + futureEventCount) < static_cast<int>(kScheduledEventCapacity)) {
         const ScheduledNoteEvent event = m_scheduledEvents[read];
-        if (event.sampleTime >= bufferEndSample) {
-            break;
+
+        if (event.sampleTime < bufferEndSample) {
+            // Event is due - add to dueEvents
+            dueEvents[dueEventCount] = event;
+            if (dueEvents[dueEventCount].sampleTime < bufferStartSample) {
+                dueEvents[dueEventCount].sampleTime = bufferStartSample;
+            }
+            ++dueEventCount;
+        } else {
+            // Event is in the future - keep for later
+            futureEvents[futureEventCount] = event;
+            ++futureEventCount;
         }
 
-        m_scheduledReadIndex.store((read + 1) % kScheduledEventCapacity, std::memory_order_release);
-        dueEvents[dueEventCount] = event;
-        if (dueEvents[dueEventCount].sampleTime < bufferStartSample) {
-            dueEvents[dueEventCount].sampleTime = bufferStartSample;
-        }
-        ++dueEventCount;
+        read = (read + 1) % kScheduledEventCapacity;
     }
+
+    // Update read index to consume all events we examined
+    m_scheduledReadIndex.store(read, std::memory_order_release);
+
+    // Re-enqueue future events (they need to be processed in a later buffer)
+    for (int i = 0; i < futureEventCount; ++i) {
+        enqueueScheduledEvent(futureEvents[i]);
+    }
+
+    // Sort due events by sampleTime for correct processing order
+    std::sort(dueEvents.begin(), dueEvents.begin() + dueEventCount,
+        [](const ScheduledNoteEvent& a, const ScheduledNoteEvent& b) {
+            return a.sampleTime < b.sampleTime;
+        });
 
     // Check if any channel is soloed
     bool anySoloed = false;
@@ -437,6 +524,27 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
 
     auto renderChunk = [&](int frameOffset, int frameCount) {
         if (frameCount <= 0) return;
+
+        auto applyChannelDelay = [&](int channel, float inputL, float inputR, float& delayedL, float& delayedR) {
+            const int bufferLen = kMaxChannelDelaySamples + 1;
+            int writePos = m_channelDelayWritePos[channel];
+            int delaySamples = std::clamp(m_channelDelaySamples[channel], 0, kMaxChannelDelaySamples);
+            int readPos = writePos - delaySamples;
+            if (readPos < 0) {
+                readPos += bufferLen;
+            }
+
+            m_channelDelayBufferL[channel][writePos] = inputL;
+            m_channelDelayBufferR[channel][writePos] = inputR;
+            delayedL = m_channelDelayBufferL[channel][readPos];
+            delayedR = m_channelDelayBufferR[channel][readPos];
+
+            writePos++;
+            if (writePos >= bufferLen) {
+                writePos = 0;
+            }
+            m_channelDelayWritePos[channel] = writePos;
+        };
 
         // Clear main processing and send buffers for this chunk.
         std::memset(m_processingBuffer[0], 0, frameCount * sizeof(float));
@@ -475,16 +583,19 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                 float mono = (m_voiceBuffer[0][i] + m_voiceBuffer[1][i]) * 0.5f * gain;
                 float outL = mono * panL;
                 float outR = mono * panR;
+                float delayedL = 0.0f;
+                float delayedR = 0.0f;
+                applyChannelDelay(ch, outL, outR, delayedL, delayedR);
 
                 channelPeaks[ch] = std::max(channelPeaks[ch], std::abs(mono));
 
                 if (shouldPlay) {
-                    m_processingBuffer[0][i] += outL;
-                    m_processingBuffer[1][i] += outR;
+                    m_processingBuffer[0][i] += delayedL;
+                    m_processingBuffer[1][i] += delayedR;
                 }
 
-                m_sendBufferL[i] += outL * send;
-                m_sendBufferR[i] += outR * send;
+                m_sendBufferL[i] += delayedL * send;
+                m_sendBufferR[i] += delayedR * send;
             }
         }
 
@@ -510,16 +621,19 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                 float sampleR = m_voiceBuffer[1][i] * gain;
                 float outL = sampleL * panL;
                 float outR = sampleR * panR;
+                float delayedL = 0.0f;
+                float delayedR = 0.0f;
+                applyChannelDelay(ch, outL, outR, delayedL, delayedR);
 
                 channelPeaks[ch] = std::max(channelPeaks[ch], std::max(std::abs(sampleL), std::abs(sampleR)));
 
                 if (shouldPlay) {
-                    m_processingBuffer[0][i] += outL;
-                    m_processingBuffer[1][i] += outR;
+                    m_processingBuffer[0][i] += delayedL;
+                    m_processingBuffer[1][i] += delayedR;
                 }
 
-                m_sendBufferL[i] += outL * send;
-                m_sendBufferR[i] += outR * send;
+                m_sendBufferL[i] += delayedL * send;
+                m_sendBufferR[i] += delayedR * send;
             }
         }
 
@@ -554,16 +668,19 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                 float sampleR = m_voiceBuffer[1][i] * gain;
                 float outL = sampleL * panL;
                 float outR = sampleR * panR;
+                float delayedL = 0.0f;
+                float delayedR = 0.0f;
+                applyChannelDelay(ch, outL, outR, delayedL, delayedR);
 
                 channelPeaks[ch] = std::max(channelPeaks[ch], std::max(std::abs(sampleL), std::abs(sampleR)));
 
                 if (shouldPlay) {
-                    m_processingBuffer[0][i] += outL;
-                    m_processingBuffer[1][i] += outR;
+                    m_processingBuffer[0][i] += delayedL;
+                    m_processingBuffer[1][i] += delayedR;
                 }
 
-                m_sendBufferL[i] += outL * send;
-                m_sendBufferR[i] += outR * send;
+                m_sendBufferL[i] += delayedL * send;
+                m_sendBufferR[i] += delayedR * send;
             }
         }
 
@@ -586,10 +703,18 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
 
         // ========== Final Processing + output ==========
         for (int i = 0; i < frameCount; ++i) {
-            m_processingBuffer[0][i] *= m_masterGain;
-            m_processingBuffer[1][i] *= m_masterGain;
-            m_processingBuffer[0][i] = std::tanh(m_processingBuffer[0][i]);
-            m_processingBuffer[1][i] = std::tanh(m_processingBuffer[1][i]);
+            // Apply master filter before gain
+            float sampleL = m_processingBuffer[0][i];
+            float sampleR = m_processingBuffer[1][i];
+            processMasterFilter(sampleL, sampleR);
+
+            // Apply master gain
+            sampleL *= m_masterGain;
+            sampleR *= m_masterGain;
+
+            // Soft clip
+            m_processingBuffer[0][i] = std::tanh(sampleL);
+            m_processingBuffer[1][i] = std::tanh(sampleR);
 
             masterPeakL = std::max(masterPeakL, std::abs(m_processingBuffer[0][i]));
             masterPeakR = std::max(masterPeakR, std::abs(m_processingBuffer[1][i]));
@@ -1024,9 +1149,35 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
             }
             break;
 
+        case ParameterID::VoiceMicroDelay:
+            if (voiceIndex >= 0 && voiceIndex < kNumMixerChannels) {
+                const float maxDelaySeconds = 0.05f; // 50ms
+                const int delaySamples = static_cast<int>(clampedValue * maxDelaySeconds * static_cast<float>(m_sampleRate) + 0.5f);
+                m_channelDelaySamples[voiceIndex] = std::clamp(delaySamples, 0, kMaxChannelDelaySamples);
+            }
+            break;
+
         case ParameterID::MasterGain:
             // Allow master gain up to 2.0 (0-1 maps to 0-2 for +6dB headroom)
             m_masterGain = clampedValue * 2.0f;
+            break;
+
+        // ========== Master Filter Parameters ==========
+        case ParameterID::MasterFilterCutoff:
+            // Map 0-1 to 20-20000 Hz (logarithmic)
+            m_masterFilterCutoff = 20.0f * std::pow(1000.0f, clampedValue);
+            updateMasterFilterParameters();
+            break;
+
+        case ParameterID::MasterFilterResonance:
+            m_masterFilterResonance = clampedValue;
+            updateMasterFilterParameters();
+            break;
+
+        case ParameterID::MasterFilterModel:
+            // Map 0-1 to model index (0-9)
+            m_masterFilterModel = static_cast<int>(clampedValue * 9.0f + 0.5f);
+            initMasterFilter();  // Recreate filter instances
             break;
 
         default:
@@ -1491,6 +1642,393 @@ void AudioEngine::processReverb(float& left, float& right) {
     // Mix dry/wet
     left = left * (1.0f - m_reverbMix) + outL * m_reverbMix;
     right = right * (1.0f - m_reverbMix) + outR * m_reverbMix;
+}
+
+// ========== Master Clock Implementation ==========
+
+void AudioEngine::setClockBPM(float bpm) {
+    m_clockBPM.store(std::clamp(bpm, 10.0f, 330.0f));
+}
+
+void AudioEngine::setClockRunning(bool running) {
+    if (running && !m_clockRunning.load()) {
+        // Starting clock - record start time and reset phases
+        m_clockStartSample = m_currentSampleTime.load(std::memory_order_relaxed);
+        for (int i = 0; i < kNumClockOutputs; ++i) {
+            m_clockOutputs[i].phaseAccumulator = m_clockOutputs[i].phase;
+        }
+    }
+    m_clockRunning.store(running);
+}
+
+void AudioEngine::setClockStartSample(uint64_t startSample) {
+    // Set the clock start sample explicitly for synchronization with sequencer
+    m_clockStartSample = startSample;
+    // Reset all phase accumulators to their initial phase offset
+    for (int i = 0; i < kNumClockOutputs; ++i) {
+        m_clockOutputs[i].phaseAccumulator = m_clockOutputs[i].phase;
+    }
+}
+
+void AudioEngine::setClockSwing(float swing) {
+    m_clockSwing = std::clamp(swing, 0.0f, 1.0f);
+}
+
+float AudioEngine::getClockBPM() const {
+    return m_clockBPM.load();
+}
+
+bool AudioEngine::isClockRunning() const {
+    return m_clockRunning.load();
+}
+
+void AudioEngine::setClockOutputMode(int outputIndex, int mode) {
+    if (outputIndex >= 0 && outputIndex < kNumClockOutputs) {
+        m_clockOutputs[outputIndex].mode = mode;
+    }
+}
+
+void AudioEngine::setClockOutputWaveform(int outputIndex, int waveform) {
+    if (outputIndex >= 0 && outputIndex < kNumClockOutputs) {
+        m_clockOutputs[outputIndex].waveform = std::clamp(waveform, 0,
+            static_cast<int>(ClockWaveform::NumWaveforms) - 1);
+    }
+}
+
+void AudioEngine::setClockOutputDivision(int outputIndex, int division) {
+    if (outputIndex >= 0 && outputIndex < kNumClockOutputs) {
+        m_clockOutputs[outputIndex].divisionIndex = std::clamp(division, 0, 18);
+    }
+}
+
+void AudioEngine::setClockOutputLevel(int outputIndex, float level) {
+    if (outputIndex >= 0 && outputIndex < kNumClockOutputs) {
+        m_clockOutputs[outputIndex].level = std::clamp(level, 0.0f, 1.0f);
+    }
+}
+
+void AudioEngine::setClockOutputOffset(int outputIndex, float offset) {
+    if (outputIndex >= 0 && outputIndex < kNumClockOutputs) {
+        m_clockOutputs[outputIndex].offset = std::clamp(offset, -1.0f, 1.0f);
+    }
+}
+
+void AudioEngine::setClockOutputPhase(int outputIndex, float phase) {
+    if (outputIndex >= 0 && outputIndex < kNumClockOutputs) {
+        m_clockOutputs[outputIndex].phase = std::clamp(phase, 0.0f, 1.0f);
+    }
+}
+
+void AudioEngine::setClockOutputWidth(int outputIndex, float width) {
+    if (outputIndex >= 0 && outputIndex < kNumClockOutputs) {
+        m_clockOutputs[outputIndex].width = std::clamp(width, 0.0f, 1.0f);
+    }
+}
+
+void AudioEngine::setClockOutputDestination(int outputIndex, int dest) {
+    if (outputIndex >= 0 && outputIndex < kNumClockOutputs) {
+        m_clockOutputs[outputIndex].destination = std::clamp(dest, 0,
+            static_cast<int>(ModulationDestination::NumDestinations) - 1);
+    }
+}
+
+void AudioEngine::setClockOutputModAmount(int outputIndex, float amount) {
+    if (outputIndex >= 0 && outputIndex < kNumClockOutputs) {
+        m_clockOutputs[outputIndex].modulationAmount = std::clamp(amount, 0.0f, 1.0f);
+    }
+}
+
+void AudioEngine::setClockOutputMuted(int outputIndex, bool muted) {
+    if (outputIndex >= 0 && outputIndex < kNumClockOutputs) {
+        m_clockOutputs[outputIndex].muted = muted;
+    }
+}
+
+void AudioEngine::setClockOutputSlowMode(int outputIndex, bool slow) {
+    if (outputIndex >= 0 && outputIndex < kNumClockOutputs) {
+        m_clockOutputs[outputIndex].slowMode = slow;
+    }
+}
+
+float AudioEngine::getClockOutputValue(int outputIndex) const {
+    if (outputIndex >= 0 && outputIndex < kNumClockOutputs) {
+        return m_clockOutputValues[outputIndex].load();
+    }
+    return 0.0f;
+}
+
+float AudioEngine::getModulationValue(int destination) const {
+    if (destination >= 0 && destination < static_cast<int>(ModulationDestination::NumDestinations)) {
+        return m_modulationValues[destination];
+    }
+    return 0.0f;
+}
+
+float AudioEngine::generateWaveform(int waveform, double phase, float width, ClockOutputState& state) {
+    // Phase is 0-1, output is -1 to +1
+    const float p = static_cast<float>(phase);
+
+    switch (static_cast<ClockWaveform>(waveform)) {
+        case ClockWaveform::Gate:
+            // Gate/pulse wave - width controls duty cycle
+            return (p < width) ? 1.0f : -1.0f;
+
+        case ClockWaveform::Sine:
+            return std::sin(p * 2.0f * 3.14159265359f);
+
+        case ClockWaveform::Triangle: {
+            // Triangle with skew controlled by width
+            if (p < width) {
+                return (width > 0.0f) ? (-1.0f + 2.0f * p / width) : 0.0f;
+            } else {
+                return (width < 1.0f) ? (1.0f - 2.0f * (p - width) / (1.0f - width)) : 0.0f;
+            }
+        }
+
+        case ClockWaveform::Saw:
+            // Sawtooth down (starts high, falls to low)
+            return 1.0f - 2.0f * p;
+
+        case ClockWaveform::Ramp:
+            // Ramp up (starts low, rises to high)
+            return -1.0f + 2.0f * p;
+
+        case ClockWaveform::Square:
+            // Square wave (fixed 50% duty)
+            return (p < 0.5f) ? 1.0f : -1.0f;
+
+        case ClockWaveform::Random: {
+            // Smoothed random - interpolates toward a new random target each cycle
+            // Detect cycle wrap (phase crosses from high to low)
+            bool cycleStart = (p < 0.01f && state.lastPhaseForSH > 0.5f);
+            if (cycleStart) {
+                // Generate new random target at start of each cycle
+                state.randomState = state.randomState * 1664525u + 1013904223u;
+                state.randomTarget = static_cast<float>(state.randomState) / static_cast<float>(0xFFFFFFFFu) * 2.0f - 1.0f;
+            }
+            state.lastPhaseForSH = p;
+
+            // Smooth interpolation toward target (slew rate based on sample rate)
+            const float smoothingCoeff = 0.001f;  // Adjust for smoothness
+            state.smoothedRandomValue += smoothingCoeff * (state.randomTarget - state.smoothedRandomValue);
+            return state.smoothedRandomValue;
+        }
+
+        case ClockWaveform::SampleHold: {
+            // Sample & Hold - update held value at start of each cycle (phase wrap)
+            // Detect cycle wrap (phase crosses from high to low)
+            bool cycleStart = (p < 0.01f && state.lastPhaseForSH > 0.5f);
+            if (cycleStart) {
+                state.randomState = state.randomState * 1664525u + 1013904223u;
+                state.sampleHoldValue = static_cast<float>(state.randomState) / static_cast<float>(0xFFFFFFFFu) * 2.0f - 1.0f;
+            }
+            state.lastPhaseForSH = p;
+            return state.sampleHoldValue;
+        }
+
+        default:
+            return 0.0f;
+    }
+}
+
+void AudioEngine::processClockOutputs(int numFrames) {
+    if (!m_clockRunning.load()) {
+        // Clock stopped - output zeros
+        for (int i = 0; i < kNumClockOutputs; ++i) {
+            m_clockOutputs[i].currentValue = 0.0f;
+            m_clockOutputValues[i].store(0.0f);
+        }
+        // Clear modulation
+        for (int i = 0; i < static_cast<int>(ModulationDestination::NumDestinations); ++i) {
+            m_modulationValues[i] = 0.0f;
+        }
+        return;
+    }
+
+    const float bpm = m_clockBPM.load();
+    const float beatsPerSecond = bpm / 60.0f;
+    const double samplesPerBeat = static_cast<double>(m_sampleRate) / static_cast<double>(beatsPerSecond);
+
+    // Clear modulation accumulators
+    for (int i = 0; i < static_cast<int>(ModulationDestination::NumDestinations); ++i) {
+        m_modulationValues[i] = 0.0f;
+    }
+
+    // Process each clock output
+    for (int i = 0; i < kNumClockOutputs; ++i) {
+        ClockOutputState& out = m_clockOutputs[i];
+
+        if (out.muted) {
+            out.currentValue = 0.0f;
+            m_clockOutputValues[i].store(0.0f);
+            continue;
+        }
+
+        // Calculate frequency for this output based on division
+        const int divIdx = std::clamp(out.divisionIndex, 0, 18);
+        float multiplier = kDivisionMultipliers[divIdx];
+
+        // Apply slow mode (/4 multiplier) if enabled
+        if (out.slowMode) {
+            multiplier *= 0.25f;
+        }
+
+        const double cyclesPerSample = (beatsPerSecond * static_cast<double>(multiplier)) / static_cast<double>(m_sampleRate);
+
+        // Advance phase for this buffer (use end of buffer value for simplicity)
+        out.phaseAccumulator += cyclesPerSample * static_cast<double>(numFrames);
+
+        // Wrap phase to 0-1
+        while (out.phaseAccumulator >= 1.0) {
+            out.phaseAccumulator -= 1.0;
+        }
+
+        // Generate waveform value
+        float rawValue = generateWaveform(out.waveform, out.phaseAccumulator, out.width, out);
+
+        // Apply level and offset
+        // Output range: offset + level * raw (raw is -1 to +1)
+        // Final range clamped to -1 to +1
+        float scaledValue = rawValue * out.level;
+        float finalValue = std::clamp(scaledValue + out.offset, -1.0f, 1.0f);
+
+        out.currentValue = finalValue;
+        m_clockOutputValues[i].store(finalValue);
+
+        // Route to modulation destination
+        if (out.destination > 0 && out.destination < static_cast<int>(ModulationDestination::NumDestinations)) {
+            // Keep bipolar range (-1 to +1), scale by mod amount
+            // This allows LFO to sweep the parameter both up and down from its base value
+            float modValue = finalValue * out.modulationAmount;
+            m_modulationValues[out.destination] += modValue;
+        }
+    }
+}
+
+void AudioEngine::applyModulation() {
+    // Apply accumulated modulation values to parameters
+    // This is called once per buffer after processClockOutputs
+    // Modulation values are bipolar (-1 to +1 range scaled by mod amount)
+
+    // Plaits modulation - always apply (even when 0 to clear previous modulation)
+    float harmonicsMod = m_modulationValues[static_cast<int>(ModulationDestination::PlaitsHarmonics)];
+    float timbreMod = m_modulationValues[static_cast<int>(ModulationDestination::PlaitsTimbre)];
+    float morphMod = m_modulationValues[static_cast<int>(ModulationDestination::PlaitsMorph)];
+
+    for (int i = 0; i < kNumPlaitsVoices; ++i) {
+        if (m_plaitsVoices[i]) {
+            m_plaitsVoices[i]->SetHarmonicsModAmount(harmonicsMod);
+            m_plaitsVoices[i]->SetTimbreModAmount(timbreMod);
+            m_plaitsVoices[i]->SetMorphModAmount(morphMod);
+        }
+    }
+
+    // Rings modulation - structure, brightness, damping, position
+    if (m_ringsVoice) {
+        m_ringsVoice->SetStructureMod(m_modulationValues[static_cast<int>(ModulationDestination::RingsStructure)]);
+        m_ringsVoice->SetBrightnessMod(m_modulationValues[static_cast<int>(ModulationDestination::RingsBrightness)]);
+        m_ringsVoice->SetDampingMod(m_modulationValues[static_cast<int>(ModulationDestination::RingsDamping)]);
+        m_ringsVoice->SetPositionMod(m_modulationValues[static_cast<int>(ModulationDestination::RingsPosition)]);
+    }
+
+    // Granular 1 modulation (voice index 0)
+    if (m_granularVoices[0]) {
+        m_granularVoices[0]->SetSpeedMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular1Speed)]);
+        m_granularVoices[0]->SetPitchMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular1Pitch)]);
+        m_granularVoices[0]->SetSizeMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular1Size)]);
+        m_granularVoices[0]->SetDensityMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular1Density)]);
+        m_granularVoices[0]->SetFilterMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular1Filter)]);
+    }
+
+    // Granular 2 modulation (voice index 1)
+    if (m_granularVoices[1]) {
+        m_granularVoices[1]->SetSpeedMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular2Speed)]);
+        m_granularVoices[1]->SetPitchMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular2Pitch)]);
+        m_granularVoices[1]->SetSizeMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular2Size)]);
+        m_granularVoices[1]->SetDensityMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular2Density)]);
+        m_granularVoices[1]->SetFilterMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular2Filter)]);
+    }
+
+    // Note: Delay modulation would be applied similarly
+    // but requires additional state tracking for smooth modulation
+}
+
+// ========== Master Filter Implementation ==========
+
+void AudioEngine::initMasterFilter() {
+    // Create filter instances based on selected model
+    auto createFilter = [this](int model) -> std::unique_ptr<LadderFilterBase> {
+        switch (model) {
+            case 0: return std::make_unique<SimplifiedMoog>(static_cast<float>(m_sampleRate));
+            case 1: return std::make_unique<HuovilainenMoog>(static_cast<float>(m_sampleRate));
+            case 2: return std::make_unique<StilsonMoog>(static_cast<float>(m_sampleRate));
+            case 3: return std::make_unique<MicrotrackerMoog>(static_cast<float>(m_sampleRate));
+            case 4: return std::make_unique<KrajeskiMoog>(static_cast<float>(m_sampleRate));
+            case 5: return std::make_unique<MusicDSPMoog>(static_cast<float>(m_sampleRate));
+            case 6: return std::make_unique<OberheimVariationMoog>(static_cast<float>(m_sampleRate));
+            case 7: return std::make_unique<ImprovedMoog>(static_cast<float>(m_sampleRate));
+            case 8: return std::make_unique<RKSimulationMoog>(static_cast<float>(m_sampleRate));
+            case 9: return std::make_unique<HyperionMoog>(static_cast<float>(m_sampleRate));
+            default: return std::make_unique<StilsonMoog>(static_cast<float>(m_sampleRate));
+        }
+    };
+
+    m_masterFilterL = createFilter(m_masterFilterModel);
+    m_masterFilterR = createFilter(m_masterFilterModel);
+
+    updateMasterFilterParameters();
+}
+
+void AudioEngine::updateMasterFilterParameters() {
+    if (!m_masterFilterL || !m_masterFilterR) return;
+
+    // Model-specific stability limits (same as GranularVoice)
+    float cutoffLimit = 0.45f;
+    float resonanceMax = 1.0f;
+
+    switch (m_masterFilterModel) {
+        case 0:  cutoffLimit = 0.40f; resonanceMax = 0.88f; break;  // Simplified
+        case 1:  cutoffLimit = 0.38f; resonanceMax = 0.74f; break;  // Huovilainen
+        case 2:  cutoffLimit = 0.45f; resonanceMax = 0.95f; break;  // Stilson
+        case 3:  cutoffLimit = 0.45f; resonanceMax = 0.92f; break;  // Microtracker
+        case 4:  cutoffLimit = 0.45f; resonanceMax = 0.93f; break;  // Krajeski
+        case 5:  cutoffLimit = 0.42f; resonanceMax = 0.88f; break;  // MusicDSP
+        case 6:  cutoffLimit = 0.40f; resonanceMax = 0.86f; break;  // OberheimVariation
+        case 7:  cutoffLimit = 0.40f; resonanceMax = 0.82f; break;  // Improved
+        case 8:  cutoffLimit = 0.35f; resonanceMax = 0.55f; break;  // RKSimulation
+        case 9:  cutoffLimit = 0.42f; resonanceMax = 0.88f; break;  // Hyperion
+        default: break;
+    }
+
+    const float nyquist = static_cast<float>(m_sampleRate) * 0.5f;
+    const float safeCutoff = std::max(20.0f, std::min(m_masterFilterCutoff, nyquist * cutoffLimit));
+    const float safeResonance = std::max(0.0f, std::min(m_masterFilterResonance, resonanceMax));
+
+    m_masterFilterL->SetCutoff(safeCutoff);
+    m_masterFilterR->SetCutoff(safeCutoff);
+    m_masterFilterL->SetResonance(safeResonance);
+    m_masterFilterR->SetResonance(safeResonance);
+}
+
+void AudioEngine::processMasterFilter(float& left, float& right) {
+    if (!m_masterFilterL || !m_masterFilterR) return;
+
+    // Skip processing if filter is wide open and no resonance
+    if (m_masterFilterCutoff >= 19000.0f && m_masterFilterResonance < 0.01f) {
+        return;
+    }
+
+    // Apply soft saturation before filter to prevent extreme peaks
+    left = std::tanh(left * 0.5f) * 2.0f;
+    right = std::tanh(right * 0.5f) * 2.0f;
+
+    // Process through filters (single sample at a time)
+    m_masterFilterL->Process(&left, 1);
+    m_masterFilterR->Process(&right, 1);
+
+    // Snap to zero to prevent denormals
+    if (std::fabs(left) < 1.0e-20f) left = 0.0f;
+    if (std::fabs(right) < 1.0e-20f) right = 0.0f;
 }
 
 } // namespace Grainulator

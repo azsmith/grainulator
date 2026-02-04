@@ -182,13 +182,15 @@ final class MetropolixSequencer: ObservableObject {
     @Published var sequenceOctave: Int = 0
     @Published var scaleIndex: Int = 0
     @Published var tracks: [SequencerTrack] = [
-        SequencerTrack.makeDefault(id: 0, name: "TRACK 1", noteSlots: [0, 1, 2, 3, 4, 5, 6, 7], division: .x4),
-        SequencerTrack.makeDefault(id: 1, name: "TRACK 2", noteSlots: [4, 3, 4, 6, 5, 4, 3, 2], division: .x2)
+        SequencerTrack.makeDefault(id: 0, name: "TRACK 1", noteSlots: [0, 0, 0, 0, 0, 0, 0, 0], division: .x1),
+        SequencerTrack.makeDefault(id: 1, name: "TRACK 2", noteSlots: [0, 0, 0, 0, 0, 0, 0, 0], division: .x1)
     ]
     @Published var selectedStagePerTrack: [Int] = [0, 0]
     @Published var playheadStagePerTrack: [Int] = [0, 0]
     @Published var playheadPulsePerTrack: [Int] = [0, 0]
     @Published var lastPlayedNotePerTrack: [UInt8?] = [nil, nil]
+    @Published var lastGateSamplePerTrack: [UInt64?] = [nil, nil]
+    @Published var lastScheduledNoteOnSamplePerTrack: [UInt64?] = [nil, nil]
 
     private struct TrackRuntimeState {
         var stageIndex: Int = 0
@@ -198,7 +200,14 @@ final class MetropolixSequencer: ObservableObject {
         var heldTieNote: UInt8?
     }
 
+    private struct NoteOnDedupKey: Hashable {
+        let sampleTime: UInt64
+        let note: UInt8
+        let targetRaw: UInt8
+    }
+
     private weak var audioEngine: AudioEngineWrapper?
+    private weak var masterClock: MasterClock?
     private var clockTimer: DispatchSourceTimer?
     private let clockQueue = DispatchQueue(label: "com.grainulator.sequencer.clock", qos: .userInteractive)
     private var runtimes: [TrackRuntimeState] = [
@@ -209,8 +218,11 @@ final class MetropolixSequencer: ObservableObject {
     private var transportToken: UInt64 = 0
     private let schedulerLookaheadSeconds: Double = 0.10
     private let schedulerLeadInSeconds: Double = 0.02
-    // Positive values delay Plaits; negative values delay Rings.
-    @Published var interEngineCompensationSamples: Int = 24
+    // Temporarily disabled while diagnosing onset/attack mismatch.
+    @Published var interEngineCompensationSamples: Int = 0
+    @Published var plaitsTriggerOffsetMs: Double = 0.0
+    @Published var ringsTriggerOffsetMs: Double = 0.0
+    private let dedupeSameSampleSharedTargetNoteOn = true
 
     let rootNames: [String] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
     let scaleOptions: [SequencerScaleDefinition] = [
@@ -259,6 +271,11 @@ final class MetropolixSequencer: ObservableObject {
 
     func connect(audioEngine: AudioEngineWrapper) {
         self.audioEngine = audioEngine
+        applySyncDebugPreset()
+    }
+
+    func connectMasterClock(_ masterClock: MasterClock) {
+        self.masterClock = masterClock
     }
 
     func togglePlayback() {
@@ -273,6 +290,8 @@ final class MetropolixSequencer: ObservableObject {
         audioEngine?.allNotesOff()
         let startSample = (audioEngine?.currentSampleTime() ?? 0) + secondsToSamples(schedulerLeadInSeconds)
         resetRuntimeState(startSample: startSample)
+        // Sync the master clock to the same start sample for phase alignment
+        masterClock?.startSynced(startSample: startSample)
         scheduleTimer()
     }
 
@@ -285,6 +304,8 @@ final class MetropolixSequencer: ObservableObject {
         audioEngine?.clearScheduledNotes()
         audioEngine?.allNotesOff()
         releaseAllHeldTieNotes()
+        // Stop the master clock too
+        masterClock?.stop()
     }
 
     func reset() {
@@ -294,6 +315,46 @@ final class MetropolixSequencer: ObservableObject {
         releaseAllHeldTieNotes()
         let startSample = (audioEngine?.currentSampleTime() ?? 0) + secondsToSamples(schedulerLeadInSeconds)
         resetRuntimeState(startSample: startSample)
+    }
+
+    func applySyncDebugPreset() {
+        for trackIndex in tracks.indices {
+            tracks[trackIndex].division = .x1
+            tracks[trackIndex].direction = .forward
+            tracks[trackIndex].transpose = 0
+            tracks[trackIndex].baseOctave = 4
+            tracks[trackIndex].loopStart = 0
+            tracks[trackIndex].loopEnd = tracks[trackIndex].stages.count - 1
+
+            for stageIndex in tracks[trackIndex].stages.indices {
+                tracks[trackIndex].stages[stageIndex].noteSlot = 0
+                tracks[trackIndex].stages[stageIndex].pulses = 1
+                tracks[trackIndex].stages[stageIndex].ratchets = 1
+                tracks[trackIndex].stages[stageIndex].probability = 1.0
+                tracks[trackIndex].stages[stageIndex].stepType = .play
+                tracks[trackIndex].stages[stageIndex].gateMode = .every
+                tracks[trackIndex].stages[stageIndex].octave = 0
+                tracks[trackIndex].stages[stageIndex].slide = false
+            }
+        }
+
+        // Debug voicing: Plaits String (11/15), Rings String (2/5).
+        audioEngine?.setParameter(id: .plaitsModel, value: Float(11.0 / 15.0))
+        audioEngine?.setParameter(id: .ringsModel, value: Float(2.0 / 5.0))
+    }
+
+    var lastTrackGateDeltaSamples: Int? {
+        guard let sampleA = lastGateSamplePerTrack[0], let sampleB = lastGateSamplePerTrack[1] else {
+            return nil
+        }
+        return Int(abs(Int64(sampleA) - Int64(sampleB)))
+    }
+
+    var lastTrackNoteOnDeltaSamples: Int? {
+        guard let sampleA = lastScheduledNoteOnSamplePerTrack[0], let sampleB = lastScheduledNoteOnSamplePerTrack[1] else {
+            return nil
+        }
+        return Int(abs(Int64(sampleA) - Int64(sampleB)))
     }
 
     func randomizeTrack(_ trackIndex: Int) {
@@ -461,6 +522,8 @@ final class MetropolixSequencer: ObservableObject {
 
     private func resetRuntimeState(startSample: UInt64) {
         transportStartSample = startSample
+        lastGateSamplePerTrack = [nil, nil]
+        lastScheduledNoteOnSamplePerTrack = [nil, nil]
         for trackIndex in tracks.indices {
             let start = tracks[trackIndex].loopStart
             runtimes[trackIndex] = TrackRuntimeState(
@@ -504,20 +567,29 @@ final class MetropolixSequencer: ObservableObject {
                 }
             }
 
+            var dedupKeys = Set<NoteOnDedupKey>()
+
             for trackIndex in dueTracks {
                 let pulseSamples = pulseDurationSamples(for: tracks[trackIndex])
                 processPulse(
                     trackIndex: trackIndex,
                     pulseDurationSamples: pulseSamples,
                     eventSample: earliestSample,
-                    token: transportToken
+                    token: transportToken,
+                    dedupKeys: &dedupKeys
                 )
                 runtimes[trackIndex].nextPulseSample = earliestSample &+ pulseSamples
             }
         }
     }
 
-    private func processPulse(trackIndex: Int, pulseDurationSamples: UInt64, eventSample: UInt64, token: UInt64) {
+    private func processPulse(
+        trackIndex: Int,
+        pulseDurationSamples: UInt64,
+        eventSample: UInt64,
+        token: UInt64,
+        dedupKeys: inout Set<NoteOnDedupKey>
+    ) {
         guard tracks.indices.contains(trackIndex) else { return }
         var runtime = runtimes[trackIndex]
         let track = tracks[trackIndex]
@@ -572,6 +644,7 @@ final class MetropolixSequencer: ObservableObject {
         if shouldGate && stage.probability >= Double.random(in: 0...1) {
             let note = noteForStage(track: track, stage: stage)
             lastPlayedNotePerTrack[trackIndex] = note
+            lastGateSamplePerTrack[trackIndex] = eventSample
 
             if stage.stepType == .tie || stage.slide {
                 if !track.muted {
@@ -583,7 +656,9 @@ final class MetropolixSequencer: ObservableObject {
                             note: note,
                             velocity: UInt8(track.velocity),
                             sampleTime: eventSample,
-                            output: track.output
+                            output: track.output,
+                            trackIndex: trackIndex,
+                            dedupKeys: &dedupKeys
                         )
                     }
                 }
@@ -600,7 +675,9 @@ final class MetropolixSequencer: ObservableObject {
                     pulseDurationSamples: pulseDurationSamples,
                     eventSample: eventSample,
                     token: token,
-                    target: targetMask(for: track.output)
+                    target: targetMask(for: track.output),
+                    trackIndex: trackIndex,
+                    dedupKeys: &dedupKeys
                 )
             }
         }
@@ -716,9 +793,16 @@ final class MetropolixSequencer: ObservableObject {
     }
 
     func setInterEngineCompensationMs(_ ms: Double) {
-        let clampedMs = min(max(ms, -5.0), 5.0)
-        let samples = Int((clampedMs * 0.001 * engineSampleRate).rounded())
-        interEngineCompensationSamples = min(max(samples, -480), 480)
+        _ = ms
+        interEngineCompensationSamples = 0
+    }
+
+    func setPlaitsTriggerOffsetMs(_ ms: Double) {
+        plaitsTriggerOffsetMs = min(max(ms, -30.0), 30.0)
+    }
+
+    func setRingsTriggerOffsetMs(_ ms: Double) {
+        ringsTriggerOffsetMs = min(max(ms, -30.0), 30.0)
     }
 
     private func secondsToSamples(_ seconds: Double) -> UInt64 {
@@ -752,7 +836,9 @@ final class MetropolixSequencer: ObservableObject {
         pulseDurationSamples: UInt64,
         eventSample: UInt64,
         token: UInt64,
-        target: AudioEngineWrapper.NoteTargetMask
+        target: AudioEngineWrapper.NoteTargetMask,
+        trackIndex: Int,
+        dedupKeys: inout Set<NoteOnDedupKey>
     ) {
         _ = token
         let ratchetCount = max(ratchets, 1)
@@ -767,62 +853,146 @@ final class MetropolixSequencer: ObservableObject {
             )
             let offSample = onSample &+ UInt64(gateLengthSamples)
 
-            scheduleAlignedNoteOn(note: note, velocity: velocity, sampleTime: onSample, target: target)
+            scheduleAlignedNoteOn(
+                note: note,
+                velocity: velocity,
+                sampleTime: onSample,
+                target: target,
+                trackIndex: trackIndex,
+                dedupKeys: &dedupKeys
+            )
             scheduleAlignedNoteOff(note: note, sampleTime: offSample, target: target)
         }
     }
 
-    private func scheduleAlignedNoteOn(note: UInt8, velocity: UInt8, sampleTime: UInt64, output: SequencerTrackOutput) {
-        scheduleAlignedNoteOn(note: note, velocity: velocity, sampleTime: sampleTime, target: targetMask(for: output))
+    private func scheduleAlignedNoteOn(
+        note: UInt8,
+        velocity: UInt8,
+        sampleTime: UInt64,
+        output: SequencerTrackOutput,
+        trackIndex: Int,
+        dedupKeys: inout Set<NoteOnDedupKey>
+    ) {
+        scheduleAlignedNoteOn(
+            note: note,
+            velocity: velocity,
+            sampleTime: sampleTime,
+            target: targetMask(for: output),
+            trackIndex: trackIndex,
+            dedupKeys: &dedupKeys
+        )
     }
 
     private func scheduleAlignedNoteOff(note: UInt8, sampleTime: UInt64, output: SequencerTrackOutput) {
         scheduleAlignedNoteOff(note: note, sampleTime: sampleTime, target: targetMask(for: output))
     }
 
-    private func scheduleAlignedNoteOn(note: UInt8, velocity: UInt8, sampleTime: UInt64, target: AudioEngineWrapper.NoteTargetMask) {
+    private func emitScheduledNoteOn(
+        note: UInt8,
+        velocity: UInt8,
+        sampleTime: UInt64,
+        target: AudioEngineWrapper.NoteTargetMask,
+        dedupKeys: inout Set<NoteOnDedupKey>
+    ) {
+        if dedupeSameSampleSharedTargetNoteOn {
+            let key = NoteOnDedupKey(sampleTime: sampleTime, note: note, targetRaw: target.rawValue)
+            if dedupKeys.contains(key) {
+                return
+            }
+            dedupKeys.insert(key)
+        }
+
+        audioEngine?.scheduleNoteOn(note: note, velocity: velocity, sampleTime: sampleTime, target: target)
+    }
+
+    private func scheduleAlignedNoteOn(
+        note: UInt8,
+        velocity: UInt8,
+        sampleTime: UInt64,
+        target: AudioEngineWrapper.NoteTargetMask,
+        trackIndex: Int,
+        dedupKeys: inout Set<NoteOnDedupKey>
+    ) {
+        if trackIndex >= 0 && trackIndex < lastScheduledNoteOnSamplePerTrack.count {
+            lastScheduledNoteOnSamplePerTrack[trackIndex] = sampleTime
+        }
+
         switch target {
         case .plaits:
-            audioEngine?.scheduleNoteOn(note: note, velocity: velocity, sampleTime: sampleTime, target: .plaits)
+            emitScheduledNoteOn(
+                note: note,
+                velocity: velocity,
+                sampleTime: compensatedSampleTime(base: sampleTime, for: .plaits),
+                target: .plaits,
+                dedupKeys: &dedupKeys
+            )
         case .rings:
-            audioEngine?.scheduleNoteOn(note: note, velocity: velocity, sampleTime: sampleTime, target: .rings)
+            emitScheduledNoteOn(
+                note: note,
+                velocity: velocity,
+                sampleTime: compensatedSampleTime(base: sampleTime, for: .rings),
+                target: .rings,
+                dedupKeys: &dedupKeys
+            )
         case .both:
-            if interEngineCompensationSamples >= 0 {
-                let plaitsSample = adjustedSampleTime(base: sampleTime, offsetSamples: interEngineCompensationSamples)
-                audioEngine?.scheduleNoteOn(note: note, velocity: velocity, sampleTime: sampleTime, target: .rings)
-                audioEngine?.scheduleNoteOn(note: note, velocity: velocity, sampleTime: plaitsSample, target: .plaits)
-            } else {
-                let ringsSample = adjustedSampleTime(base: sampleTime, offsetSamples: -interEngineCompensationSamples)
-                audioEngine?.scheduleNoteOn(note: note, velocity: velocity, sampleTime: ringsSample, target: .rings)
-                audioEngine?.scheduleNoteOn(note: note, velocity: velocity, sampleTime: sampleTime, target: .plaits)
-            }
+            let plaitsSample = compensatedSampleTime(base: sampleTime, for: .plaits)
+            let ringsSample = compensatedSampleTime(base: sampleTime, for: .rings)
+            emitScheduledNoteOn(
+                note: note,
+                velocity: velocity,
+                sampleTime: ringsSample,
+                target: .rings,
+                dedupKeys: &dedupKeys
+            )
+            emitScheduledNoteOn(
+                note: note,
+                velocity: velocity,
+                sampleTime: plaitsSample,
+                target: .plaits,
+                dedupKeys: &dedupKeys
+            )
         }
     }
 
     private func scheduleAlignedNoteOff(note: UInt8, sampleTime: UInt64, target: AudioEngineWrapper.NoteTargetMask) {
         switch target {
         case .plaits:
-            audioEngine?.scheduleNoteOff(note: note, sampleTime: sampleTime, target: .plaits)
+            audioEngine?.scheduleNoteOff(
+                note: note,
+                sampleTime: compensatedSampleTime(base: sampleTime, for: .plaits),
+                target: .plaits
+            )
         case .rings:
-            audioEngine?.scheduleNoteOff(note: note, sampleTime: sampleTime, target: .rings)
+            audioEngine?.scheduleNoteOff(
+                note: note,
+                sampleTime: compensatedSampleTime(base: sampleTime, for: .rings),
+                target: .rings
+            )
         case .both:
-            if interEngineCompensationSamples >= 0 {
-                let plaitsSample = adjustedSampleTime(base: sampleTime, offsetSamples: interEngineCompensationSamples)
-                audioEngine?.scheduleNoteOff(note: note, sampleTime: sampleTime, target: .rings)
-                audioEngine?.scheduleNoteOff(note: note, sampleTime: plaitsSample, target: .plaits)
-            } else {
-                let ringsSample = adjustedSampleTime(base: sampleTime, offsetSamples: -interEngineCompensationSamples)
-                audioEngine?.scheduleNoteOff(note: note, sampleTime: ringsSample, target: .rings)
-                audioEngine?.scheduleNoteOff(note: note, sampleTime: sampleTime, target: .plaits)
-            }
+            let plaitsSample = compensatedSampleTime(base: sampleTime, for: .plaits)
+            let ringsSample = compensatedSampleTime(base: sampleTime, for: .rings)
+            audioEngine?.scheduleNoteOff(note: note, sampleTime: ringsSample, target: .rings)
+            audioEngine?.scheduleNoteOff(note: note, sampleTime: plaitsSample, target: .plaits)
         }
     }
 
-    private func adjustedSampleTime(base: UInt64, offsetSamples: Int) -> UInt64 {
-        if offsetSamples <= 0 {
-            return base
+    private func compensatedSampleTime(base: UInt64, for target: AudioEngineWrapper.NoteTargetMask) -> UInt64 {
+        let offsetMs: Double
+        switch target {
+        case .plaits:
+            offsetMs = plaitsTriggerOffsetMs
+        case .rings:
+            offsetMs = ringsTriggerOffsetMs
+        case .both:
+            offsetMs = 0.0
         }
-        return base &+ UInt64(offsetSamples)
+
+        let offsetSamples = Int64((offsetMs * engineSampleRate / 1000.0).rounded())
+        let shifted = Int64(base) + offsetSamples
+        if shifted <= 0 {
+            return 0
+        }
+        return UInt64(shifted)
     }
 
     private func targetMask(for output: SequencerTrackOutput) -> AudioEngineWrapper.NoteTargetMask {

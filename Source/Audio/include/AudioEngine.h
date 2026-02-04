@@ -13,6 +13,9 @@
 #include <array>
 #include <memory>
 
+// Forward declaration for LadderFilterBase (in global namespace)
+class LadderFilterBase;
+
 namespace Grainulator {
 
 // Forward declarations
@@ -29,6 +32,7 @@ constexpr int kNumGranularVoices = 4;
 constexpr int kNumLooperVoices = 2;
 constexpr int kMaxBufferSize = 2048;
 constexpr int kNumPlaitsVoices = 8;  // Polyphony
+constexpr int kNumClockOutputs = 8;  // Master clock outputs (Pam's style)
 
 // Audio processing callback type
 typedef void (*AudioCallback)(float** outputBuffers, int numChannels, int numFrames, void* userData);
@@ -99,6 +103,11 @@ public:
         VoiceSend,       // Per-channel FX send level
         MasterGain,
 
+        // Master filter parameters
+        MasterFilterCutoff,   // 20-20000 Hz
+        MasterFilterResonance, // 0-1
+        MasterFilterModel,    // 0-1 maps to available ladder models
+
         // Tape echo extended parameters
         DelayHeadMode,   // 0-1 maps to discrete head combo modes
         DelayWow,        // 0-1 modulation depth
@@ -126,7 +135,61 @@ public:
         LooperReverse,
         LooperLoopStart,
         LooperLoopEnd,
-        LooperCut
+        LooperCut,
+
+        // Mixer timing alignment
+        VoiceMicroDelay,
+
+        // Master clock parameters
+        ClockBPM,           // Master BPM (10-330)
+        ClockSwing,         // Global swing amount (0-1)
+        ClockRunning        // Clock running state (0 or 1)
+    };
+
+    // Clock output waveform types
+    enum class ClockWaveform {
+        Gate = 0,
+        Sine,
+        Triangle,
+        Saw,
+        Ramp,
+        Square,
+        Random,
+        SampleHold,
+        NumWaveforms
+    };
+
+    // Modulation destinations
+    enum class ModulationDestination {
+        None = 0,
+        // Plaits
+        PlaitsHarmonics,
+        PlaitsTimbre,
+        PlaitsMorph,
+        PlaitsLPGDecay,
+        // Rings
+        RingsStructure,
+        RingsBrightness,
+        RingsDamping,
+        RingsPosition,
+        // Delay
+        DelayTime,
+        DelayFeedback,
+        DelayWow,
+        DelayFlutter,
+        // Granular 1
+        Granular1Speed,
+        Granular1Pitch,
+        Granular1Size,
+        Granular1Density,
+        Granular1Filter,
+        // Granular 2
+        Granular2Speed,
+        Granular2Pitch,
+        Granular2Size,
+        Granular2Density,
+        Granular2Filter,
+        NumDestinations
     };
 
     void setParameter(ParameterID id, int voiceIndex, float value);
@@ -177,6 +240,29 @@ public:
     // Performance metrics
     float getCPULoad() const;
     int getActiveGrainCount() const;
+
+    // Master clock control
+    void setClockBPM(float bpm);
+    void setClockRunning(bool running);
+    void setClockStartSample(uint64_t startSample);  // Sync clock to sequencer
+    void setClockSwing(float swing);
+    float getClockBPM() const;
+    bool isClockRunning() const;
+
+    // Clock output configuration (8 outputs)
+    void setClockOutputMode(int outputIndex, int mode);           // 0=clock, 1=LFO
+    void setClockOutputWaveform(int outputIndex, int waveform);   // ClockWaveform enum
+    void setClockOutputDivision(int outputIndex, int division);   // Division index
+    void setClockOutputLevel(int outputIndex, float level);       // 0-1
+    void setClockOutputOffset(int outputIndex, float offset);     // -1 to +1
+    void setClockOutputPhase(int outputIndex, float phase);       // 0-1 (0-360 deg)
+    void setClockOutputWidth(int outputIndex, float width);       // 0-1 pulse width
+    void setClockOutputDestination(int outputIndex, int dest);    // ModulationDestination enum
+    void setClockOutputModAmount(int outputIndex, float amount);  // 0-1
+    void setClockOutputMuted(int outputIndex, bool muted);
+    void setClockOutputSlowMode(int outputIndex, bool slow);      // Slow mode (/4 multiplier)
+    float getClockOutputValue(int outputIndex) const;             // Current output value
+    float getModulationValue(int destination) const;              // Current modulation for destination
 
 private:
     struct ScheduledNoteEvent {
@@ -291,12 +377,27 @@ private:
 
     // Per-channel mixer state (0=Plaits, 1=Rings, 2-5=Track voices)
     static constexpr int kNumMixerChannels = 6;
+    static constexpr int kMaxChannelDelaySamples = 2400; // 50ms @ 48kHz
     float m_channelGain[kNumMixerChannels];
     float m_channelPan[kNumMixerChannels];
     float m_channelSend[kNumMixerChannels];
+    int m_channelDelaySamples[kNumMixerChannels];
+    int m_channelDelayWritePos[kNumMixerChannels];
+    std::array<std::array<float, kMaxChannelDelaySamples + 1>, kNumMixerChannels> m_channelDelayBufferL;
+    std::array<std::array<float, kMaxChannelDelaySamples + 1>, kNumMixerChannels> m_channelDelayBufferR;
     bool m_channelMute[kNumMixerChannels];
     bool m_channelSolo[kNumMixerChannels];
     float m_masterGain;  // Master output volume
+
+    // Master filter (flexible Moog ladder models)
+    float m_masterFilterCutoff;     // 20-20000 Hz
+    float m_masterFilterResonance;  // 0-1
+    int m_masterFilterModel;        // Index of selected filter model
+    std::unique_ptr<LadderFilterBase> m_masterFilterL;
+    std::unique_ptr<LadderFilterBase> m_masterFilterR;
+    void initMasterFilter();
+    void updateMasterFilterParameters();
+    void processMasterFilter(float& left, float& right);
 
     // Channel metering (peak levels, updated per buffer)
     std::atomic<float> m_channelLevels[kNumMixerChannels];
@@ -319,6 +420,68 @@ private:
     std::array<ScheduledNoteEvent, kScheduledEventCapacity> m_scheduledEvents;
     std::atomic<uint32_t> m_scheduledReadIndex;
     std::atomic<uint32_t> m_scheduledWriteIndex;
+
+    // Master clock state (Pam's Pro Workout-style)
+    struct ClockOutputState {
+        int mode;                  // 0=clock, 1=LFO
+        int waveform;              // ClockWaveform enum
+        int divisionIndex;         // Index into division table
+        float level;               // 0-1 amplitude
+        float offset;              // -1 to +1 bipolar offset
+        float phase;               // 0-1 phase offset
+        float width;               // 0-1 pulse width/skew
+        int destination;           // ModulationDestination enum
+        float modulationAmount;    // 0-1 mod depth
+        bool muted;                // Mute state
+        bool slowMode;             // When true, applies /4 multiplier to rate
+
+        // Runtime state
+        double phaseAccumulator;   // Current phase (0-1)
+        float currentValue;        // Current output value (-1 to +1)
+        float sampleHoldValue;     // Held value for S&H waveform
+        float smoothedRandomValue; // Smoothed random for interpolation
+        float randomTarget;        // Target value for smoothed random
+        uint32_t randomState;      // Random generator state
+        double lastPhaseForSH;     // Track phase wrapping for S&H trigger
+    };
+
+    std::atomic<float> m_clockBPM;
+    std::atomic<bool> m_clockRunning;
+    float m_clockSwing;
+    uint64_t m_clockStartSample;         // Sample time when clock started
+    std::array<ClockOutputState, kNumClockOutputs> m_clockOutputs;
+    std::atomic<float> m_clockOutputValues[kNumClockOutputs];  // For UI feedback
+
+    // Modulation accumulator (sum of all mod sources per destination)
+    float m_modulationValues[static_cast<int>(ModulationDestination::NumDestinations)];
+
+    // Clock processing helpers
+    void processClockOutputs(int numFrames);
+    float generateWaveform(int waveform, double phase, float width, ClockOutputState& state);
+    void applyModulation();
+
+    // Division multiplier table (matches SequencerClockDivision enum order)
+    static constexpr float kDivisionMultipliers[] = {
+        1.0f / 16.0f,  // /16
+        1.0f / 12.0f,  // /12
+        1.0f / 8.0f,   // /8
+        1.0f / 6.0f,   // /6
+        1.0f / 4.0f,   // /4
+        1.0f / 3.0f,   // /3
+        1.0f / 2.0f,   // /2
+        2.0f / 3.0f,   // 2/3x
+        3.0f / 4.0f,   // 3/4x
+        1.0f,          // x1
+        4.0f / 3.0f,   // x4/3
+        3.0f / 2.0f,   // x3/2
+        2.0f,          // x2
+        3.0f,          // x3
+        4.0f,          // x4
+        6.0f,          // x6
+        8.0f,          // x8
+        12.0f,         // x12
+        16.0f          // x16
+    };
 
     // Prevent copying
     AudioEngine(const AudioEngine&) = delete;

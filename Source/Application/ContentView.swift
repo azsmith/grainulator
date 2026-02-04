@@ -152,6 +152,9 @@ struct MultiVoiceView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
+                // Master clock (Pam's Pro Workout-style)
+                MasterClockView()
+
                 // Plaits synthesizer
                 PlaitsView()
                 RingsView()
@@ -680,6 +683,23 @@ struct EffectsView: View {
     @State private var reverbDamping: Float = 0.5
     @State private var reverbMix: Float = 0.0
 
+    // Master filter parameters
+    @State private var masterFilterCutoff: Float = 1.0   // Default wide open
+    @State private var masterFilterResonance: Float = 0.0
+    @State private var masterFilterModel: Float = 0.2    // Default to Stilson (model 2 of 10)
+
+    private let filterModelNames = ["Simple", "Huov", "Stilson", "Micro", "Krajs", "MDSP", "Oberh", "Imprvd", "RKSim", "Hyper"]
+
+    private func filterModelLabel(_ value: Float) -> String {
+        let index = min(max(Int((value * 9.0).rounded()), 0), filterModelNames.count - 1)
+        return filterModelNames[index]
+    }
+
+    private func cutoffToHz(_ value: Float) -> Float {
+        // 0-1 maps to 20-20000 Hz logarithmically
+        return 20.0 * powf(1000.0, value)
+    }
+
     private func delayModeLabel(_ value: Float) -> String {
         let modes = ["H1", "H2", "H3", "H12", "H23", "H13", "H123", "STACK"]
         let index = min(max(Int((value * 7.0).rounded()), 0), modes.count - 1)
@@ -777,6 +797,36 @@ struct EffectsView: View {
                     case 0: audioEngine.setParameter(id: .reverbSize, value: value)
                     case 1: audioEngine.setParameter(id: .reverbDamping, value: value)
                     case 2: audioEngine.setParameter(id: .reverbMix, value: value)
+                    default: break
+                    }
+                }
+            )
+
+            // Master Filter Section
+            EffectUnitView(
+                title: "FILTER",
+                color: Color(hex: "#E67E22"),
+                parameters: [
+                    EffectParameter(name: "CUTOFF", value: $masterFilterCutoff, formatter: { v in
+                        let hz = cutoffToHz(v)
+                        if hz >= 1000 {
+                            return String(format: "%.1fk", hz / 1000.0)
+                        } else {
+                            return String(format: "%.0f", hz)
+                        }
+                    }),
+                    EffectParameter(name: "RES", value: $masterFilterResonance, formatter: { v in
+                        String(format: "%.0f%%", v * 100)
+                    }),
+                    EffectParameter(name: "TYPE", value: $masterFilterModel, formatter: { v in
+                        filterModelLabel(v)
+                    })
+                ],
+                onParameterChange: { index, value in
+                    switch index {
+                    case 0: audioEngine.setParameter(id: .masterFilterCutoff, value: value)
+                    case 1: audioEngine.setParameter(id: .masterFilterResonance, value: value)
+                    case 2: audioEngine.setParameter(id: .masterFilterModel, value: value)
                     default: break
                     }
                 }

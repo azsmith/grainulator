@@ -13,6 +13,7 @@ struct GrainulatorApp: App {
     @StateObject private var audioEngine = AudioEngineWrapper()
     @StateObject private var midiManager = MIDIManager()
     @StateObject private var sequencer = MetropolixSequencer()
+    @StateObject private var masterClock = MasterClock()
 
     var body: some Scene {
         WindowGroup {
@@ -21,9 +22,13 @@ struct GrainulatorApp: App {
                 .environmentObject(audioEngine)
                 .environmentObject(midiManager)
                 .environmentObject(sequencer)
+                .environmentObject(masterClock)
                 .frame(minWidth: 1200, minHeight: 800)
                 .onAppear {
                     sequencer.connect(audioEngine: audioEngine)
+                    sequencer.connectMasterClock(masterClock)
+                    masterClock.connect(audioEngine: audioEngine)
+                    masterClock.connectSequencer(sequencer)
                     setupMIDICallbacks()
                 }
         }
@@ -39,6 +44,7 @@ struct GrainulatorApp: App {
                 .environmentObject(audioEngine)
                 .environmentObject(midiManager)
                 .environmentObject(sequencer)
+                .environmentObject(masterClock)
         }
     }
 

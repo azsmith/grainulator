@@ -89,6 +89,64 @@ func AudioEngine_GetChannelLevel(_ handle: OpaquePointer, _ channelIndex: Int32)
 @_silgen_name("AudioEngine_GetMasterLevel")
 func AudioEngine_GetMasterLevel(_ handle: OpaquePointer, _ channel: Int32) -> Float
 
+// Master clock functions
+@_silgen_name("AudioEngine_SetClockBPM")
+func AudioEngine_SetClockBPM(_ handle: OpaquePointer, _ bpm: Float)
+
+@_silgen_name("AudioEngine_SetClockRunning")
+func AudioEngine_SetClockRunning(_ handle: OpaquePointer, _ running: Bool)
+
+@_silgen_name("AudioEngine_SetClockStartSample")
+func AudioEngine_SetClockStartSample(_ handle: OpaquePointer, _ startSample: UInt64)
+
+@_silgen_name("AudioEngine_SetClockSwing")
+func AudioEngine_SetClockSwing(_ handle: OpaquePointer, _ swing: Float)
+
+@_silgen_name("AudioEngine_GetClockBPM")
+func AudioEngine_GetClockBPM(_ handle: OpaquePointer) -> Float
+
+@_silgen_name("AudioEngine_IsClockRunning")
+func AudioEngine_IsClockRunning(_ handle: OpaquePointer) -> Bool
+
+@_silgen_name("AudioEngine_SetClockOutputMode")
+func AudioEngine_SetClockOutputMode(_ handle: OpaquePointer, _ outputIndex: Int32, _ mode: Int32)
+
+@_silgen_name("AudioEngine_SetClockOutputWaveform")
+func AudioEngine_SetClockOutputWaveform(_ handle: OpaquePointer, _ outputIndex: Int32, _ waveform: Int32)
+
+@_silgen_name("AudioEngine_SetClockOutputDivision")
+func AudioEngine_SetClockOutputDivision(_ handle: OpaquePointer, _ outputIndex: Int32, _ division: Int32)
+
+@_silgen_name("AudioEngine_SetClockOutputLevel")
+func AudioEngine_SetClockOutputLevel(_ handle: OpaquePointer, _ outputIndex: Int32, _ level: Float)
+
+@_silgen_name("AudioEngine_SetClockOutputOffset")
+func AudioEngine_SetClockOutputOffset(_ handle: OpaquePointer, _ outputIndex: Int32, _ offset: Float)
+
+@_silgen_name("AudioEngine_SetClockOutputPhase")
+func AudioEngine_SetClockOutputPhase(_ handle: OpaquePointer, _ outputIndex: Int32, _ phase: Float)
+
+@_silgen_name("AudioEngine_SetClockOutputWidth")
+func AudioEngine_SetClockOutputWidth(_ handle: OpaquePointer, _ outputIndex: Int32, _ width: Float)
+
+@_silgen_name("AudioEngine_SetClockOutputDestination")
+func AudioEngine_SetClockOutputDestination(_ handle: OpaquePointer, _ outputIndex: Int32, _ dest: Int32)
+
+@_silgen_name("AudioEngine_SetClockOutputModAmount")
+func AudioEngine_SetClockOutputModAmount(_ handle: OpaquePointer, _ outputIndex: Int32, _ amount: Float)
+
+@_silgen_name("AudioEngine_SetClockOutputMuted")
+func AudioEngine_SetClockOutputMuted(_ handle: OpaquePointer, _ outputIndex: Int32, _ muted: Bool)
+
+@_silgen_name("AudioEngine_SetClockOutputSlowMode")
+func AudioEngine_SetClockOutputSlowMode(_ handle: OpaquePointer, _ outputIndex: Int32, _ slow: Bool)
+
+@_silgen_name("AudioEngine_GetClockOutputValue")
+func AudioEngine_GetClockOutputValue(_ handle: OpaquePointer, _ outputIndex: Int32) -> Float
+
+@_silgen_name("AudioEngine_GetModulationValue")
+func AudioEngine_GetModulationValue(_ handle: OpaquePointer, _ destination: Int32) -> Float
+
 /// Main audio engine wrapper that manages CoreAudio and the synthesis engine
 @MainActor
 class AudioEngineWrapper: ObservableObject {
@@ -399,25 +457,42 @@ class AudioEngineWrapper: ObservableObject {
         case .voiceSend: cppParamId = 34
         case .masterGain: cppParamId = 35
 
-        // Tape delay extended parameters (36-42)
-        case .delayHeadMode: cppParamId = 36
-        case .delayWow: cppParamId = 37
-        case .delayFlutter: cppParamId = 38
-        case .delayTone: cppParamId = 39
-        case .delaySync: cppParamId = 40
-        case .delayTempo: cppParamId = 41
-        case .delaySubdivision: cppParamId = 42
-        case .ringsModel: cppParamId = 46
-        case .ringsStructure: cppParamId = 47
-        case .ringsBrightness: cppParamId = 48
-        case .ringsDamping: cppParamId = 49
-        case .ringsPosition: cppParamId = 50
-        case .ringsLevel: cppParamId = 51
-        case .looperRate: cppParamId = 52
-        case .looperReverse: cppParamId = 53
-        case .looperLoopStart: cppParamId = 54
-        case .looperLoopEnd: cppParamId = 55
-        case .looperCut: cppParamId = 56
+        // Master filter parameters (36-38)
+        case .masterFilterCutoff: cppParamId = 36
+        case .masterFilterResonance: cppParamId = 37
+        case .masterFilterModel: cppParamId = 38
+
+        // Tape delay extended parameters (39-45)
+        case .delayHeadMode: cppParamId = 39
+        case .delayWow: cppParamId = 40
+        case .delayFlutter: cppParamId = 41
+        case .delayTone: cppParamId = 42
+        case .delaySync: cppParamId = 43
+        case .delayTempo: cppParamId = 44
+        case .delaySubdivision: cppParamId = 45
+
+        // Granular extended parameters (46-48)
+        case .granularFilterModel: cppParamId = 46
+        case .granularReverse: cppParamId = 47
+        case .granularMorph: cppParamId = 48
+
+        // Rings parameters (49-54)
+        case .ringsModel: cppParamId = 49
+        case .ringsStructure: cppParamId = 50
+        case .ringsBrightness: cppParamId = 51
+        case .ringsDamping: cppParamId = 52
+        case .ringsPosition: cppParamId = 53
+        case .ringsLevel: cppParamId = 54
+
+        // Looper parameters (55-59)
+        case .looperRate: cppParamId = 55
+        case .looperReverse: cppParamId = 56
+        case .looperLoopStart: cppParamId = 57
+        case .looperLoopEnd: cppParamId = 58
+        case .looperCut: cppParamId = 59
+
+        // Mixer timing alignment (60)
+        case .voiceMicroDelay: cppParamId = 60
         }
 
         AudioEngine_SetParameter(handle, cppParamId, Int32(voiceIndex), value)
@@ -606,6 +681,92 @@ class AudioEngineWrapper: ObservableObject {
         return AudioEngine_GetCurrentSampleTime(handle)
     }
 
+    // MARK: - Master Clock
+
+    /// Sets the master clock BPM
+    func setMasterClockBPM(_ bpm: Float) {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_SetClockBPM(handle, bpm)
+    }
+
+    /// Starts or stops the master clock
+    func setClockRunning(_ running: Bool) {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_SetClockRunning(handle, running)
+    }
+
+    /// Sets the clock start sample for synchronization with sequencer
+    func setClockStartSample(_ startSample: UInt64) {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_SetClockStartSample(handle, startSample)
+    }
+
+    /// Sets the global swing amount (0-1)
+    func setClockSwing(_ swing: Float) {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_SetClockSwing(handle, swing)
+    }
+
+    /// Gets the current master clock BPM
+    func getMasterClockBPM() -> Float {
+        guard let handle = cppEngineHandle else { return 120.0 }
+        return AudioEngine_GetClockBPM(handle)
+    }
+
+    /// Returns whether the clock is running
+    func isClockRunning() -> Bool {
+        guard let handle = cppEngineHandle else { return false }
+        return AudioEngine_IsClockRunning(handle)
+    }
+
+    /// Configures a clock output channel
+    func setClockOutput(
+        index: Int,
+        mode: Int,
+        waveform: Int,
+        division: Int,
+        level: Float,
+        offset: Float,
+        phase: Float,
+        width: Float,
+        destination: Int,
+        modulationAmount: Float,
+        muted: Bool
+    ) {
+        guard let handle = cppEngineHandle else { return }
+        let idx = Int32(index)
+        AudioEngine_SetClockOutputMode(handle, idx, Int32(mode))
+        AudioEngine_SetClockOutputWaveform(handle, idx, Int32(waveform))
+        AudioEngine_SetClockOutputDivision(handle, idx, Int32(division))
+        AudioEngine_SetClockOutputLevel(handle, idx, level)
+        AudioEngine_SetClockOutputOffset(handle, idx, offset)
+        AudioEngine_SetClockOutputPhase(handle, idx, phase)
+        AudioEngine_SetClockOutputWidth(handle, idx, width)
+        AudioEngine_SetClockOutputDestination(handle, idx, Int32(destination))
+        AudioEngine_SetClockOutputModAmount(handle, idx, modulationAmount)
+        AudioEngine_SetClockOutputMuted(handle, idx, muted)
+    }
+
+    /// Gets the current output value for a clock channel (-1 to +1)
+    func getClockOutputValue(index: Int) -> Float {
+        guard let handle = cppEngineHandle else { return 0.0 }
+        return AudioEngine_GetClockOutputValue(handle, Int32(index))
+    }
+
+    /// Sets slow mode for a clock output (applies /4 multiplier to rate)
+    func setClockOutputSlowMode(index: Int, slow: Bool) {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_SetClockOutputSlowMode(handle, Int32(index), slow)
+    }
+
+    /// Gets the current modulation value for a destination (bipolar -1 to +1)
+    func getModulationValue(destination: ModulationDestination) -> Float {
+        guard let handle = cppEngineHandle else { return 0.0 }
+        // Get the index of the destination in the allCases array (matches C++ enum order)
+        guard let index = ModulationDestination.allCases.firstIndex(of: destination) else { return 0.0 }
+        return AudioEngine_GetModulationValue(handle, Int32(index))
+    }
+
     // MARK: - Cleanup
 
     deinit {
@@ -770,7 +931,13 @@ enum ParameterID {
     case voiceGain       // 0-1 channel volume (maps to 0-2 for +6dB headroom)
     case voicePan        // 0-1 pan (0.5 = center)
     case voiceSend       // 0-1 FX send level
+    case voiceMicroDelay // 0-1 maps to 0-50ms channel delay
     case masterGain      // 0-1 master volume (maps to 0-2 for +6dB headroom)
+
+    // Master filter parameters
+    case masterFilterCutoff     // 0-1 maps to 20-20000 Hz (logarithmic)
+    case masterFilterResonance  // 0-1 resonance
+    case masterFilterModel      // 0-1 selects filter model (0-9)
 
     // Looper parameters (voiceIndex 1-2)
     case looperRate

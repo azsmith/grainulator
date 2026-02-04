@@ -68,7 +68,14 @@ struct LooperView: View {
                 color: accentColor,
                 fileName: loadedFileName,
                 isDragOver: isDragOver,
-                onSeek: { audioEngine.setGranularPosition(voiceIndex: voiceIndex, position: $0) }
+                onSeek: { audioEngine.setGranularPosition(voiceIndex: voiceIndex, position: $0) },
+                loopStart: loopStart,
+                loopEnd: loopEnd,
+                onLoopRangeChange: { newStart, newEnd in
+                    loopStart = min(max(newStart, 0), newEnd)
+                    loopEnd = max(min(newEnd, 1), loopStart)
+                    sendLoopBounds()
+                }
             )
             .frame(height: 78)
             .onDrop(of: [.audio, .fileURL], isTargeted: $isDragOver) { providers in

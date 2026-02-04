@@ -24,6 +24,14 @@ struct PlaitsView: View {
     @State private var lpgDecay: Float = 0.5
     @State private var lpgBypass: Bool = false
 
+    // Modulation amounts (updated via timer)
+    @State private var harmonicsMod: Float = 0.0
+    @State private var timbreMod: Float = 0.0
+    @State private var morphMod: Float = 0.0
+
+    // Timer for polling modulation values
+    let modulationTimer = Timer.publish(every: 1.0/30.0, on: .main, in: .common).autoconnect()
+
     // Real Plaits engine names (16 models)
     // Bank 1 (0-7): Pitched/sustained synth voices
     // Bank 2 (8-15): Noise and percussion models
@@ -155,7 +163,8 @@ struct PlaitsView: View {
                 ParameterSlider(
                     label: parameterLabels[selectedEngine][0],
                     value: $harmonics,
-                    color: Color(hex: "#4A9EFF")
+                    color: Color(hex: "#4A9EFF"),
+                    modulationAmount: harmonicsMod
                 )
                 .onChange(of: harmonics) { newValue in
                     audioEngine.setParameter(id: .plaitsHarmonics, value: newValue)
@@ -165,7 +174,8 @@ struct PlaitsView: View {
                 ParameterSlider(
                     label: parameterLabels[selectedEngine][1],
                     value: $timbre,
-                    color: Color(hex: "#FF6B6B")
+                    color: Color(hex: "#FF6B6B"),
+                    modulationAmount: timbreMod
                 )
                 .onChange(of: timbre) { newValue in
                     audioEngine.setParameter(id: .plaitsTimbre, value: newValue)
@@ -175,7 +185,8 @@ struct PlaitsView: View {
                 ParameterSlider(
                     label: parameterLabels[selectedEngine][2],
                     value: $morph,
-                    color: Color(hex: "#4ECDC4")
+                    color: Color(hex: "#4ECDC4"),
+                    modulationAmount: morphMod
                 )
                 .onChange(of: morph) { newValue in
                     audioEngine.setParameter(id: .plaitsMorph, value: newValue)
@@ -264,6 +275,12 @@ struct PlaitsView: View {
         .padding(20)
         .background(Color(hex: "#0F0F11"))
         .cornerRadius(8)
+        .onReceive(modulationTimer) { _ in
+            // Poll modulation values from audio engine
+            harmonicsMod = audioEngine.getModulationValue(destination: .plaitsHarmonics)
+            timbreMod = audioEngine.getModulationValue(destination: .plaitsTimbre)
+            morphMod = audioEngine.getModulationValue(destination: .plaitsMorph)
+        }
     }
 
     private func noteToName(_ midiNote: Int) -> String {
@@ -279,6 +296,7 @@ struct ParameterSlider: View {
     let label: String
     @Binding var value: Float
     let color: Color
+    var modulationAmount: Float = 0.0  // Bipolar modulation (-1 to +1)
 
     var body: some View {
         VStack(spacing: 6) {
@@ -301,12 +319,27 @@ struct ParameterSlider: View {
                         .offset(y: -geometry.size.height * 0.5)
                         .frame(maxHeight: .infinity, alignment: .bottom)
 
-                    // Value fill
+                    // Modulation indicator (shows effective value when modulated)
+                    if abs(modulationAmount) > 0.001 {
+                        let effectiveValue = max(0, min(1, value + modulationAmount))
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(color.opacity(0.3))
+                            .frame(width: 12, height: geometry.size.height * CGFloat(effectiveValue))
+
+                        // Modulation thumb (ghost)
+                        Circle()
+                            .stroke(color, lineWidth: 2)
+                            .frame(width: 16, height: 16)
+                            .offset(y: -geometry.size.height * CGFloat(effectiveValue) + 8)
+                            .frame(maxHeight: .infinity, alignment: .bottom)
+                    }
+
+                    // Value fill (base value)
                     RoundedRectangle(cornerRadius: 4)
                         .fill(color)
                         .frame(width: 8, height: geometry.size.height * CGFloat(value))
 
-                    // Thumb
+                    // Thumb (base value - solid)
                     Circle()
                         .fill(color)
                         .frame(width: 16, height: 16)
@@ -326,9 +359,17 @@ struct ParameterSlider: View {
             }
             .frame(width: 50, height: 80)
 
-            Text(String(format: "%.0f%%", value * 100))
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundColor(color)
+            // Show effective value when modulated, base value otherwise
+            if abs(modulationAmount) > 0.001 {
+                let effectiveValue = max(0, min(1, value + modulationAmount))
+                Text(String(format: "%.0f%%", effectiveValue * 100))
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundColor(color.opacity(0.7))
+            } else {
+                Text(String(format: "%.0f%%", value * 100))
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundColor(color)
+            }
         }
     }
 }

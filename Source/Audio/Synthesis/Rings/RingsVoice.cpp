@@ -16,7 +16,11 @@ RingsVoice::RingsVoice()
     : sample_rate_(48000.0f)
     , note_(48.0f)
     , level_(0.8f)
-    , trigger_pending_(false) {
+    , trigger_pending_(false)
+    , structure_mod_(0.0f)
+    , brightness_mod_(0.0f)
+    , damping_mod_(0.0f)
+    , position_mod_(0.0f) {
     std::memset(input_buffer_, 0, sizeof(input_buffer_));
     std::memset(render_l_, 0, sizeof(render_l_));
     std::memset(render_r_, 0, sizeof(render_r_));
@@ -61,6 +65,12 @@ void RingsVoice::Render(float* out, float* aux, size_t size) {
         std::memset(input_buffer_, 0, sizeof(input_buffer_));
         std::memset(render_l_, 0, sizeof(render_l_));
         std::memset(render_r_, 0, sizeof(render_r_));
+
+        // Apply modulation to patch (base + mod, clamped)
+        patch_.structure = std::clamp(base_patch_.structure + structure_mod_, 0.0f, 0.9995f);
+        patch_.brightness = std::clamp(base_patch_.brightness + brightness_mod_, 0.0f, 0.9995f);
+        patch_.damping = std::clamp(base_patch_.damping + damping_mod_, 0.0f, 0.9995f);
+        patch_.position = std::clamp(base_patch_.position + position_mod_, 0.0f, 0.9995f);
 
         performance_.note = note_;
         performance_.tonic = 0.0f;
@@ -130,6 +140,26 @@ void RingsVoice::SetModel(int modelIndex) {
 
 void RingsVoice::SetLevel(float value) {
     level_ = std::clamp(value, 0.0f, 1.0f);
+}
+
+void RingsVoice::SetStructureMod(float amount) {
+    // Allow bipolar modulation (-1 to +1 range)
+    structure_mod_ = std::max(-1.0f, std::min(1.0f, amount));
+}
+
+void RingsVoice::SetBrightnessMod(float amount) {
+    // Allow bipolar modulation (-1 to +1 range)
+    brightness_mod_ = std::max(-1.0f, std::min(1.0f, amount));
+}
+
+void RingsVoice::SetDampingMod(float amount) {
+    // Allow bipolar modulation (-1 to +1 range)
+    damping_mod_ = std::max(-1.0f, std::min(1.0f, amount));
+}
+
+void RingsVoice::SetPositionMod(float amount) {
+    // Allow bipolar modulation (-1 to +1 range)
+    position_mod_ = std::max(-1.0f, std::min(1.0f, amount));
 }
 
 } // namespace Grainulator

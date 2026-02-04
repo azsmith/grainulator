@@ -58,6 +58,29 @@ int AudioEngine_GetActiveGrainCount(AudioEngineHandle handle);
 // Granular voice position (for playhead display, returns 0-1)
 float AudioEngine_GetGranularPosition(AudioEngineHandle handle, int voiceIndex);
 
+// Master clock control
+void AudioEngine_SetClockBPM(AudioEngineHandle handle, float bpm);
+void AudioEngine_SetClockRunning(AudioEngineHandle handle, bool running);
+void AudioEngine_SetClockStartSample(AudioEngineHandle handle, uint64_t startSample);
+void AudioEngine_SetClockSwing(AudioEngineHandle handle, float swing);
+float AudioEngine_GetClockBPM(AudioEngineHandle handle);
+bool AudioEngine_IsClockRunning(AudioEngineHandle handle);
+
+// Clock output configuration (8 outputs)
+void AudioEngine_SetClockOutputMode(AudioEngineHandle handle, int outputIndex, int mode);
+void AudioEngine_SetClockOutputWaveform(AudioEngineHandle handle, int outputIndex, int waveform);
+void AudioEngine_SetClockOutputDivision(AudioEngineHandle handle, int outputIndex, int division);
+void AudioEngine_SetClockOutputLevel(AudioEngineHandle handle, int outputIndex, float level);
+void AudioEngine_SetClockOutputOffset(AudioEngineHandle handle, int outputIndex, float offset);
+void AudioEngine_SetClockOutputPhase(AudioEngineHandle handle, int outputIndex, float phase);
+void AudioEngine_SetClockOutputWidth(AudioEngineHandle handle, int outputIndex, float width);
+void AudioEngine_SetClockOutputDestination(AudioEngineHandle handle, int outputIndex, int dest);
+void AudioEngine_SetClockOutputModAmount(AudioEngineHandle handle, int outputIndex, float amount);
+void AudioEngine_SetClockOutputMuted(AudioEngineHandle handle, int outputIndex, bool muted);
+void AudioEngine_SetClockOutputSlowMode(AudioEngineHandle handle, int outputIndex, bool slow);
+float AudioEngine_GetClockOutputValue(AudioEngineHandle handle, int outputIndex);
+float AudioEngine_GetModulationValue(AudioEngineHandle handle, int destination);
+
 #ifdef __cplusplus
 }
 #endif

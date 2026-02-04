@@ -36,6 +36,12 @@ public:
     void SetModel(int modelIndex);
     void SetLevel(float value);
 
+    // Modulation (adds to base value, clamped to 0-0.9995)
+    void SetStructureMod(float amount);
+    void SetBrightnessMod(float amount);
+    void SetDampingMod(float amount);
+    void SetPositionMod(float amount);
+
 private:
     static constexpr size_t kRenderBlockSize = rings::kMaxBlockSize;
 
@@ -54,6 +60,12 @@ private:
     float render_l_[kRenderBlockSize];
     float render_r_[kRenderBlockSize];
     uint16_t reverb_buffer_[32768];
+
+    // Modulation amounts (0-1, added to base patch values)
+    float structure_mod_;
+    float brightness_mod_;
+    float damping_mod_;
+    float position_mod_;
 };
 
 } // namespace Grainulator

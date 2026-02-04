@@ -76,26 +76,6 @@ struct SequencerView: View {
                             .frame(width: 34, alignment: .trailing)
                     }
 
-                    HStack(spacing: 6) {
-                        Text("ALIGN")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color(hex: "#888888"))
-                        Slider(
-                            value: Binding(
-                                get: { sequencer.interEngineCompensationMs },
-                                set: { sequencer.setInterEngineCompensationMs($0) }
-                            ),
-                            in: -5.0...5.0,
-                            step: 0.05
-                        )
-                            .tint(Color(hex: "#4A9EFF"))
-                            .frame(width: 150)
-                        Text(String(format: "%+.2fms", sequencer.interEngineCompensationMs))
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(hex: "#4A9EFF"))
-                            .frame(width: 62, alignment: .trailing)
-                    }
-
                     Spacer(minLength: 8)
                 }
             }

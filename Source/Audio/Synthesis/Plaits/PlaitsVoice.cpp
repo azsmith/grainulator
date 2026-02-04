@@ -298,14 +298,19 @@ void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
     // 15: Hi-Hat - TRIGGERED
     // =========================================================================
 
+    // Apply modulation to parameters (modulation adds to base value, clamped 0-1)
+    float mod_harmonics = std::clamp(harmonics_ + harmonics_mod_amount_, 0.0f, 1.0f);
+    float mod_timbre = std::clamp(timbre_ + timbre_mod_amount_, 0.0f, 1.0f);
+    float mod_morph = std::clamp(morph_ + morph_mod_amount_, 0.0f, 1.0f);
+
     switch (current_engine_) {
         case 0: // Virtual Analog
         {
             auto* va = static_cast<Engines::VirtualAnalogEngine*>(va_engine_);
             va->SetNote(note_);
-            va->SetHarmonics(harmonics_);  // Detuning
-            va->SetTimbre(timbre_);        // Pulse width / shape
-            va->SetMorph(morph_);          // Saw shape
+            va->SetHarmonics(mod_harmonics);  // Detuning
+            va->SetTimbre(mod_timbre);        // Pulse width / shape
+            va->SetMorph(mod_morph);          // Saw shape
             va->Render(out, aux, size);
             break;
         }
@@ -314,9 +319,9 @@ void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
         {
             auto* ws = static_cast<Engines::WaveshapingEngine*>(ws_engine_);
             ws->SetNote(note_);
-            ws->SetHarmonics(harmonics_);  // Waveshaper selection
-            ws->SetTimbre(timbre_);        // Wavefolder amount
-            ws->SetMorph(morph_);          // Asymmetry
+            ws->SetHarmonics(mod_harmonics);  // Waveshaper selection
+            ws->SetTimbre(mod_timbre);        // Wavefolder amount
+            ws->SetMorph(mod_morph);          // Asymmetry
             ws->Render(out, aux, size);
             break;
         }
@@ -325,9 +330,9 @@ void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
         {
             auto* fm = static_cast<Engines::FMEngine*>(fm_engine_);
             fm->SetNote(note_);
-            fm->SetHarmonics(harmonics_);  // Frequency ratio
-            fm->SetTimbre(timbre_);        // Modulation index
-            fm->SetMorph(morph_);          // Feedback
+            fm->SetHarmonics(mod_harmonics);  // Frequency ratio
+            fm->SetTimbre(mod_timbre);        // Modulation index
+            fm->SetMorph(mod_morph);          // Feedback
             fm->Render(out, aux, size);
             break;
         }
@@ -336,9 +341,9 @@ void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
         {
             auto* formant = static_cast<Engines::FormantEngine*>(formant_engine_);
             formant->SetNote(note_);
-            formant->SetHarmonics(harmonics_);  // Formant ratio
-            formant->SetTimbre(timbre_);        // Formant frequency
-            formant->SetMorph(morph_);          // Formant width
+            formant->SetHarmonics(mod_harmonics);  // Formant ratio
+            formant->SetTimbre(mod_timbre);        // Formant frequency
+            formant->SetMorph(mod_morph);          // Formant width
             formant->Render(out, aux, size);
             break;
         }
@@ -347,9 +352,9 @@ void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
         {
             auto* harmonic = static_cast<Engines::HarmonicEngine*>(harmonic_engine_);
             harmonic->SetNote(note_);
-            harmonic->SetHarmonics(harmonics_);  // Number of bumps
-            harmonic->SetTimbre(timbre_);        // Spectral centroid
-            harmonic->SetMorph(morph_);          // Bump width
+            harmonic->SetHarmonics(mod_harmonics);  // Number of bumps
+            harmonic->SetTimbre(mod_timbre);        // Spectral centroid
+            harmonic->SetMorph(mod_morph);          // Bump width
             harmonic->Render(out, aux, size);
             break;
         }
@@ -358,9 +363,9 @@ void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
         {
             auto* wavetable = static_cast<Engines::WavetableEngine*>(wavetable_engine_);
             wavetable->SetNote(note_);
-            wavetable->SetHarmonics(harmonics_);  // Bank selection
-            wavetable->SetTimbre(timbre_);        // Y position (row)
-            wavetable->SetMorph(morph_);          // X position (column)
+            wavetable->SetHarmonics(mod_harmonics);  // Bank selection
+            wavetable->SetTimbre(mod_timbre);        // Y position (row)
+            wavetable->SetMorph(mod_morph);          // X position (column)
             wavetable->Render(out, aux, size);
             break;
         }
@@ -369,9 +374,9 @@ void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
         {
             auto* chord = static_cast<Engines::ChordEngine*>(chord_engine_);
             chord->SetNote(note_);
-            chord->SetHarmonics(harmonics_);  // Chord type
-            chord->SetTimbre(timbre_);        // Inversion
-            chord->SetMorph(morph_);          // Waveform
+            chord->SetHarmonics(mod_harmonics);  // Chord type
+            chord->SetTimbre(mod_timbre);        // Inversion
+            chord->SetMorph(mod_morph);          // Waveform
             chord->Render(out, aux, size);
             break;
         }
@@ -380,9 +385,9 @@ void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
         {
             auto* speech = static_cast<Engines::SpeechEngine*>(speech_engine_);
             speech->SetNote(note_);
-            speech->SetHarmonics(harmonics_);  // Synthesis mode
-            speech->SetTimbre(timbre_);        // Species (formant shift)
-            speech->SetMorph(morph_);          // Vowel/phoneme
+            speech->SetHarmonics(mod_harmonics);  // Synthesis mode
+            speech->SetTimbre(mod_timbre);        // Species (formant shift)
+            speech->SetMorph(mod_morph);          // Vowel/phoneme
             speech->Render(out, aux, size);
             break;
         }
@@ -391,9 +396,9 @@ void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
         {
             auto* grain = static_cast<Engines::GrainEngine*>(grain_engine_);
             grain->SetNote(note_);
-            grain->SetHarmonics(harmonics_);  // Pitch randomization
-            grain->SetTimbre(timbre_);        // Grain density
-            grain->SetMorph(morph_);          // Grain duration/overlap
+            grain->SetHarmonics(mod_harmonics);  // Pitch randomization
+            grain->SetTimbre(mod_timbre);        // Grain density
+            grain->SetMorph(mod_morph);          // Grain duration/overlap
             grain->Render(out, aux, size);
             break;
         }
@@ -403,9 +408,9 @@ void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
             auto* noise = static_cast<Engines::NoiseEngine*>(noise_engine_);
             noise->SetMode(Engines::NoiseEngine::FILTERED_NOISE);
             noise->SetNote(note_);
-            noise->SetHarmonics(harmonics_);  // Filter type (LP->BP->HP)
-            noise->SetTimbre(timbre_);        // Clock frequency
-            noise->SetMorph(morph_);          // Resonance
+            noise->SetHarmonics(mod_harmonics);  // Filter type (LP->BP->HP)
+            noise->SetTimbre(mod_timbre);        // Clock frequency
+            noise->SetMorph(mod_morph);          // Resonance
             noise->Render(out, aux, size);
             break;
         }
@@ -415,9 +420,9 @@ void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
             auto* noise = static_cast<Engines::NoiseEngine*>(noise_engine_);
             noise->SetMode(Engines::NoiseEngine::PARTICLE_NOISE);
             noise->SetNote(note_);
-            noise->SetHarmonics(harmonics_);  // Freq randomization
-            noise->SetTimbre(timbre_);        // Particle density
-            noise->SetMorph(morph_);          // Filter type
+            noise->SetHarmonics(mod_harmonics);  // Freq randomization
+            noise->SetTimbre(mod_timbre);        // Particle density
+            noise->SetMorph(mod_morph);          // Filter type
             noise->Render(out, aux, size);
             break;
         }
@@ -431,9 +436,9 @@ void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
             auto* string = static_cast<Engines::StringEngine*>(string_engine_);
             string->SetMode(Engines::StringEngine::STRING_KARPLUS_STRONG);
             string->SetNote(note_);
-            string->SetHarmonics(harmonics_);  // Inharmonicity / material
-            string->SetTimbre(timbre_);        // Excitation brightness
-            string->SetMorph(morph_);          // Decay time
+            string->SetHarmonics(mod_harmonics);  // Inharmonicity / material
+            string->SetTimbre(mod_timbre);        // Excitation brightness
+            string->SetMorph(mod_morph);          // Decay time
             string->Render(out, aux, size);
             break;
         }
@@ -443,9 +448,9 @@ void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
             auto* string = static_cast<Engines::StringEngine*>(string_engine_);
             string->SetMode(Engines::StringEngine::MODAL_RESONATOR);
             string->SetNote(note_);
-            string->SetHarmonics(harmonics_);  // Inharmonicity / material
-            string->SetTimbre(timbre_);        // Brightness
-            string->SetMorph(morph_);          // Decay time
+            string->SetHarmonics(mod_harmonics);  // Inharmonicity / material
+            string->SetTimbre(mod_timbre);        // Brightness
+            string->SetMorph(mod_morph);          // Decay time
             string->Render(out, aux, size);
             break;
         }
@@ -455,9 +460,9 @@ void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
             auto* perc = static_cast<Engines::PercussionEngine*>(percussion_engine_);
             perc->SetPercussionType(Engines::PercussionEngine::KICK);
             perc->SetNote(note_);
-            perc->SetHarmonics(harmonics_);  // Punch (pitch envelope amount)
-            perc->SetTimbre(timbre_);        // Tone (brightness/drive)
-            perc->SetMorph(morph_);          // Decay
+            perc->SetHarmonics(mod_harmonics);  // Punch (pitch envelope amount)
+            perc->SetTimbre(mod_timbre);        // Tone (brightness/drive)
+            perc->SetMorph(mod_morph);          // Decay
             perc->Render(out, aux, size);
             break;
         }
@@ -467,9 +472,9 @@ void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
             auto* perc = static_cast<Engines::PercussionEngine*>(percussion_engine_);
             perc->SetPercussionType(Engines::PercussionEngine::SNARE);
             perc->SetNote(note_);
-            perc->SetHarmonics(harmonics_);  // Snare wire amount
-            perc->SetTimbre(timbre_);        // Tone balance (body vs crack)
-            perc->SetMorph(morph_);          // Decay
+            perc->SetHarmonics(mod_harmonics);  // Snare wire amount
+            perc->SetTimbre(mod_timbre);        // Tone balance (body vs crack)
+            perc->SetMorph(mod_morph);          // Decay
             perc->Render(out, aux, size);
             break;
         }
@@ -479,9 +484,9 @@ void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
             auto* perc = static_cast<Engines::PercussionEngine*>(percussion_engine_);
             perc->SetPercussionType(Engines::PercussionEngine::HIHAT_CLOSED);
             perc->SetNote(note_);
-            perc->SetHarmonics(harmonics_);  // Metallic tone frequency
-            perc->SetTimbre(timbre_);        // Open/closed (decay time)
-            perc->SetMorph(morph_);          // Additional decay control
+            perc->SetHarmonics(mod_harmonics);  // Metallic tone frequency
+            perc->SetTimbre(mod_timbre);        // Open/closed (decay time)
+            perc->SetMorph(mod_morph);          // Additional decay control
             perc->Render(out, aux, size);
             break;
         }
@@ -490,9 +495,9 @@ void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
             // Fallback to Virtual Analog
             auto* va = static_cast<Engines::VirtualAnalogEngine*>(va_engine_);
             va->SetNote(note_);
-            va->SetHarmonics(harmonics_);
-            va->SetTimbre(timbre_);
-            va->SetMorph(morph_);
+            va->SetHarmonics(mod_harmonics);
+            va->SetTimbre(mod_timbre);
+            va->SetMorph(mod_morph);
             va->Render(out, aux, size);
             break;
         }
@@ -533,15 +538,18 @@ void PlaitsVoice::SetLevel(float value) {
 }
 
 void PlaitsVoice::SetHarmonicsModAmount(float amount) {
-    harmonics_mod_amount_ = std::max(0.0f, std::min(1.0f, amount));
+    // Allow bipolar modulation (-1 to +1 range)
+    harmonics_mod_amount_ = std::max(-1.0f, std::min(1.0f, amount));
 }
 
 void PlaitsVoice::SetTimbreModAmount(float amount) {
-    timbre_mod_amount_ = std::max(0.0f, std::min(1.0f, amount));
+    // Allow bipolar modulation (-1 to +1 range)
+    timbre_mod_amount_ = std::max(-1.0f, std::min(1.0f, amount));
 }
 
 void PlaitsVoice::SetMorphModAmount(float amount) {
-    morph_mod_amount_ = std::max(0.0f, std::min(1.0f, amount));
+    // Allow bipolar modulation (-1 to +1 range)
+    morph_mod_amount_ = std::max(-1.0f, std::min(1.0f, amount));
 }
 
 void PlaitsVoice::SetLPGColor(float color) {

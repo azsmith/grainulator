@@ -174,4 +174,116 @@ float AudioEngine_GetMasterLevel(AudioEngineHandle handle, int channel) {
     return static_cast<AudioEngine*>(handle)->getMasterLevel(channel);
 }
 
+// ========== Master Clock ==========
+
+void AudioEngine_SetClockBPM(AudioEngineHandle handle, float bpm) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setClockBPM(bpm);
+    }
+}
+
+void AudioEngine_SetClockRunning(AudioEngineHandle handle, bool running) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setClockRunning(running);
+    }
+}
+
+void AudioEngine_SetClockStartSample(AudioEngineHandle handle, uint64_t startSample) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setClockStartSample(startSample);
+    }
+}
+
+void AudioEngine_SetClockSwing(AudioEngineHandle handle, float swing) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setClockSwing(swing);
+    }
+}
+
+float AudioEngine_GetClockBPM(AudioEngineHandle handle) {
+    if (!handle) return 120.0f;
+    return static_cast<AudioEngine*>(handle)->getClockBPM();
+}
+
+bool AudioEngine_IsClockRunning(AudioEngineHandle handle) {
+    if (!handle) return false;
+    return static_cast<AudioEngine*>(handle)->isClockRunning();
+}
+
+void AudioEngine_SetClockOutputMode(AudioEngineHandle handle, int outputIndex, int mode) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setClockOutputMode(outputIndex, mode);
+    }
+}
+
+void AudioEngine_SetClockOutputWaveform(AudioEngineHandle handle, int outputIndex, int waveform) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setClockOutputWaveform(outputIndex, waveform);
+    }
+}
+
+void AudioEngine_SetClockOutputDivision(AudioEngineHandle handle, int outputIndex, int division) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setClockOutputDivision(outputIndex, division);
+    }
+}
+
+void AudioEngine_SetClockOutputLevel(AudioEngineHandle handle, int outputIndex, float level) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setClockOutputLevel(outputIndex, level);
+    }
+}
+
+void AudioEngine_SetClockOutputOffset(AudioEngineHandle handle, int outputIndex, float offset) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setClockOutputOffset(outputIndex, offset);
+    }
+}
+
+void AudioEngine_SetClockOutputPhase(AudioEngineHandle handle, int outputIndex, float phase) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setClockOutputPhase(outputIndex, phase);
+    }
+}
+
+void AudioEngine_SetClockOutputWidth(AudioEngineHandle handle, int outputIndex, float width) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setClockOutputWidth(outputIndex, width);
+    }
+}
+
+void AudioEngine_SetClockOutputDestination(AudioEngineHandle handle, int outputIndex, int dest) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setClockOutputDestination(outputIndex, dest);
+    }
+}
+
+void AudioEngine_SetClockOutputModAmount(AudioEngineHandle handle, int outputIndex, float amount) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setClockOutputModAmount(outputIndex, amount);
+    }
+}
+
+void AudioEngine_SetClockOutputMuted(AudioEngineHandle handle, int outputIndex, bool muted) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setClockOutputMuted(outputIndex, muted);
+    }
+}
+
+void AudioEngine_SetClockOutputSlowMode(AudioEngineHandle handle, int outputIndex, bool slow) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setClockOutputSlowMode(outputIndex, slow);
+    }
+}
+
+float AudioEngine_GetClockOutputValue(AudioEngineHandle handle, int outputIndex) {
+    if (!handle) return 0.0f;
+    return static_cast<AudioEngine*>(handle)->getClockOutputValue(outputIndex);
+}
+
+float AudioEngine_GetModulationValue(AudioEngineHandle handle, int destination) {
+    if (!handle) return 0.0f;
+    return static_cast<AudioEngine*>(handle)->getModulationValue(destination);
+}
+
 } // extern "C"

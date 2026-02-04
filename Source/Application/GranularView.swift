@@ -486,8 +486,22 @@ struct WaveformView: View {
     let fileName: String?
     let isDragOver: Bool
     let onSeek: ((Float) -> Void)?
+    let loopStart: Float?
+    let loopEnd: Float?
+    let onLoopRangeChange: ((Float, Float) -> Void)?
 
-    init(waveformData: [Float]?, playheadPosition: Float, isPlaying: Bool, color: Color, fileName: String?, isDragOver: Bool, onSeek: ((Float) -> Void)? = nil) {
+    init(
+        waveformData: [Float]?,
+        playheadPosition: Float,
+        isPlaying: Bool,
+        color: Color,
+        fileName: String?,
+        isDragOver: Bool,
+        onSeek: ((Float) -> Void)? = nil,
+        loopStart: Float? = nil,
+        loopEnd: Float? = nil,
+        onLoopRangeChange: ((Float, Float) -> Void)? = nil
+    ) {
         self.waveformData = waveformData
         self.playheadPosition = playheadPosition
         self.isPlaying = isPlaying
@@ -495,6 +509,9 @@ struct WaveformView: View {
         self.fileName = fileName
         self.isDragOver = isDragOver
         self.onSeek = onSeek
+        self.loopStart = loopStart
+        self.loopEnd = loopEnd
+        self.onLoopRangeChange = onLoopRangeChange
     }
 
     var body: some View {
@@ -530,6 +547,57 @@ struct WaveformView: View {
                             }
                         }
                         .fill(color.opacity(0.5))
+
+                        if let loopStart, let loopEnd {
+                            let clampedStart = min(max(CGFloat(loopStart), 0), 1)
+                            let clampedEnd = min(max(CGFloat(loopEnd), 0), 1)
+                            let startX = clampedStart * width
+                            let endX = clampedEnd * width
+
+                            HStack(spacing: 0) {
+                                Color.black.opacity(0.42)
+                                    .frame(width: max(0, startX))
+                                Color.clear
+                                Color.black.opacity(0.42)
+                                    .frame(width: max(0, width - endX))
+                            }
+
+                            Rectangle()
+                                .fill(color.opacity(0.9))
+                                .frame(width: 2, height: height)
+                                .position(x: startX, y: height / 2)
+
+                            Rectangle()
+                                .fill(color.opacity(0.9))
+                                .frame(width: 2, height: height)
+                                .position(x: endX, y: height / 2)
+
+                            Circle()
+                                .fill(color)
+                                .frame(width: 10, height: 10)
+                                .position(x: startX, y: 8)
+                                .gesture(
+                                    DragGesture(minimumDistance: 0)
+                                        .onChanged { gesture in
+                                            let pos = min(max(gesture.location.x / width, 0), 1)
+                                            let newStart = Float(min(pos, CGFloat(loopEnd) - 0.005))
+                                            onLoopRangeChange?(newStart, loopEnd)
+                                        }
+                                )
+
+                            Circle()
+                                .fill(color)
+                                .frame(width: 10, height: 10)
+                                .position(x: endX, y: 8)
+                                .gesture(
+                                    DragGesture(minimumDistance: 0)
+                                        .onChanged { gesture in
+                                            let pos = min(max(gesture.location.x / width, 0), 1)
+                                            let newEnd = Float(max(pos, CGFloat(loopStart) + 0.005))
+                                            onLoopRangeChange?(loopStart, newEnd)
+                                        }
+                                )
+                        }
 
                         // Playhead line
                         if isPlaying || playheadPosition > 0 {
