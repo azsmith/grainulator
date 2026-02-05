@@ -70,11 +70,11 @@ class WorkspaceLayoutState: ObservableObject {
     @Published var currentTab: WorkspaceTab = .synths
     @Published var currentBottomTab: MasterControlTab = .mixer
     @Published var isMixerCollapsed: Bool = false
-    @Published var mixerHeight: CGFloat = 400
+    @Published var mixerHeight: CGFloat = 380
 
     // Master control section heights
-    static let masterControlHeightFull: CGFloat = 400
-    static let masterControlHeightCompact: CGFloat = 280
+    static let masterControlHeightFull: CGFloat = 380
+    static let masterControlHeightCompact: CGFloat = 260
     static let masterControlHeightCollapsed: CGFloat = 40
 
     func selectTab(_ tab: WorkspaceTab) {

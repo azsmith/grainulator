@@ -42,18 +42,20 @@ struct NewMixerView: View {
                     .background(ColorPalette.divider)
             }
 
-            // Main mixer content
-            HStack(spacing: 0) {
-                // Channel strips
-                channelStripsSection
+            // Main mixer content (vertical scroll if space is tight)
+            ScrollView(.vertical, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 0) {
+                    // Channel strips
+                    channelStripsSection
 
-                // Divider before master
-                Rectangle()
-                    .fill(ColorPalette.divider)
-                    .frame(width: 2)
+                    // Divider before master
+                    Rectangle()
+                        .fill(ColorPalette.divider)
+                        .frame(width: 2)
 
-                // Master section
-                masterSection
+                    // Master section
+                    masterSection
+                }
             }
         }
         .background(ColorPalette.backgroundPrimary)
@@ -203,7 +205,7 @@ struct NewMixerView: View {
 
     private var channelStripsSection: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
+            HStack(alignment: .top, spacing: 4) {
                 ForEach(mixerState.channels) { channel in
                     channelView(for: channel)
                 }
@@ -233,51 +235,35 @@ struct NewMixerView: View {
     // MARK: - Effects Returns Section
 
     private var effectsReturnsSection: some View {
-        VStack(spacing: 0) {
-            // Section header
-            HStack(spacing: 6) {
-                Text("FX RTN")
-                    .font(Typography.parameterLabelSmall)
-                    .foregroundColor(ColorPalette.textDimmed)
+        HStack(alignment: .top, spacing: 4) {
+            // Thin separator between channels and FX returns
+            Rectangle()
+                .fill(ColorPalette.divider)
+                .frame(width: 1)
+                .padding(.vertical, 8)
 
-                if !showToolbar {
-                    Spacer(minLength: 4)
+            // Delay return (Send A)
+            FXReturnChannelStripView(
+                name: "DELAY",
+                shortName: "DLY",
+                level: $mixerState.master.delayReturnLevel,
+                accentColor: ColorPalette.ledAmber,
+                isCompact: layoutMode != .full,
+                isCollapsed: layoutMode == .collapsed,
+                onAUSendsPressed: !showToolbar ? { showAUSendsSheet = true } : nil
+            )
 
-                    Button(action: { showAUSendsSheet = true }) {
-                        Text("AU SENDS")
-                            .font(Typography.buttonTiny)
-                            .foregroundColor(ColorPalette.ledBlue)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(
-                                RoundedRectangle(cornerRadius: 3)
-                                    .fill(ColorPalette.backgroundTertiary)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.vertical, 4)
-
-            HStack(spacing: 4) {
-                // Delay return
-                EffectReturnStripView(
-                    name: "DELAY",
-                    level: $mixerState.master.delayReturnLevel,
-                    accentColor: ColorPalette.ledAmber,
-                    isCompact: layoutMode != .full
-                )
-
-                // Reverb return
-                EffectReturnStripView(
-                    name: "REVERB",
-                    level: $mixerState.master.reverbReturnLevel,
-                    accentColor: ColorPalette.ledGreen,
-                    isCompact: layoutMode != .full
-                )
-            }
+            // Reverb return (Send B)
+            FXReturnChannelStripView(
+                name: "REVERB",
+                shortName: "RVB",
+                level: $mixerState.master.reverbReturnLevel,
+                accentColor: ColorPalette.ledGreen,
+                isCompact: layoutMode != .full,
+                isCollapsed: layoutMode == .collapsed,
+                onAUSendsPressed: nil
+            )
         }
-        .padding(.horizontal, 4)
     }
 
     // MARK: - Master Section
@@ -338,52 +324,366 @@ struct CollapsedChannelView: View {
     }
 }
 
-// MARK: - Effect Return Strip View
+// MARK: - FX Return Channel Strip View
 
-struct EffectReturnStripView: View {
+struct FXReturnChannelStripView: View {
     let name: String
+    let shortName: String
     @Binding var level: Float
     let accentColor: Color
     let isCompact: Bool
+    let isCollapsed: Bool
+    let onAUSendsPressed: (() -> Void)?
+
+    @State private var isMuted: Bool = false
+
+    /// Effective level considering mute
+    private var effectiveLevel: Float {
+        isMuted ? 0 : level
+    }
+
+    /// dB value for display
+    private var levelDB: String {
+        if level < 0.001 { return "-\u{221E}" }
+        let linearGain = level * 2  // 0.5 = unity
+        let db = 20 * log10(Double(linearGain))
+        if db > 0 {
+            return String(format: "+%.1f", db)
+        }
+        return String(format: "%.1f", db)
+    }
 
     var body: some View {
-        VStack(spacing: 4) {
-            // Name
-            Text(name)
-                .font(Typography.parameterLabelSmall)
-                .foregroundColor(accentColor)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+        if isCollapsed {
+            collapsedLayout
+        } else if isCompact {
+            compactLayout
+        } else {
+            fullLayout
+        }
+    }
 
-            if !isCompact {
-                // Level knob
-                ProKnobView(
-                    value: $level,
-                    label: "RTN",
-                    accentColor: accentColor,
-                    size: .small
+    // MARK: - Full Layout
+    // Mirrors ProChannelStripView full layout structure:
+    // header → divider → [pan area] → [send area] → divider → fader → buttons
+    // FX strips use the pan/send area for FX label + AU button instead.
+
+    private var fullLayout: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 6) {
+                // Channel header (matches channelHeader in ProChannelStripView)
+                fxHeader
+
+                Divider()
+                    .background(ColorPalette.divider)
+
+                // FX info area (occupies the space where pan + sends would be)
+                fxInfoSection
+
+                Divider()
+                    .background(ColorPalette.divider)
+
+                // Fader with VU meter (identical to ProChannelStripView)
+                faderSection
+
+                // Mute button
+                buttonSection
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 4)
+        }
+        .frame(width: 70)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(ColorPalette.backgroundSecondary)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(ColorPalette.divider, lineWidth: 1)
+        )
+        .overlay(
+            // Left accent stripe — visual differentiator from regular channels
+            HStack {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(accentColor)
+                    .frame(width: 3)
+                Spacer()
+            },
+            alignment: .leading
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    /// Fills the vertical space where pan knob + send knobs live on regular channels.
+    /// Uses hidden replicas of the exact same components so SwiftUI gives identical height.
+    private var fxInfoSection: some View {
+        ZStack {
+            // Hidden replica of panSection + sendSection from ProChannelStripView
+            // This ensures pixel-perfect height matching.
+            VStack(spacing: 6) {
+                // panSection replica: VStack(spacing: 2) { ProKnobView.pan(.small) }
+                VStack(spacing: 2) {
+                    ProKnobView.pan(
+                        value: .constant(0.5),
+                        accentColor: .clear,
+                        size: .small
+                    )
+                }
+
+                // sendSection replica: HStack(spacing: 4) { two VStack(spacing: 1) with knob + label }
+                HStack(spacing: 4) {
+                    VStack(spacing: 1) {
+                        ProKnobView(
+                            value: .constant(0.5),
+                            label: "A",
+                            accentColor: .clear,
+                            size: .small,
+                            showValue: false
+                        )
+                        Text("Post")
+                            .font(Typography.parameterLabelSmall)
+                    }
+
+                    VStack(spacing: 1) {
+                        ProKnobView(
+                            value: .constant(0.5),
+                            label: "B",
+                            accentColor: .clear,
+                            size: .small,
+                            showValue: false
+                        )
+                        Text("Post")
+                            .font(Typography.parameterLabelSmall)
+                    }
+                }
+            }
+            .hidden()
+
+            // Visible FX content overlaid on the hidden spacer
+            VStack(spacing: 8) {
+                // FX Return badge
+                Text("FX RTN")
+                    .font(Typography.buttonSmall)
+                    .foregroundColor(accentColor)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(accentColor.opacity(0.1))
+                    )
+
+                // Effect type label
+                Text(name)
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(accentColor.opacity(0.6))
+
+                // AU Sends button (if provided)
+                if let action = onAUSendsPressed {
+                    Button(action: action) {
+                        Text("AU SEND")
+                            .font(.system(size: 7, weight: .bold, design: .monospaced))
+                            .foregroundColor(ColorPalette.ledBlue)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 4)
+                            .background(
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(ColorPalette.backgroundTertiary)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    // MARK: - Compact Layout
+
+    private var compactLayout: some View {
+        VStack(spacing: 4) {
+            // Mini channel name
+            HStack(spacing: 3) {
+                Text("FX")
+                    .font(.system(size: 6, weight: .heavy, design: .monospaced))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 2)
+                    .padding(.vertical, 1)
+                    .background(accentColor)
+                    .cornerRadius(2)
+
+                Text(shortName)
+                    .font(Typography.parameterLabelSmall)
+                    .foregroundColor(accentColor)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 2)
+            .background(ColorPalette.backgroundPrimary)
+
+            // Compact fader with meter alongside
+            HStack(spacing: 1) {
+                VUMeterBarView(
+                    level: .constant(isMuted ? 0 : level * 0.6),
+                    segments: 8,
+                    width: 4,
+                    height: 60
                 )
-            } else {
-                // Mini fader
+
                 ProFaderView(
                     value: $level,
                     accentColor: accentColor,
                     size: .small,
-                    showScale: false
+                    showScale: false,
+                    isMuted: isMuted
                 )
             }
+
+            // Mini mute
+            MuteButton(isMuted: $isMuted, size: .small)
         }
-        .frame(width: isCompact ? 30 : 50)
+        .padding(.vertical, 4)
+        .padding(.horizontal, 2)
+        .frame(width: 50)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(ColorPalette.backgroundSecondary)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(ColorPalette.divider, lineWidth: 1)
+        )
+        .overlay(
+            HStack {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(accentColor)
+                    .frame(width: 2)
+                Spacer()
+            },
+            alignment: .leading
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    // MARK: - Collapsed Layout
+
+    private var collapsedLayout: some View {
+        VStack(spacing: 4) {
+            // Mini meter
+            VUMeterBarView(
+                level: .constant(isMuted ? 0 : level * 0.6),
+                segments: 6,
+                width: 6,
+                height: 30
+            )
+
+            // FX indicator
+            Text("FX")
+                .font(.system(size: 6, weight: .heavy, design: .monospaced))
+                .foregroundColor(.white)
+                .padding(.horizontal, 2)
+                .padding(.vertical, 1)
+                .background(accentColor)
+                .cornerRadius(2)
+
+            // Mini mute button
+            Button(action: { isMuted.toggle() }) {
+                Text("M")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(isMuted ? .white : ColorPalette.textDimmed)
+                    .frame(width: 16, height: 16)
+                    .background(
+                        Circle()
+                            .fill(isMuted ? ColorPalette.ledRed : ColorPalette.ledOff)
+                    )
+            }
+            .buttonStyle(.plain)
+
+            // Channel short name
+            Text(shortName)
+                .font(.system(size: 6, weight: .medium, design: .monospaced))
+                .foregroundColor(ColorPalette.textDimmed)
+        }
+        .frame(width: 24)
         .padding(.vertical, 8)
-        .padding(.horizontal, 4)
         .background(
             RoundedRectangle(cornerRadius: 4)
                 .fill(ColorPalette.backgroundSecondary)
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 4)
-                .stroke(accentColor.opacity(0.3), lineWidth: 1)
-        )
+    }
+
+    // MARK: - FX Header
+
+    /// Matches ProChannelStripView.channelHeader height exactly.
+    private var fxHeader: some View {
+        VStack(spacing: 2) {
+            // Matches HStack(spacing: 4) { Circle(6x6), PeakLEDView(8x8) }
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(isMuted ? ColorPalette.ledOff : accentColor)
+                    .frame(width: 6, height: 6)
+                    .shadow(color: isMuted ? .clear : accentColor.opacity(0.5), radius: 3)
+
+                // FX badge — constrained to same 8px height as PeakLEDView
+                Text("FX")
+                    .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 3)
+                    .frame(height: 8)
+                    .background(accentColor.opacity(isMuted ? 0.4 : 1.0))
+                    .cornerRadius(2)
+            }
+
+            // Channel name
+            Text(name)
+                .font(Typography.channelLabel)
+                .foregroundColor(isMuted ? ColorPalette.textDimmed : accentColor)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 4)
+        .background(ColorPalette.backgroundPrimary)
+    }
+
+    // MARK: - Fader Section
+
+    private var faderSection: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 2) {
+                // VU meter alongside fader
+                VUMeterBarView(
+                    level: .constant(isMuted ? 0 : level * 0.6),
+                    segments: 10,
+                    width: 5,
+                    height: 80
+                )
+
+                ProFaderView(
+                    value: $level,
+                    accentColor: accentColor,
+                    size: .medium,
+                    showScale: false,
+                    isMuted: isMuted
+                )
+            }
+
+            // dB display
+            Text(levelDB)
+                .font(Typography.valueSmall)
+                .foregroundColor(isMuted ? ColorPalette.textDimmed : accentColor)
+                .monospacedDigit()
+                .frame(width: 40)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(ColorPalette.backgroundPrimary)
+                )
+        }
+    }
+
+    // MARK: - Button Section
+
+    private var buttonSection: some View {
+        MuteButton(isMuted: $isMuted, size: .medium)
+            .padding(.top, 4)
     }
 }
 

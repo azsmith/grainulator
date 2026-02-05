@@ -21,24 +21,27 @@ struct TabBasedLayoutView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Transport bar with tabs
+            // Transport bar with tabs - highest priority, must always be visible
             TransportBarView(
                 transportState: transportState,
                 layoutState: layoutState
             )
+            .layoutPriority(2)
 
             Divider()
                 .background(ColorPalette.divider)
 
-            // Main workspace content
+            // Main workspace content - lowest priority, takes remaining space
             WorkspaceTabView(layoutState: layoutState)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(0)
 
             Divider()
                 .background(ColorPalette.divider)
 
             // Master control section (bottom tabs: Timing / Mixer)
             masterControlSection
+                .layoutPriority(1)
         }
         .background(ColorPalette.backgroundPrimary)
         .onAppear {
@@ -202,61 +205,10 @@ struct TimingTabContent: View {
 
 struct MixerTabContent: View {
     @ObservedObject var mixerState: MixerState
-    @State private var isEffectsExpanded: Bool = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Main mixer (without internal toolbar - tab bar handles header)
-            NewMixerView(mixerState: mixerState, showToolbar: false)
-                .frame(maxHeight: .infinity)
-
-            Divider()
-                .background(ColorPalette.divider)
-
-            // Effects toggle header
-            effectsToggleBar
-
-            // Expandable effects section
-            if isEffectsExpanded {
-                AUSendEffectsView()
-                    .frame(height: 210)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-            } else {
-                CompactAUSendEffectsView()
-                    .frame(height: 56)
-                    .transition(.opacity)
-            }
-        }
-        .background(ColorPalette.backgroundPrimary)
-        .animation(.easeInOut(duration: 0.2), value: isEffectsExpanded)
-    }
-
-    private var effectsToggleBar: some View {
-        Button(action: { isEffectsExpanded.toggle() }) {
-            HStack(spacing: 8) {
-                Image(systemName: "waveform.path")
-                    .font(.system(size: 12))
-                    .foregroundColor(ColorPalette.ledBlue)
-
-                Text("EFFECTS")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white)
-
-                Spacer()
-
-                Text(isEffectsExpanded ? "Hide Controls" : "Show Controls")
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundColor(ColorPalette.textMuted)
-
-                Image(systemName: isEffectsExpanded ? "chevron.down" : "chevron.up")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(ColorPalette.ledBlue)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(ColorPalette.backgroundSecondary)
-        }
-        .buttonStyle(.plain)
+        NewMixerView(mixerState: mixerState, showToolbar: false)
+            .background(ColorPalette.backgroundPrimary)
     }
 }
 

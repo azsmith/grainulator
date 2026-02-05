@@ -196,77 +196,191 @@ struct ModuleTriggerButton: View {
     }
 }
 
+// MARK: - Console Module Container (LUNA/UAD-inspired)
+
+/// A mixing-console-style module container with brushed metal header bar
+/// and warm amber title text. Used for full-width modules like Granular,
+/// Looper, Master Clock, and Sequencer.
+struct ConsoleModuleView<Content: View>: View {
+    let title: String
+    let accentColor: Color
+    let maxWidth: CGFloat?
+    @ViewBuilder let content: () -> Content
+
+    init(
+        title: String,
+        accentColor: Color = ColorPalette.ledAmber,
+        maxWidth: CGFloat? = nil,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.title = title
+        self.accentColor = accentColor
+        self.maxWidth = maxWidth
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Brushed metal header bar
+            consoleHeader
+
+            // Content area
+            content()
+                .frame(maxWidth: .infinity)
+        }
+        .frame(maxWidth: maxWidth ?? .infinity)
+        .background(ColorPalette.backgroundPrimary)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(ColorPalette.consoleBorder, lineWidth: 1)
+        )
+        .shadow(color: ColorPalette.shadowDrop, radius: 4, x: 0, y: 2)
+    }
+
+    // MARK: - Console Header
+
+    private var consoleHeader: some View {
+        HStack(spacing: 8) {
+            // Left accent line
+            RoundedRectangle(cornerRadius: 1)
+                .fill(accentColor)
+                .frame(width: 3, height: 16)
+
+            Text(title)
+                .font(Typography.panelTitle)
+                .foregroundColor(accentColor)
+                .tracking(2)
+
+            // Subtle horizontal rule
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        colors: [accentColor.opacity(0.3), accentColor.opacity(0.05)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .frame(height: 1)
+
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            LinearGradient(
+                colors: [
+                    ColorPalette.consoleHeaderDark,
+                    ColorPalette.consoleHeaderLight,
+                    ColorPalette.consoleHeaderDark
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        )
+    }
+}
+
+// MARK: - Console Section Divider
+
+/// A thin section divider for use inside ConsoleModuleView
+struct ConsoleSectionDivider: View {
+    let label: String?
+    let accentColor: Color
+
+    init(_ label: String? = nil, accentColor: Color = ColorPalette.textDimmed) {
+        self.label = label
+        self.accentColor = accentColor
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Rectangle()
+                .fill(ColorPalette.dividerSubtle)
+                .frame(height: 1)
+
+            if let label = label {
+                Text(label)
+                    .font(Typography.parameterLabelSmall)
+                    .foregroundColor(accentColor)
+                    .textCase(.uppercase)
+            }
+
+            Rectangle()
+                .fill(ColorPalette.dividerSubtle)
+                .frame(height: 1)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+    }
+}
+
 // MARK: - Preview
 
 #if DEBUG
 struct EurorackModuleView_Previews: PreviewProvider {
     static var previews: some View {
-        HStack(spacing: 20) {
-            // Example Rings-style module
-            EurorackModuleView(
-                title: "RINGS",
-                accentColor: ColorPalette.accentRings,
-                width: 200
-            ) {
-                VStack(spacing: 12) {
-                    // Knob placeholder
-                    Circle()
-                        .stroke(ColorPalette.accentRings, lineWidth: 2)
-                        .frame(width: 50, height: 50)
-                    Text("NOTE")
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundColor(ColorPalette.textMuted)
+        VStack(spacing: 30) {
+            // Eurorack-style modules
+            HStack(spacing: 20) {
+                EurorackModuleView(
+                    title: "RINGS",
+                    accentColor: ColorPalette.accentRings,
+                    width: 200
+                ) {
+                    VStack(spacing: 12) {
+                        Circle()
+                            .stroke(ColorPalette.accentRings, lineWidth: 2)
+                            .frame(width: 50, height: 50)
+                        Text("NOTE")
+                            .font(Typography.parameterLabel)
+                            .foregroundColor(ColorPalette.textMuted)
 
-                    ModuleSectionDivider("TIMBRE", accentColor: ColorPalette.accentRings)
+                        ModuleSectionDivider("TIMBRE", accentColor: ColorPalette.accentRings)
 
-                    // Slider bank placeholder
-                    HStack(spacing: 8) {
-                        ForEach(0..<5) { _ in
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(ColorPalette.backgroundPrimary)
-                                .frame(width: 12, height: 80)
-                        }
+                        ModuleTriggerButton(
+                            label: "STRIKE",
+                            isActive: false,
+                            accentColor: ColorPalette.accentRings
+                        ) {}
                     }
-
-                    ModuleTriggerButton(
-                        label: "STRIKE",
-                        isActive: false,
-                        accentColor: ColorPalette.accentRings
-                    ) {}
+                    .padding(12)
                 }
-                .padding(12)
+
+                EurorackModuleView(
+                    title: "PLAITS",
+                    accentColor: ColorPalette.accentPlaits,
+                    width: 220
+                ) {
+                    VStack(spacing: 12) {
+                        Text("Module Content")
+                            .foregroundColor(ColorPalette.textMuted)
+                        ModuleSectionDivider("OSC", accentColor: ColorPalette.accentPlaits)
+                        ModuleTriggerButton(
+                            label: "TRIGGER",
+                            isActive: true,
+                            accentColor: ColorPalette.accentPlaits
+                        ) {}
+                    }
+                    .padding(12)
+                }
             }
 
-            // Example Plaits-style module
-            EurorackModuleView(
-                title: "PLAITS",
-                accentColor: ColorPalette.accentPlaits,
-                width: 280
+            // Console-style module
+            ConsoleModuleView(
+                title: "GRANULAR 1",
+                accentColor: ColorPalette.accentGranular1
             ) {
                 VStack(spacing: 12) {
-                    Text("Module Content")
+                    Text("Full-width console module content")
                         .foregroundColor(ColorPalette.textMuted)
-
-                    ModuleSectionDivider("OSCILLATOR", accentColor: ColorPalette.accentPlaits)
-
-                    Text("Parameters here...")
+                    ConsoleSectionDivider("PARAMETERS", accentColor: ColorPalette.accentGranular1)
+                    Text("Controls here...")
                         .foregroundColor(ColorPalette.textDimmed)
-                        .frame(height: 100)
-
-                    ModuleSectionDivider("LPG", accentColor: ColorPalette.accentPlaits)
-
-                    Text("LPG section...")
-                        .foregroundColor(ColorPalette.textDimmed)
-                        .frame(height: 60)
-
-                    ModuleTriggerButton(
-                        label: "TRIGGER",
-                        isActive: true,
-                        accentColor: ColorPalette.accentPlaits
-                    ) {}
                 }
-                .padding(12)
+                .padding(16)
             }
+            .frame(width: 600)
         }
         .padding(30)
         .background(ColorPalette.backgroundPrimary)

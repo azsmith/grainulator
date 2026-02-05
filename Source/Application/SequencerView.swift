@@ -12,16 +12,19 @@ struct SequencerView: View {
     @EnvironmentObject var sequencer: MetropolixSequencer
 
     var body: some View {
-        VStack(spacing: 10) {
-            header
+        ConsoleModuleView(
+            title: "SEQ",
+            accentColor: ColorPalette.ledAmber
+        ) {
+            VStack(spacing: 10) {
+                header
 
-            ForEach(Array(sequencer.tracks.indices), id: \.self) { trackIndex in
-                trackSection(trackIndex: trackIndex)
+                ForEach(Array(sequencer.tracks.indices), id: \.self) { trackIndex in
+                    trackSection(trackIndex: trackIndex)
+                }
             }
+            .padding(12)
         }
-        .padding(12)
-        .background(Color(hex: "#0F0F11"))
-        .cornerRadius(8)
         .environment(\.colorScheme, .dark)
     }
 
@@ -29,11 +32,6 @@ struct SequencerView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            // Title
-            Text("SEQ")
-                .font(.system(size: 14, weight: .bold, design: .monospaced))
-                .foregroundColor(Color(hex: "#F39C12"))
-
             // Play/Stop button
             HStack(spacing: 4) {
                 Image(systemName: sequencer.isPlaying ? "stop.fill" : "play.fill")
@@ -41,9 +39,9 @@ struct SequencerView: View {
                 Text(sequencer.isPlaying ? "STOP" : "PLAY")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
             }
-            .foregroundColor(sequencer.isPlaying ? Color(hex: "#1A1A1D") : .white)
+            .foregroundColor(sequencer.isPlaying ? ColorPalette.backgroundSecondary : .white)
             .frame(width: 60, height: 26)
-            .background(sequencer.isPlaying ? Color(hex: "#FF6B6B") : Color(hex: "#2A2A2D"))
+            .background(sequencer.isPlaying ? ColorPalette.accentPlaits : ColorPalette.panelBackground)
             .cornerRadius(4)
             .contentShape(RoundedRectangle(cornerRadius: 4))
             .onTapGesture { [sequencer] in
@@ -55,9 +53,9 @@ struct SequencerView: View {
             // Reset button (icon only)
             Image(systemName: "arrow.counterclockwise")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(Color(hex: "#CCCCCC"))
+                .foregroundColor(ColorPalette.textSecondary)
                 .frame(width: 26, height: 26)
-                .background(Color(hex: "#2A2A2D"))
+                .background(ColorPalette.panelBackground)
                 .cornerRadius(4)
                 .contentShape(RoundedRectangle(cornerRadius: 4))
                 .onTapGesture { [sequencer] in
@@ -79,10 +77,10 @@ struct SequencerView: View {
                         .foregroundColor(.white)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 7, weight: .bold))
-                        .foregroundColor(Color(hex: "#888888"))
+                        .foregroundColor(ColorPalette.textMuted)
                 }
                 .frame(width: 44, height: 26)
-                .background(Color(hex: "#2A2A2D"))
+                .background(ColorPalette.panelBackground)
                 .cornerRadius(4)
             }
             .buttonStyle(.plain)
@@ -100,10 +98,10 @@ struct SequencerView: View {
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 7, weight: .bold))
-                        .foregroundColor(Color(hex: "#888888"))
+                        .foregroundColor(ColorPalette.textMuted)
                 }
                 .frame(width: 80, height: 26)
-                .background(Color(hex: "#2A2A2D"))
+                .background(ColorPalette.panelBackground)
                 .cornerRadius(4)
             }
             .buttonStyle(.plain)
@@ -112,11 +110,11 @@ struct SequencerView: View {
             HStack(spacing: 2) {
                 Text("OCT")
                     .font(.system(size: 8, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color(hex: "#666666"))
+                    .foregroundColor(ColorPalette.textDimmed)
                 Button(action: { sequencer.setSequenceOctave(sequencer.sequenceOctave - 1) }) {
                     Image(systemName: "minus")
                         .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(Color(hex: "#888888"))
+                        .foregroundColor(ColorPalette.textMuted)
                         .frame(width: 18, height: 18)
                 }
                 .buttonStyle(.plain)
@@ -124,13 +122,13 @@ struct SequencerView: View {
 
                 Text("\(sequencer.sequenceOctave >= 0 ? "+" : "")\(sequencer.sequenceOctave)")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(Color(hex: "#F39C12"))
+                    .foregroundColor(ColorPalette.ledAmber)
                     .frame(width: 24)
 
                 Button(action: { sequencer.setSequenceOctave(sequencer.sequenceOctave + 1) }) {
                     Image(systemName: "plus")
                         .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(Color(hex: "#888888"))
+                        .foregroundColor(ColorPalette.textMuted)
                         .frame(width: 18, height: 18)
                 }
                 .buttonStyle(.plain)
@@ -138,7 +136,7 @@ struct SequencerView: View {
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
-            .background(Color(hex: "#1A1A1D"))
+            .background(ColorPalette.backgroundSecondary)
             .cornerRadius(4)
 
             // BPM (draggable)
@@ -148,7 +146,7 @@ struct SequencerView: View {
                     set: { sequencer.setTempoBPM($0) }
                 ),
                 range: 40...240,
-                accentColor: Color(hex: "#F39C12")
+                accentColor: ColorPalette.ledAmber
             )
 
             Spacer()
@@ -162,7 +160,7 @@ struct SequencerView: View {
     }
 
     private var controlLabelColor: Color {
-        Color(hex: "#C8C8D0")
+        ColorPalette.metalChrome
     }
 
     // MARK: - Track Section
@@ -175,7 +173,7 @@ struct SequencerView: View {
             track.stages.count - 1
         )
         let stage = track.stages[selectedStage]
-        let trackColor = trackIndex == 0 ? Color(hex: "#4A9EFF") : Color(hex: "#9B59B6")
+        let trackColor = trackIndex == 0 ? ColorPalette.accentGranular1 : ColorPalette.accentLooper1
 
         VStack(spacing: 8) {
             // Track header (compact single line)
@@ -210,10 +208,10 @@ struct SequencerView: View {
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(Color(hex: "#18181B"))
+                .fill(ColorPalette.backgroundSecondary)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(hex: "#2C2C31"), lineWidth: 1)
+                        .stroke(ColorPalette.consoleBorder, lineWidth: 1)
                 )
         )
     }
@@ -232,9 +230,9 @@ struct SequencerView: View {
             Button(action: { sequencer.setTrackMuted(trackIndex, !track.muted) }) {
                 Text("M")
                     .font(.system(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundColor(track.muted ? .white : Color(hex: "#555555"))
+                    .foregroundColor(track.muted ? .white : ColorPalette.metalSteel)
                     .frame(width: 20, height: 18)
-                    .background(track.muted ? Color(hex: "#E74C3C") : Color(hex: "#252528"))
+                    .background(track.muted ? ColorPalette.ledRed : ColorPalette.backgroundTertiary)
                     .cornerRadius(3)
             }
             .buttonStyle(.plain)
@@ -293,9 +291,9 @@ struct SequencerView: View {
             Button(action: { sequencer.randomizeTrack(trackIndex) }) {
                 Image(systemName: "dice")
                     .font(.system(size: 10))
-                    .foregroundColor(Color(hex: "#888888"))
+                    .foregroundColor(ColorPalette.textMuted)
                     .frame(width: 24, height: 18)
-                    .background(Color(hex: "#252528"))
+                    .background(ColorPalette.backgroundTertiary)
                     .cornerRadius(3)
             }
             .buttonStyle(.plain)
@@ -343,7 +341,7 @@ struct SequencerView: View {
                 .frame(width: 42, height: 40)
                 .background(
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(isPlayhead ? Color(hex: "#F39C12") : stageFillColor(for: stageData, isSelected: isSelected))
+                        .fill(isPlayhead ? ColorPalette.ledAmber : stageFillColor(for: stageData, isSelected: isSelected))
                         .overlay(
                             RoundedRectangle(cornerRadius: 4)
                                 .stroke(isSelected ? trackColor : Color.clear, lineWidth: 2)
@@ -371,11 +369,11 @@ struct SequencerView: View {
                     .foregroundColor(trackColor)
                 Text(sequencer.stageNoteText(track: trackIndex, stage: selectedStage))
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color(hex: "#AAAAAA"))
+                    .foregroundColor(ColorPalette.textPanelLabel)
             }
 
             Divider()
-                .background(Color(hex: "#333333"))
+                .background(ColorPalette.divider)
 
             // Step parameters in a compact grid
             VStack(spacing: 4) {
@@ -422,7 +420,7 @@ struct SequencerView: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("PROB")
                             .font(.system(size: 7, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color(hex: "#666666"))
+                            .foregroundColor(ColorPalette.textDimmed)
                         HStack(spacing: 2) {
                             Slider(
                                 value: Binding(
@@ -431,11 +429,11 @@ struct SequencerView: View {
                                 ),
                                 in: 0...1
                             )
-                            .tint(Color(hex: "#F39C12"))
+                            .tint(ColorPalette.ledAmber)
                             .frame(width: 40)
                             Text("\(Int(stage.probability * 100))%")
                                 .font(.system(size: 8, weight: .medium, design: .monospaced))
-                                .foregroundColor(Color(hex: "#888888"))
+                                .foregroundColor(ColorPalette.textMuted)
                                 .frame(width: 28, alignment: .trailing)
                         }
                     }
@@ -445,7 +443,7 @@ struct SequencerView: View {
                 HStack {
                     Text("SLIDE")
                         .font(.system(size: 8, weight: .medium, design: .monospaced))
-                        .foregroundColor(Color(hex: "#666666"))
+                        .foregroundColor(ColorPalette.textDimmed)
                     Spacer()
                     Toggle("", isOn: Binding(
                         get: { stage.slide },
@@ -461,7 +459,7 @@ struct SequencerView: View {
         .frame(width: 140)
         .background(
             RoundedRectangle(cornerRadius: 4)
-                .fill(Color(hex: "#1A1A1D"))
+                .fill(ColorPalette.backgroundSecondary)
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
                         .stroke(trackColor.opacity(0.3), lineWidth: 1)
@@ -475,7 +473,7 @@ struct SequencerView: View {
     private func compactDropdown<Content: View>(
         label: String,
         width: CGFloat,
-        accentColor: Color = Color(hex: "#888888"),
+        accentColor: Color = ColorPalette.textMuted,
         @ViewBuilder content: @escaping () -> Content
     ) -> some View {
         Menu(content: content) {
@@ -489,7 +487,7 @@ struct SequencerView: View {
                     .foregroundColor(accentColor)
             }
             .frame(width: width, height: 18)
-            .background(Color(hex: "#252528"))
+            .background(ColorPalette.backgroundTertiary)
             .cornerRadius(3)
         }
         .buttonStyle(.plain)
@@ -506,12 +504,12 @@ struct SequencerView: View {
         HStack(spacing: 2) {
             Text(label)
                 .font(.system(size: 7, weight: .medium, design: .monospaced))
-                .foregroundColor(Color(hex: "#555555"))
+                .foregroundColor(ColorPalette.metalSteel)
 
             Button(action: { if value > range.lowerBound { onChange(value - 1) } }) {
                 Image(systemName: "minus")
                     .font(.system(size: 7, weight: .bold))
-                    .foregroundColor(value > range.lowerBound ? Color(hex: "#999999") : Color(hex: "#444444"))
+                    .foregroundColor(value > range.lowerBound ? ColorPalette.textMuted : ColorPalette.borderHighlight)
                     .frame(width: 20, height: 20)
                     .contentShape(Rectangle())
             }
@@ -520,13 +518,13 @@ struct SequencerView: View {
 
             Text(signed ? "\(value >= 0 ? "+" : "")\(value)" : "\(value)")
                 .font(.system(size: 9, weight: .bold, design: .monospaced))
-                .foregroundColor(Color(hex: "#AAAAAA"))
+                .foregroundColor(ColorPalette.textPanelLabel)
                 .frame(width: signed ? 26 : 20)
 
             Button(action: { if value < range.upperBound { onChange(value + 1) } }) {
                 Image(systemName: "plus")
                     .font(.system(size: 7, weight: .bold))
-                    .foregroundColor(value < range.upperBound ? Color(hex: "#999999") : Color(hex: "#444444"))
+                    .foregroundColor(value < range.upperBound ? ColorPalette.textMuted : ColorPalette.borderHighlight)
                     .frame(width: 20, height: 20)
                     .contentShape(Rectangle())
             }
@@ -535,7 +533,7 @@ struct SequencerView: View {
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 2)
-        .background(Color(hex: "#1A1A1D"))
+        .background(ColorPalette.backgroundSecondary)
         .cornerRadius(3)
     }
 
@@ -550,29 +548,29 @@ struct SequencerView: View {
         VStack(alignment: .leading, spacing: 1) {
             Text(label)
                 .font(.system(size: 7, weight: .medium, design: .monospaced))
-                .foregroundColor(Color(hex: "#666666"))
+                .foregroundColor(ColorPalette.textDimmed)
             HStack(spacing: 2) {
                 Button(action: { if value > range.lowerBound { onChange(value - 1) } }) {
                     Image(systemName: "minus")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(Color(hex: "#888888"))
+                        .foregroundColor(ColorPalette.textMuted)
                         .frame(width: 16, height: 16)
-                        .background(Color(hex: "#252528"))
+                        .background(ColorPalette.backgroundTertiary)
                         .cornerRadius(2)
                 }
                 .buttonStyle(.plain)
 
                 Text(signed ? "\(value >= 0 ? "+" : "")\(value)" : "\(value)")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(Color(hex: "#CCCCCC"))
+                    .foregroundColor(ColorPalette.textSecondary)
                     .frame(width: 24)
 
                 Button(action: { if value < range.upperBound { onChange(value + 1) } }) {
                     Image(systemName: "plus")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(Color(hex: "#888888"))
+                        .foregroundColor(ColorPalette.textMuted)
                         .frame(width: 16, height: 16)
-                        .background(Color(hex: "#252528"))
+                        .background(ColorPalette.backgroundTertiary)
                         .cornerRadius(2)
                 }
                 .buttonStyle(.plain)
@@ -590,7 +588,7 @@ struct SequencerView: View {
         VStack(alignment: .leading, spacing: 1) {
             Text(label)
                 .font(.system(size: 7, weight: .medium, design: .monospaced))
-                .foregroundColor(Color(hex: "#666666"))
+                .foregroundColor(ColorPalette.textDimmed)
             Menu(content: content) {
                 HStack(spacing: 2) {
                     Text(value)
@@ -599,10 +597,10 @@ struct SequencerView: View {
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 6))
-                        .foregroundColor(Color(hex: "#666666"))
+                        .foregroundColor(ColorPalette.textDimmed)
                 }
                 .frame(width: width, height: 18)
-                .background(Color(hex: "#252528"))
+                .background(ColorPalette.backgroundTertiary)
                 .cornerRadius(3)
             }
             .buttonStyle(.plain)
@@ -613,12 +611,12 @@ struct SequencerView: View {
 
     private func stageFillColor(for stage: SequencerStage, isSelected: Bool) -> Color {
         if isSelected {
-            return Color(hex: "#35353A")
+            return ColorPalette.backgroundTertiary
         }
 
         switch stage.stepType {
         case .play:
-            return Color(hex: "#252528")
+            return ColorPalette.backgroundTertiary
         case .tie:
             return Color(hex: "#2D2640")
         case .rest:
@@ -633,7 +631,7 @@ struct SequencerView: View {
     private func stageTextColor(for stage: SequencerStage) -> Color {
         switch stage.stepType {
         case .rest, .skip:
-            return Color(hex: "#AAAAAA")
+            return ColorPalette.textPanelLabel
         case .elide:
             return Color(hex: "#8EE0D2")
         case .tie:
@@ -664,7 +662,7 @@ struct StepVerticalSlider: View {
 
             ZStack(alignment: .bottom) {
                 RoundedRectangle(cornerRadius: width / 2)
-                    .fill(Color(hex: "#252528"))
+                    .fill(ColorPalette.backgroundTertiary)
 
                 RoundedRectangle(cornerRadius: width / 2)
                     .fill(color.opacity(0.85))

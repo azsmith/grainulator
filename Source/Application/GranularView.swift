@@ -14,7 +14,7 @@ struct GranularView: View {
     let voiceIndex: Int
 
     // Core Mangl parameters
-    @State private var speed: Float = 0.5        // 0-1 maps to -3 to +3
+    @State private var speed: Float = 0.75        // 0-1 maps to -200% to +200%; 0.75 = 100% (normal speed)
     @State private var pitch: Float = 0.5        // 0-1 maps to -24 to +24 semitones
     @State private var size: Float = 0.3         // 0-1 maps to 1-500ms (logarithmic)
     @State private var density: Float = 0.3      // 0-1 maps to 0-512 Hz (logarithmic)
@@ -39,7 +39,7 @@ struct GranularView: View {
     // Recording state
     @State private var isRecording: Bool = false
     @State private var recordMode: AudioEngineWrapper.RecordMode = .oneShot
-    @State private var recordSourceType: AudioEngineWrapper.RecordSourceType = .external
+    @State private var recordSourceType: AudioEngineWrapper.RecordSourceType = .internalVoice
     @State private var recordSourceChannel: Int = 0
     @State private var recordFeedback: Float = 0.0
 
@@ -65,6 +65,8 @@ struct GranularView: View {
         "RKSimulation",
         "Hyperion"
     ]
+
+    let stateSyncTimer = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
 
     var voiceColor: Color {
         voiceColors[voiceIndex % voiceColors.count]
@@ -216,14 +218,17 @@ struct GranularView: View {
 
             // Core parameters row
             HStack(spacing: 16) {
-                // SPEED (displayed as percentage: 100% = normal, -100% = reverse)
+                // SPEED: 0-1 normalized → -2.0 to +2.0 speed → -200% to +200%
+                // 100% = normal speed (1.0x), detents at 0%, ±50%, ±100%
                 GranularSlider(
                     label: "SPEED",
                     value: $speed,
                     color: voiceColor,
+                    detents: [0.25, 0.375, 0.5, 0.625, 0.75],
                     formatter: { value in
-                        let spd = (Double(value) - 0.5) * 4.0  // -2 to +2
-                        let percent = Int(spd * 100)
+                        // speed = (value - 0.5) * 4.0, percentage = speed * 100
+                        let speed = (Double(value) - 0.5) * 4.0  // -2 to +2
+                        let percent = Int(speed * 100)
                         if percent == 0 {
                             return "0%"
                         } else if percent > 0 {
@@ -237,11 +242,12 @@ struct GranularView: View {
                     audioEngine.setParameter(id: .granularSpeed, value: newValue, voiceIndex: voiceIndex)
                 }
 
-                // PITCH
+                // PITCH (hard quantized to semitone steps)
                 GranularSlider(
                     label: "PITCH",
                     value: $pitch,
                     color: ColorPalette.ledBlue,
+                    stepCount: 48,  // 49 positions: -24 to +24 semitones
                     formatter: { value in
                         let semitones = Int((Double(value) - 0.5) * 48)  // -24 to +24
                         if semitones == 0 {
@@ -257,16 +263,15 @@ struct GranularView: View {
                     audioEngine.setParameter(id: .granularPitch, value: newValue, voiceIndex: voiceIndex)
                 }
 
-                // SIZE (grain duration)
+                // SIZE (grain duration, linear 0-2500ms)
                 GranularSlider(
                     label: "SIZE",
                     value: $size,
                     color: voiceColor,
                     formatter: { value in
-                        // 1ms to 1000ms logarithmic
-                        let ms = 1.0 * pow(1000.0, Double(value))
-                        if ms < 100 {
-                            return String(format: "%.0fms", ms)
+                        let ms = Double(value) * 2500.0  // Linear: 0-2500ms
+                        if ms < 1 {
+                            return "0ms"
                         } else {
                             return String(format: "%.0fms", ms)
                         }
@@ -511,10 +516,10 @@ struct GranularView: View {
         .padding(16)
         } // end ConsoleModuleView
         .onAppear {
-            let normalized = Float(filterModel) / Float(max(filterModelNames.count - 1, 1))
-            audioEngine.setParameter(id: .granularFilterModel, value: normalized, voiceIndex: voiceIndex)
-            audioEngine.setParameter(id: .granularReverse, value: reverseGrains ? 1.0 : 0.0, voiceIndex: voiceIndex)
-            audioEngine.setParameter(id: .granularMorph, value: morph, voiceIndex: voiceIndex)
+            syncFromEngine()
+        }
+        .onReceive(stateSyncTimer) { _ in
+            syncFromEngine()
         }
     }
 
@@ -577,6 +582,53 @@ struct GranularView: View {
         case 5: return "GR4"
         default: return "???"
         }
+    }
+
+    private func syncFromEngine() {
+        // Keep UI in sync with engine values when parameters are changed externally (API/chat, MIDI, recalls).
+        let epsilon: Float = 0.0001
+
+        let engineSpeed = audioEngine.getParameter(id: .granularSpeed, voiceIndex: voiceIndex)
+        if abs(engineSpeed - speed) > epsilon { speed = engineSpeed }
+
+        let enginePitch = audioEngine.getParameter(id: .granularPitch, voiceIndex: voiceIndex)
+        if abs(enginePitch - pitch) > epsilon { pitch = enginePitch }
+
+        let engineSize = audioEngine.getParameter(id: .granularSize, voiceIndex: voiceIndex)
+        if abs(engineSize - size) > epsilon { size = engineSize }
+
+        let engineDensity = audioEngine.getParameter(id: .granularDensity, voiceIndex: voiceIndex)
+        if abs(engineDensity - density) > epsilon { density = engineDensity }
+
+        let engineJitter = audioEngine.getParameter(id: .granularJitter, voiceIndex: voiceIndex)
+        if abs(engineJitter - jitter) > epsilon { jitter = engineJitter }
+
+        let engineSpread = audioEngine.getParameter(id: .granularSpread, voiceIndex: voiceIndex)
+        if abs(engineSpread - spread) > epsilon { spread = engineSpread }
+
+        let engineMorph = audioEngine.getParameter(id: .granularMorph, voiceIndex: voiceIndex)
+        if abs(engineMorph - morph) > epsilon { morph = engineMorph }
+
+        let engineCutoff = audioEngine.getParameter(id: .granularFilterCutoff, voiceIndex: voiceIndex)
+        if abs(engineCutoff - filterCutoff) > epsilon { filterCutoff = engineCutoff }
+
+        let engineResonance = audioEngine.getParameter(id: .granularFilterResonance, voiceIndex: voiceIndex)
+        if abs(engineResonance - filterResonance) > epsilon { filterResonance = engineResonance }
+
+        let engineDecay = audioEngine.getParameter(id: .granularDecay, voiceIndex: voiceIndex)
+        if abs(engineDecay - decay) > epsilon { decay = engineDecay }
+
+        let envelopeNormalized = audioEngine.getParameter(id: .granularEnvelope, voiceIndex: voiceIndex)
+        let envelopeIndex = min(max(Int((envelopeNormalized * 7.0).rounded()), 0), envelopeNames.count - 1)
+        if envelopeIndex != envelope { envelope = envelopeIndex }
+
+        let modelNormalized = audioEngine.getParameter(id: .granularFilterModel, voiceIndex: voiceIndex)
+        let maxModel = max(filterModelNames.count - 1, 1)
+        let modelIndex = min(max(Int((modelNormalized * Float(maxModel)).rounded()), 0), filterModelNames.count - 1)
+        if modelIndex != filterModel { filterModel = modelIndex }
+
+        let engineReverse = audioEngine.getParameter(id: .granularReverse, voiceIndex: voiceIndex) >= 0.5
+        if engineReverse != reverseGrains { reverseGrains = engineReverse }
     }
 }
 
@@ -801,12 +853,19 @@ struct GranularSlider: View {
     let label: String
     @Binding var value: Float
     let color: Color
+    var detents: [Float]
+    var stepCount: Int?
     var formatter: ((Float) -> String)?
 
-    init(label: String, value: Binding<Float>, color: Color, formatter: ((Float) -> String)? = nil) {
+    /// Threshold in normalized space for snapping to a detent
+    private let detentThreshold: Float = 0.02
+
+    init(label: String, value: Binding<Float>, color: Color, detents: [Float] = [], stepCount: Int? = nil, formatter: ((Float) -> String)? = nil) {
         self.label = label
         self._value = value
         self.color = color
+        self.detents = detents
+        self.stepCount = stepCount
         self.formatter = formatter
     }
 
@@ -815,6 +874,24 @@ struct GranularSlider: View {
             return formatter(value)
         }
         return String(format: "%.0f%%", value * 100)
+    }
+
+    /// Apply detent snapping and/or step quantization to a raw value
+    private func quantize(_ raw: Float) -> Float {
+        var v = raw
+        // Step quantization (e.g., 48 steps for semitones)
+        if let steps = stepCount, steps > 0 {
+            let stepSize = 1.0 / Float(steps)
+            v = (v / stepSize).rounded() * stepSize
+        }
+        // Detent snapping — snap to nearest detent if within threshold
+        for detent in detents {
+            if abs(v - detent) <= detentThreshold {
+                v = detent
+                break
+            }
+        }
+        return max(0, min(1, v))
     }
 
     var body: some View {
@@ -838,8 +915,8 @@ struct GranularSlider: View {
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { gesture in
-                            let newValue = 1.0 - Float(gesture.location.y / geometry.size.height)
-                            value = max(0, min(1, newValue))
+                            let raw = 1.0 - Float(gesture.location.y / geometry.size.height)
+                            value = quantize(raw)
                         }
                 )
             }

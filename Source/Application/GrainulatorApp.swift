@@ -17,6 +17,7 @@ struct GrainulatorApp: App {
     @StateObject private var mixerState = MixerState()  // New modular mixer state
     @StateObject private var pluginManager = AUPluginManager()  // AU plugin browser
     @StateObject private var projectManager = ProjectManager()  // Project save/load
+    @StateObject private var conversationalBridge = ConversationalControlBridge()
 
     var body: some Scene {
         WindowGroup {
@@ -29,7 +30,7 @@ struct GrainulatorApp: App {
                 .environmentObject(mixerState)
                 .environmentObject(pluginManager)
                 .environmentObject(projectManager)
-                .frame(minWidth: 1200, minHeight: 800)
+                .frame(minWidth: 1200, minHeight: 600)
                 .onAppear {
                     // Ensure we get a proper menu bar when launched from terminal
                     NSApp.setActivationPolicy(.regular)
@@ -49,11 +50,11 @@ struct GrainulatorApp: App {
                         appState: appState,
                         pluginManager: pluginManager
                     )
+                    conversationalBridge.start(audioEngine: audioEngine, masterClock: masterClock, sequencer: sequencer)
                     setupMIDICallbacks()
                 }
         }
-        .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentSize)
+        .windowResizability(.contentMinSize)
         .commands {
             GrainulatorCommands(projectManager: projectManager)
         }
@@ -113,35 +114,17 @@ struct GrainulatorApp: App {
 /// Application-wide state management
 @MainActor
 class AppState: ObservableObject {
-    @Published var currentView: ViewMode = .multiVoice
     @Published var focusedVoice: Int = 0
     @Published var selectedGranularVoice: Int = 0
     @Published var cpuUsage: Double = 0.0
     @Published var latency: Double = 0.0
 
-    // New mixer mode toggle (Phase 2 UI refactor)
-    @Published var useNewMixer: Bool = false
-
-    // New tab-based layout toggle (Phase 3 UI refactor)
-    @Published var useTabLayout: Bool = true
-
-    enum ViewMode {
-        case multiVoice
-        case focus
-        case performance
-    }
-
     init() {
         // Initialize application state
-    }
-
-    func switchToView(_ mode: ViewMode) {
-        currentView = mode
     }
 
     func focusVoice(_ index: Int) {
         selectedGranularVoice = index
         focusedVoice = index
-        currentView = .focus
     }
 }

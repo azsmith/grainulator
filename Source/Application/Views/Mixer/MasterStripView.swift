@@ -26,19 +26,13 @@ struct ProMasterStripView: View {
             Divider()
                 .background(ColorPalette.divider)
 
-            // Stereo VU Meter
-            meterSection
-
-            Divider()
-                .background(ColorPalette.divider)
-
             // Effects returns
             effectsReturnsSection
 
             Divider()
                 .background(ColorPalette.divider)
 
-            // Master fader
+            // Master fader with stereo bar meters
             faderSection
 
             // Master controls

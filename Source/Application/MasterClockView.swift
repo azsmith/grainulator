@@ -25,14 +25,14 @@ struct DraggableBPMView: View {
             if isEditing {
                 // Text input mode
                 TextField("", text: $editText)
-                    .font(.system(size: 18, weight: .bold, design: .monospaced))
+                    .font(Typography.lcdSmall)
                     .foregroundColor(accentColor)
                     .multilineTextAlignment(.center)
                     .frame(width: 70, height: 36)
-                    .background(Color(hex: "#1A1A1D"))
-                    .cornerRadius(4)
+                    .background(ColorPalette.lcdAmberBg)
+                    .cornerRadius(3)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 4)
+                        RoundedRectangle(cornerRadius: 3)
                             .stroke(accentColor, lineWidth: 2)
                     )
                     .onSubmit {
@@ -45,19 +45,20 @@ struct DraggableBPMView: View {
                         editText = String(format: "%.0f", value)
                     }
             } else {
-                // Display mode - draggable
+                // Display mode - draggable (LCD-inspired)
                 Text(String(format: "%.0f", value))
-                    .font(.system(size: 18, weight: .bold, design: .monospaced))
+                    .font(Typography.lcdSmall)
                     .foregroundColor(isDragging ? .white : accentColor)
                     .frame(width: 70, height: 36)
                     .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(isDragging ? accentColor.opacity(0.3) : Color(hex: "#1A1A1D"))
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(isDragging ? accentColor.opacity(0.3) : ColorPalette.lcdAmberBg)
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(accentColor.opacity(0.5), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 3)
+                            .stroke(accentColor.opacity(0.3), lineWidth: 1)
                     )
+                    .shadow(color: accentColor.opacity(0.15), radius: 4, x: 0, y: 0)
                     .gesture(
                         DragGesture(minimumDistance: 1)
                             .onChanged { gesture in
@@ -90,13 +91,16 @@ struct MasterClockView: View {
     @EnvironmentObject var sequencer: MetropolixSequencer
 
     var body: some View {
-        VStack(spacing: 10) {
-            header
-            outputGrid
+        ConsoleModuleView(
+            title: "M CLOCK",
+            accentColor: ColorPalette.accentLooper1
+        ) {
+            VStack(spacing: 10) {
+                header
+                outputGrid
+            }
+            .padding(12)
         }
-        .padding(12)
-        .background(Color(hex: "#0F0F11"))
-        .cornerRadius(8)
         .environment(\.colorScheme, .dark)
     }
 
@@ -104,17 +108,12 @@ struct MasterClockView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            // Title
-            Text("M CLOCK")
-                .font(.system(size: 14, weight: .bold, design: .monospaced))
-                .foregroundColor(Color(hex: "#9B59B6"))
-
             // Play/Stop button
             Text(sequencer.isPlaying ? "STOP" : "RUN")
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundColor(sequencer.isPlaying ? Color(hex: "#1A1A1D") : .white)
+                .foregroundColor(sequencer.isPlaying ? ColorPalette.backgroundSecondary : .white)
                 .frame(width: 48, height: 28)
-                .background(sequencer.isPlaying ? Color(hex: "#2ECC71") : Color(hex: "#2A2A2D"))
+                .background(sequencer.isPlaying ? ColorPalette.ledGreen : ColorPalette.panelBackground)
                 .cornerRadius(4)
                 .contentShape(RoundedRectangle(cornerRadius: 4))
                 .onTapGesture {
@@ -129,25 +128,25 @@ struct MasterClockView: View {
             DraggableBPMView(
                 value: $masterClock.bpm,
                 range: 10...330,
-                accentColor: Color(hex: "#9B59B6")
+                accentColor: ColorPalette.accentLooper1
             )
 
             // Swing control (compact)
             HStack(spacing: 4) {
                 Text("SWG")
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color(hex: "#666666"))
+                    .foregroundColor(ColorPalette.textDimmed)
 
                 Slider(
                     value: $masterClock.swing,
                     in: 0...1
                 )
-                .tint(Color(hex: "#9B59B6"))
+                .tint(ColorPalette.accentLooper1)
                 .frame(width: 50)
 
                 Text(String(format: "%.0f%%", masterClock.swing * 100))
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color(hex: "#888888"))
+                    .foregroundColor(ColorPalette.textMuted)
                     .frame(width: 28, alignment: .trailing)
             }
 
@@ -176,17 +175,17 @@ struct CompactClockOutputCell: View {
 
     private var levelColor: Color {
         if output.muted {
-            return Color(hex: "#444444")
+            return ColorPalette.borderHighlight
         }
         let value = abs(output.currentValue)
         if value > 0.8 {
-            return Color(hex: "#E74C3C")
+            return ColorPalette.ledRed
         } else if value > 0.5 {
-            return Color(hex: "#F39C12")
+            return ColorPalette.ledAmber
         } else if value > 0.1 {
-            return Color(hex: "#2ECC71")
+            return ColorPalette.ledGreen
         }
-        return Color(hex: "#27AE60")
+        return ColorPalette.ledGreen
     }
 
     var body: some View {
@@ -196,15 +195,15 @@ struct CompactClockOutputCell: View {
                 // Index badge
                 Text("\(index + 1)")
                     .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundColor(Color(hex: "#888888"))
+                    .foregroundColor(ColorPalette.textMuted)
                     .frame(width: 14, height: 14)
-                    .background(Color(hex: "#252528"))
+                    .background(ColorPalette.backgroundTertiary)
                     .cornerRadius(3)
 
                 // Activity indicator
                 ZStack {
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(Color(hex: "#1A1A1D"))
+                        .fill(ColorPalette.backgroundSecondary)
                         .frame(width: 32, height: 32)
 
                     GeometryReader { geo in
@@ -230,7 +229,7 @@ struct CompactClockOutputCell: View {
                 // Division/Waveform
                 Text(output.mode == .clock ? output.division.rawValue : output.waveform.rawValue)
                     .font(.system(size: 8, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color(hex: "#AAAAAA"))
+                    .foregroundColor(ColorPalette.textPanelLabel)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -238,9 +237,9 @@ struct CompactClockOutputCell: View {
                 Button(action: { output.muted.toggle() }) {
                     Text("M")
                         .font(.system(size: 7, weight: .bold, design: .monospaced))
-                        .foregroundColor(output.muted ? Color(hex: "#E74C3C") : Color(hex: "#555555"))
+                        .foregroundColor(output.muted ? ColorPalette.ledRed : ColorPalette.textDimmed)
                         .frame(width: 16, height: 14)
-                        .background(output.muted ? Color(hex: "#E74C3C").opacity(0.2) : Color.clear)
+                        .background(output.muted ? ColorPalette.ledRed.opacity(0.2) : Color.clear)
                         .cornerRadius(2)
                 }
                 .buttonStyle(.plain)
@@ -248,7 +247,7 @@ struct CompactClockOutputCell: View {
         }
         .padding(6)
         .frame(minWidth: 60, minHeight: 60)
-        .background(Color(hex: "#1A1A1D"))
+        .background(ColorPalette.backgroundSecondary)
         .cornerRadius(6)
         .onTapGesture {
             showingConfig = true
@@ -269,13 +268,13 @@ struct ClockOutputConfigView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("OUTPUT \(index + 1)")
                 .font(.system(size: 14, weight: .bold, design: .monospaced))
-                .foregroundColor(Color(hex: "#9B59B6"))
+                .foregroundColor(ColorPalette.accentLooper1)
 
             // Mode selector
             HStack {
                 Text("Mode")
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color(hex: "#888888"))
+                    .foregroundColor(ColorPalette.textMuted)
                     .frame(width: 70, alignment: .leading)
 
                 Picker("Mode", selection: $output.mode) {
@@ -291,7 +290,7 @@ struct ClockOutputConfigView: View {
             HStack {
                 Text(output.mode == .clock ? "Division" : "Rate")
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color(hex: "#888888"))
+                    .foregroundColor(ColorPalette.textMuted)
                     .frame(width: 70, alignment: .leading)
 
                 Picker("Division", selection: $output.division) {
@@ -307,7 +306,7 @@ struct ClockOutputConfigView: View {
                 HStack {
                     Text("Waveform")
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundColor(Color(hex: "#888888"))
+                        .foregroundColor(ColorPalette.textMuted)
                         .frame(width: 70, alignment: .leading)
 
                     Picker("Waveform", selection: $output.waveform) {
@@ -322,7 +321,7 @@ struct ClockOutputConfigView: View {
                 HStack {
                     Text("Speed")
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundColor(Color(hex: "#888888"))
+                        .foregroundColor(ColorPalette.textMuted)
                         .frame(width: 70, alignment: .leading)
 
                     Picker("Speed", selection: $output.slowMode) {
@@ -336,13 +335,13 @@ struct ClockOutputConfigView: View {
                 if output.slowMode {
                     Text("÷4 rate multiplier")
                         .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .foregroundColor(Color(hex: "#666666"))
+                        .foregroundColor(ColorPalette.textDimmed)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
 
             Divider()
-                .background(Color(hex: "#333333"))
+                .background(ColorPalette.divider)
 
             // Level
             parameterSlider(label: "Level", value: $output.level, range: 0...1)
@@ -357,13 +356,13 @@ struct ClockOutputConfigView: View {
             parameterSlider(label: "Width", value: $output.width, range: 0...1, format: "%.0f%%") { $0 * 100 }
 
             Divider()
-                .background(Color(hex: "#333333"))
+                .background(ColorPalette.divider)
 
             // Destination
             HStack {
                 Text("Dest")
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color(hex: "#888888"))
+                    .foregroundColor(ColorPalette.textMuted)
                     .frame(width: 70, alignment: .leading)
 
                 Picker("Destination", selection: $output.destination) {
@@ -381,7 +380,7 @@ struct ClockOutputConfigView: View {
         }
         .padding(16)
         .frame(width: 280)
-        .background(Color(hex: "#1A1A1D"))
+        .background(ColorPalette.backgroundSecondary)
         .environment(\.colorScheme, .dark)
     }
 
@@ -395,17 +394,17 @@ struct ClockOutputConfigView: View {
         HStack {
             Text(label)
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundColor(Color(hex: "#888888"))
+                .foregroundColor(ColorPalette.textMuted)
                 .frame(width: 70, alignment: .leading)
 
             Slider(value: value, in: range)
-                .tint(Color(hex: "#9B59B6"))
+                .tint(ColorPalette.accentLooper1)
                 .frame(width: 120)
 
             let displayValue = displayTransform?(value.wrappedValue) ?? value.wrappedValue
             Text(String(format: format, displayValue))
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundColor(Color(hex: "#AAAAAA"))
+                .foregroundColor(ColorPalette.textPanelLabel)
                 .frame(width: 45, alignment: .trailing)
         }
     }
@@ -418,5 +417,5 @@ struct ClockOutputConfigView: View {
         .environmentObject(MasterClock())
         .frame(width: 400)
         .padding()
-        .background(Color(hex: "#0A0A0B"))
+        .background(ColorPalette.backgroundPrimary)
 }

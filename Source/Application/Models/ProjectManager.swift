@@ -67,7 +67,6 @@ class ProjectManager: ObservableObject {
         masterClock.swing = 0.0
 
         // Reset UI
-        appState.currentView = .multiVoice
         appState.focusedVoice = 0
 
         // Sync to engine

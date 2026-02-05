@@ -190,6 +190,20 @@ struct ColorPalette {
     /// Panel label text (embossed look)
     static let textPanelLabel = Color(hex: "#AAAAAA")
 
+    // MARK: - Console Module Colors (LUNA/UAD-inspired)
+
+    /// Console module border - warm dark gray
+    static let consoleBorder = Color(hex: "#2C2A28")
+
+    /// Console header gradient dark edge
+    static let consoleHeaderDark = Color(hex: "#1C1B19")
+
+    /// Console header gradient light center
+    static let consoleHeaderLight = Color(hex: "#2A2825")
+
+    /// Console surface - slightly warm panel fill
+    static let consoleSurface = Color(hex: "#1E1D1B")
+
     // MARK: - Divider/Border Colors
 
     /// Standard divider

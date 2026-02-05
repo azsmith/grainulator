@@ -73,7 +73,7 @@ let package = Package(
         // Tests
         .testTarget(
             name: "GrainulatorTests",
-            dependencies: ["GrainulatorCore"],
+            dependencies: ["GrainulatorCore", "Grainulator"],
             path: "Tests"
         ),
     ],

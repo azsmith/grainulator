@@ -243,9 +243,11 @@ struct AudioReelReference: Codable {
 // MARK: - UI Preferences Snapshot
 
 struct UIPreferencesSnapshot: Codable {
-    var useTabLayout: Bool
-    var useNewMixer: Bool
-    var currentView: String     // AppState.ViewMode description
     var focusedVoice: Int
     var selectedGranularVoice: Int
+
+    // Legacy fields kept for backward compatibility when loading old project files
+    var useTabLayout: Bool?
+    var useNewMixer: Bool?
+    var currentView: String?
 }

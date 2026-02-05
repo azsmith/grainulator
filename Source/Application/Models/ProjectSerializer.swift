@@ -298,17 +298,7 @@ struct ProjectSerializer {
     // MARK: - UI Preferences
 
     private static func captureUIPreferences(_ appState: AppState) -> UIPreferencesSnapshot {
-        let viewMode: String
-        switch appState.currentView {
-        case .multiVoice: viewMode = "multiVoice"
-        case .focus: viewMode = "focus"
-        case .performance: viewMode = "performance"
-        }
-
         return UIPreferencesSnapshot(
-            useTabLayout: appState.useTabLayout,
-            useNewMixer: appState.useNewMixer,
-            currentView: viewMode,
             focusedVoice: appState.focusedVoice,
             selectedGranularVoice: appState.selectedGranularVoice
         )
@@ -364,16 +354,8 @@ struct ProjectSerializer {
     // MARK: - Restore Helpers
 
     private static func restoreUIPreferences(_ prefs: UIPreferencesSnapshot, appState: AppState) {
-        appState.useTabLayout = prefs.useTabLayout
-        appState.useNewMixer = prefs.useNewMixer
         appState.focusedVoice = prefs.focusedVoice
         appState.selectedGranularVoice = prefs.selectedGranularVoice
-
-        switch prefs.currentView {
-        case "focus": appState.currentView = .focus
-        case "performance": appState.currentView = .performance
-        default: appState.currentView = .multiVoice
-        }
     }
 
     private static func restoreMixer(_ snapshot: MixerSnapshot, mixerState: MixerState) {

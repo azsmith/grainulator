@@ -220,6 +220,8 @@ class AudioEngineWrapper: ObservableObject {
 
     // Waveform data for display (indexed by reel)
     @Published var waveformOverviews: [Int: [Float]] = [:]
+    // Throttle counter for waveform updates during recording
+    private var waveformUpdateCounters: [Int: Int] = [:]
 
     // Loaded audio file paths for project save/load (indexed by reel)
     @Published var loadedAudioFilePaths: [Int: URL] = [:]
@@ -1357,8 +1359,14 @@ class AudioEngineWrapper: ObservableObject {
                 recordingStates[reelIndex]?.isRecording = false
                 updateWaveformOverview(reelIndex: reelIndex)
             } else {
-                // Refresh waveform while recording so user sees audio being written
-                updateWaveformOverview(reelIndex: reelIndex)
+                // Throttle waveform updates during recording (~4 Hz) to avoid
+                // blocking the main thread every frame and causing deadlocks
+                // with bridge DispatchQueue.main.sync calls
+                waveformUpdateCounters[reelIndex, default: 0] += 1
+                if waveformUpdateCounters[reelIndex, default: 0] >= 8 {
+                    waveformUpdateCounters[reelIndex] = 0
+                    updateWaveformOverview(reelIndex: reelIndex)
+                }
             }
         }
 
@@ -1557,28 +1565,35 @@ class AudioEngineWrapper: ObservableObject {
         return AudioEngine_GetReelLength(handle, Int32(reelIndex))
     }
 
-    /// Updates waveform overview for display
+    /// Updates waveform overview for display.
+    /// The expensive C++ read is dispatched to a background queue to avoid
+    /// blocking the main thread (which would deadlock with bridge main.sync calls).
     func updateWaveformOverview(reelIndex: Int) {
         guard let handle = cppEngineHandle else { return }
 
-        let overviewSize = 256
-        // C++ GenerateOverview writes min/max pairs, so we need 2x the size
-        var rawOverview = [Float](repeating: 0, count: overviewSize * 2)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let overviewSize = 256
+            // C++ GenerateOverview writes min/max pairs, so we need 2x the size
+            var rawOverview = [Float](repeating: 0, count: overviewSize * 2)
 
-        rawOverview.withUnsafeMutableBufferPointer { ptr in
-            AudioEngine_GetWaveformOverview(handle, Int32(reelIndex), ptr.baseAddress, overviewSize)
+            rawOverview.withUnsafeMutableBufferPointer { ptr in
+                AudioEngine_GetWaveformOverview(handle, Int32(reelIndex), ptr.baseAddress, overviewSize)
+            }
+
+            // Extract just the max values for display (every other value starting at index 1)
+            var overview = [Float](repeating: 0, count: overviewSize)
+            for i in 0..<overviewSize {
+                // Use max of abs(min) and abs(max) for symmetric display
+                let minVal = rawOverview[i * 2]
+                let maxVal = rawOverview[i * 2 + 1]
+                overview[i] = max(abs(minVal), abs(maxVal))
+            }
+
+            // Publish result on main thread
+            DispatchQueue.main.async {
+                self?.waveformOverviews[reelIndex] = overview
+            }
         }
-
-        // Extract just the max values for display (every other value starting at index 1)
-        var overview = [Float](repeating: 0, count: overviewSize)
-        for i in 0..<overviewSize {
-            // Use max of abs(min) and abs(max) for symmetric display
-            let minVal = rawOverview[i * 2]
-            let maxVal = rawOverview[i * 2 + 1]
-            overview[i] = max(abs(minVal), abs(maxVal))
-        }
-
-        waveformOverviews[reelIndex] = overview
     }
 
     /// Sets granular voice playback state

@@ -247,6 +247,9 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
     private weak var audioEngine: AudioEngineWrapper?
     private weak var masterClock: MasterClock?
     private weak var sequencer: MetropolixSequencer?
+    /// Cached C++ engine handle for thread-safe reads (e.g. IsRecording atomic checks)
+    private var cachedEngineHandle: OpaquePointer?
+    private var cachedSampleRate: Double = 48000.0
 
     private var listener: NWListener?
     private var sessionsByToken: [String: SessionInfo] = [:]
@@ -273,6 +276,8 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
         self.masterClock = masterClock
         self.sequencer = sequencer
         self.listenPort = port
+        self.cachedEngineHandle = audioEngine.cppEngineHandle
+        self.cachedSampleRate = audioEngine.sampleRate
 
         queue.async { [weak self] in
             guard let self else { return }
@@ -679,6 +684,20 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
     private func route(_ request: HTTPRequest) -> HTTPResponse {
         if request.method == "POST", request.path == "/v1/sessions" {
             return handleCreateSession(request)
+        }
+
+        // Debug endpoint: read sample time directly (no auth required)
+        if request.method == "GET", request.path == "/v1/debug/sampletime" {
+            let handle = cachedEngineHandle
+            let sampleTime: UInt64 = handle != nil ? AudioEngine_GetCurrentSampleTime(handle!) : 0
+            let clockRunning = handle != nil ? AudioEngine_IsClockRunning(handle!) : false
+            let bpm = handle != nil ? AudioEngine_GetClockBPM(handle!) : 0.0
+            return .json(statusCode: 200, reason: "OK", payload: [
+                "sampleTime": sampleTime,
+                "clockRunning": clockRunning,
+                "bpm": bpm,
+                "handlePresent": handle != nil,
+            ])
         }
 
         guard validateAuthorization(request) else {
@@ -1697,8 +1716,8 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                 }
                 return (true, nil)
             case "sizeMs":
-                guard let ms = feedbackValueFromAction(action), ms > 0 else {
-                    return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "granular sizeMs must be > 0"))
+                guard let ms = feedbackValueFromAction(action), ms > 0, ms <= 2500.0 else {
+                    return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "granular sizeMs must be > 0 and <= 2500"))
                 }
                 return (true, nil)
             case "pitchSemitones":
@@ -1871,10 +1890,10 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                 )
                 return (true, nil)
             case "sizeMs":
-                guard let ms = feedbackValueFromAction(action), ms > 0 else {
-                    return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "granular sizeMs must be > 0"))
+                guard let ms = feedbackValueFromAction(action), ms > 0, ms <= 2500.0 else {
+                    return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "granular sizeMs must be > 0 and <= 2500"))
                 }
-                let normalized = clamp01(log(ms) / log(1000.0))
+                let normalized = clamp01(ms / 2500.0)  // Linear: 0-2500ms
                 writeGranularParameter(id: .granularSize, value: Float(normalized), voiceIndex: granular.voice.reelIndex)
                 recordMutation(
                     changedPaths: ["\(granular.voice.id).sizeMs"],
@@ -3790,83 +3809,34 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
     }
 
     private func readMasterClockBPM() -> Float {
-        if Thread.isMainThread {
-            return MainActor.assumeIsolated { [weak self] in
-                self?.audioEngine?.getMasterClockBPM() ?? 120.0
-            }
-        }
-
-        var result: Float = 120.0
-        DispatchQueue.main.sync {
-            result = MainActor.assumeIsolated { [weak self] in
-                self?.audioEngine?.getMasterClockBPM() ?? 120.0
-            }
-        }
-        return result
+        // Read directly from C++ engine via cached handle — atomic read, thread-safe
+        guard let handle = cachedEngineHandle else { return 120.0 }
+        return AudioEngine_GetClockBPM(handle)
     }
 
     private func readClockRunning() -> Bool {
-        if Thread.isMainThread {
-            return MainActor.assumeIsolated { [weak self] in
-                self?.audioEngine?.isClockRunning() ?? false
-            }
-        }
-
-        var result = false
-        DispatchQueue.main.sync {
-            result = MainActor.assumeIsolated { [weak self] in
-                self?.audioEngine?.isClockRunning() ?? false
-            }
-        }
-        return result
+        // Read directly from C++ engine via cached handle — atomic read, thread-safe
+        guard let handle = cachedEngineHandle else { return false }
+        return AudioEngine_IsClockRunning(handle)
     }
 
     private func readSampleRate() -> Double {
-        if Thread.isMainThread {
-            return MainActor.assumeIsolated { [weak self] in
-                self?.audioEngine?.sampleRate ?? 48000.0
-            }
-        }
-
-        var result = 48000.0
-        DispatchQueue.main.sync {
-            result = MainActor.assumeIsolated { [weak self] in
-                self?.audioEngine?.sampleRate ?? 48000.0
-            }
-        }
-        return result
+        // Sample rate is set once at init and cached — immutable after startup
+        return cachedSampleRate
     }
 
     private func readCurrentSampleTime() -> UInt64 {
-        if Thread.isMainThread {
-            return MainActor.assumeIsolated { [weak self] in
-                self?.audioEngine?.currentSampleTime() ?? 0
-            }
-        }
-
-        var result: UInt64 = 0
-        DispatchQueue.main.sync {
-            result = MainActor.assumeIsolated { [weak self] in
-                self?.audioEngine?.currentSampleTime() ?? 0
-            }
-        }
-        return result
+        // Read directly from C++ engine via cached handle — atomic read, thread-safe
+        guard let handle = cachedEngineHandle else { return 0 }
+        return AudioEngine_GetCurrentSampleTime(handle)
     }
 
     private func readIsReelRecording(_ reelIndex: Int) -> Bool {
-        if Thread.isMainThread {
-            return MainActor.assumeIsolated { [weak self] in
-                self?.audioEngine?.isReelRecording(reelIndex: reelIndex) ?? false
-            }
-        }
-
-        var result = false
-        DispatchQueue.main.sync {
-            result = MainActor.assumeIsolated { [weak self] in
-                self?.audioEngine?.isReelRecording(reelIndex: reelIndex) ?? false
-            }
-        }
-        return result
+        // Call the C++ engine directly — IsRecording() reads an atomic<bool>
+        // so it's safe from any thread. This avoids DispatchQueue.main.sync
+        // which can deadlock when main thread is busy with waveform updates.
+        guard let handle = cachedEngineHandle else { return false }
+        return AudioEngine_IsRecording(handle, Int32(reelIndex))
     }
 
     private func readRecordingModeAndFeedback(
@@ -3901,6 +3871,8 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
         let clampedFeedback: Float? = feedback.map { Float(max(0.0, min(1.0, $0))) }
         if Thread.isMainThread {
             MainActor.assumeIsolated { [weak self] in
+                // Stop granular playback before recording to avoid buffer read/write hazard
+                self?.audioEngine?.setGranularPlaying(voiceIndex: reelIndex, playing: false)
                 self?.audioEngine?.startRecording(
                     reelIndex: reelIndex,
                     mode: mode,
@@ -3916,6 +3888,8 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
 
         DispatchQueue.main.sync {
             MainActor.assumeIsolated { [weak self] in
+                // Stop granular playback before recording to avoid buffer read/write hazard
+                self?.audioEngine?.setGranularPlaying(voiceIndex: reelIndex, playing: false)
                 self?.audioEngine?.startRecording(
                     reelIndex: reelIndex,
                     mode: mode,

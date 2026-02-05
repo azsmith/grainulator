@@ -156,8 +156,9 @@ public:
     }
     float GetPitch() const { return pitch_; }
 
-    /// Set pitch in semitones (-24 to +24)
+    /// Set pitch in semitones (-24 to +24), hard quantized to whole steps
     void SetPitchSemitones(float semitones) {
+        semitones = std::round(semitones);  // Hard quantize to whole semitones
         semitones = std::max(-24.0f, std::min(24.0f, semitones));
         pitch_ = std::pow(2.0f, semitones / 12.0f);
     }

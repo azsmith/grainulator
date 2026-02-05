@@ -1341,8 +1341,8 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
     switch (id) {
         // ========== Granular Parameters (Mangl-style) ==========
         case ParameterID::GranularSpeed:
-            // Convert 0-1 to -2 to +2 (with 0.5 = 0, which is frozen)
-            // Displayed as percentage: 100% = normal speed, -100% = reverse
+            // Convert 0-1 to -2 to +2 (with 0.5 = 0 frozen, 0.75 = 1.0 normal speed)
+            // Display: 100% = normal speed (1.0x), 200% = double, -100% = full reverse
             if (m_granularVoices[granularVoice]) {
                 float speed = (clampedValue - 0.5f) * 4.0f;
                 m_granularVoices[granularVoice]->SetSpeed(speed);
@@ -1358,9 +1358,10 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
             break;
 
         case ParameterID::GranularSize:
-            // Convert 0-1 to 0.001-0.5 seconds (logarithmic, 1ms to 500ms)
+            // Convert 0-1 to 0-2.5 seconds (linear, 0-2500ms)
             if (m_granularVoices[granularVoice]) {
-                float size = 0.001f * std::pow(500.0f, clampedValue);
+                float size = clampedValue * 2.5f;           // Linear: 0-2500ms
+                size = std::max(0.001f, size);              // Minimum 1ms
                 m_granularVoices[granularVoice]->SetSize(size);
             }
             break;
@@ -1766,7 +1767,7 @@ float AudioEngine::getParameter(ParameterID id, int voiceIndex) const {
         case ParameterID::GranularSize:
             if (m_granularVoices[granularVoice]) {
                 const float seconds = std::max(0.001f, m_granularVoices[granularVoice]->GetSize());
-                return clamp01(std::log(seconds / 0.001f) / std::log(500.0f));
+                return clamp01(seconds / 2.5f);  // Linear inverse: 0-2.5s -> 0-1
             }
             return 0.0f;
         case ParameterID::GranularDensity:
