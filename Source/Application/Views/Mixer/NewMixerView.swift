@@ -65,9 +65,18 @@ struct NewMixerView: View {
                         .font(.system(size: 12, weight: .bold, design: .monospaced))
                         .foregroundColor(.white)
                     Spacer()
-                    Button("Done") {
-                        showAUSendsSheet = false
+                    Button(action: { showAUSendsSheet = false }) {
+                        Text("Done")
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .background(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .fill(Color.white.opacity(0.15))
+                            )
                     }
+                    .buttonStyle(.plain)
                     .keyboardShortcut(.cancelAction)
                 }
                 .padding(.horizontal, 16)

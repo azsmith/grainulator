@@ -56,7 +56,6 @@ struct AUSendEffectCardByIndex: View {
     @EnvironmentObject var pluginManager: AUPluginManager
 
     @State private var showBrowser = false
-    @State private var showPluginUI = false
 
     var body: some View {
         let slotData = audioEngine.getSendSlotData(busIndex: busIndex)
@@ -98,38 +97,8 @@ struct AUSendEffectCardByIndex: View {
             )
             .environmentObject(pluginManager)
         }
-        .sheet(isPresented: $showPluginUI) {
-            if let audioUnit = audioEngine.getSendAudioUnit(busIndex: busIndex),
-               let pluginInfo = audioEngine.getSendSlotData(busIndex: busIndex).pluginInfo {
-                let slotData = audioEngine.getSendSlotData(busIndex: busIndex)
-                AUSendPluginWindowViewByIndex(
-                    audioUnit: audioUnit,
-                    pluginInfo: pluginInfo,
-                    busIndex: busIndex,
-                    slotData: slotData,
-                    onToggleBypass: { [audioEngine] in
-                        Task { @MainActor [audioEngine] in
-                            audioEngine.toggleSendBypass(busIndex: busIndex)
-                        }
-                    },
-                    isPresented: $showPluginUI
-                )
-                .frame(minWidth: 300, minHeight: 200)
-            } else {
-                VStack {
-                    Text("Plugin not available")
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(ColorPalette.textMuted)
-                    Button("Close") { showPluginUI = false }
-                        .padding(.top, 8)
-                }
-                .padding(20)
-            }
-        }
         .onDisappear {
-            // Close sheets when view disappears to prevent crashes
             showBrowser = false
-            showPluginUI = false
         }
     }
 
@@ -254,7 +223,17 @@ struct AUSendEffectCardByIndex: View {
                 )
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    showPluginUI = true
+                    if let audioUnit = audioEngine.getSendAudioUnit(busIndex: busIndex) {
+                        let slotData = audioEngine.getSendSlotData(busIndex: busIndex)
+                        let pluginName = slotData.pluginInfo?.name ?? "Plugin"
+                        let manufacturer = slotData.pluginInfo?.manufacturerName ?? ""
+                        AUPluginWindowManager.shared.open(
+                            audioUnit: audioUnit,
+                            title: pluginName,
+                            subtitle: manufacturer,
+                            key: "send-\(busIndex)"
+                        )
+                    }
                 }
         }
     }
@@ -327,83 +306,8 @@ struct AUSendEffectCardByIndex: View {
     }
 }
 
-// MARK: - AU Send Plugin Window View (Index-Based)
-
-/// Plugin window that uses bus index rather than @ObservedObject
-/// NOTE: This view avoids @EnvironmentObject to prevent SwiftUI gesture crashes.
-/// All state and actions are passed in from the parent.
-struct AUSendPluginWindowViewByIndex: View {
-    let audioUnit: AVAudioUnit
-    let pluginInfo: AUPluginInfo
-    let busIndex: Int
-    let slotData: SendSlotData  // Passed in from parent
-    let onToggleBypass: () -> Void  // Action passed from parent
-
-    @Binding var isPresented: Bool
-    @State private var preferredSize = CGSize(width: 400, height: 300)
-
-    var body: some View {
-
-        VStack(spacing: 0) {
-            // Header bar
-            HStack(spacing: 12) {
-                // Send type indicator
-                Image(systemName: busIndex == 0 ? "clock" : "waveform.badge.plus")
-                    .font(.system(size: 14))
-                    .foregroundColor(busIndex == 0 ? ColorPalette.ledAmber : ColorPalette.ledGreen)
-
-                // Plugin name
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(pluginInfo.name)
-                        .font(Typography.panelTitle)
-                        .foregroundColor(.white)
-
-                    Text(pluginInfo.manufacturerName)
-                        .font(Typography.parameterLabelSmall)
-                        .foregroundColor(ColorPalette.textDimmed)
-                }
-
-                Spacer()
-
-                // Bypass toggle
-                Button(action: onToggleBypass) {
-                    Text("BYP")
-                        .font(Typography.buttonTiny)
-                        .foregroundColor(slotData.isBypassed ? .white : ColorPalette.textMuted)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(slotData.isBypassed ? ColorPalette.ledAmber : ColorPalette.ledOff)
-                        )
-                }
-                .buttonStyle(.plain)
-
-                // Close button
-                Button(action: { isPresented = false }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(ColorPalette.textMuted)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(ColorPalette.backgroundSecondary)
-
-            Divider()
-                .background(ColorPalette.divider)
-
-            // Plugin UI
-            AUPluginHostView(audioUnit: audioUnit, preferredSize: $preferredSize)
-                .frame(minWidth: 200, minHeight: 100)
-                .frame(width: preferredSize.width, height: preferredSize.height)
-        }
-        .background(ColorPalette.backgroundPrimary)
-        .cornerRadius(8)
-        .shadow(color: .black.opacity(0.3), radius: 10, x: 0, y: 4)
-    }
-}
+// AUSendPluginWindowViewByIndex removed — send plugin UIs now open in native NSPanel
+// windows via AUPluginWindowManager for reliable sizing and re-opening.
 
 // MARK: - Compact Send Effects Strip
 
