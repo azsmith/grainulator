@@ -16,6 +16,7 @@ struct GrainulatorApp: App {
     @StateObject private var masterClock = MasterClock()
     @StateObject private var mixerState = MixerState()  // New modular mixer state
     @StateObject private var pluginManager = AUPluginManager()  // AU plugin browser
+    @StateObject private var projectManager = ProjectManager()  // Project save/load
 
     var body: some Scene {
         WindowGroup {
@@ -27,21 +28,34 @@ struct GrainulatorApp: App {
                 .environmentObject(masterClock)
                 .environmentObject(mixerState)
                 .environmentObject(pluginManager)
+                .environmentObject(projectManager)
                 .frame(minWidth: 1200, minHeight: 800)
                 .onAppear {
+                    // Ensure we get a proper menu bar when launched from terminal
+                    NSApp.setActivationPolicy(.regular)
+                    NSApp.activate(ignoringOtherApps: true)
+
                     sequencer.connect(audioEngine: audioEngine)
                     sequencer.connectMasterClock(masterClock)
                     masterClock.connect(audioEngine: audioEngine)
                     masterClock.connectSequencer(sequencer)
                     mixerState.syncToAudioEngine(audioEngine)  // Push default mixer/send levels to C++ engine
                     pluginManager.refreshPluginList()  // Scan for AU plugins on launch
+                    projectManager.connect(
+                        audioEngine: audioEngine,
+                        mixerState: mixerState,
+                        sequencer: sequencer,
+                        masterClock: masterClock,
+                        appState: appState,
+                        pluginManager: pluginManager
+                    )
                     setupMIDICallbacks()
                 }
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
         .commands {
-            GrainulatorCommands()
+            GrainulatorCommands(projectManager: projectManager)
         }
 
         Settings {

@@ -151,8 +151,19 @@ struct ProMasterStripView: View {
 
     private var faderSection: some View {
         VStack(spacing: 4) {
-            // Fader
-            HStack(spacing: 8) {
+            // Fader with stereo VU meters alongside
+            HStack(spacing: showNeedleMeter ? 4 : 2) {
+                // Left VU meter bar
+                VUMeterBarView(
+                    level: Binding(
+                        get: { master.isMuted ? 0 : master.meterLevelL },
+                        set: { _ in }
+                    ),
+                    segments: 12,
+                    width: 5,
+                    height: showNeedleMeter ? 100 : 80
+                )
+
                 if showNeedleMeter {
                     // dB scale on left
                     dBScaleView
@@ -167,9 +178,20 @@ struct ProMasterStripView: View {
                 )
 
                 if showNeedleMeter {
-                    // dB scale on right (mirrored)
+                    // dB scale on right
                     dBScaleView
                 }
+
+                // Right VU meter bar
+                VUMeterBarView(
+                    level: Binding(
+                        get: { master.isMuted ? 0 : master.meterLevelR },
+                        set: { _ in }
+                    ),
+                    segments: 12,
+                    width: 5,
+                    height: showNeedleMeter ? 100 : 80
+                )
             }
 
             // dB display

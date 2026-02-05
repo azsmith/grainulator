@@ -264,11 +264,20 @@ struct SequencerView: View {
                 }
             }
 
+            // Octave
+            compactStepper(
+                label: "OCT",
+                value: sequencer.trackOctaveOffset(trackIndex),
+                range: -2...2,
+                signed: true
+            ) { sequencer.setTrackOctaveOffset(trackIndex, $0) }
+
             // Transpose
             compactStepper(
                 label: "TR",
                 value: track.transpose,
-                range: -24...24
+                range: -24...24,
+                signed: true
             ) { sequencer.setTrackTranspose(trackIndex, $0) }
 
             // Velocity
@@ -491,6 +500,7 @@ struct SequencerView: View {
         label: String,
         value: Int,
         range: ClosedRange<Int>,
+        signed: Bool = false,
         onChange: @escaping (Int) -> Void
     ) -> some View {
         HStack(spacing: 2) {
@@ -501,23 +511,27 @@ struct SequencerView: View {
             Button(action: { if value > range.lowerBound { onChange(value - 1) } }) {
                 Image(systemName: "minus")
                     .font(.system(size: 7, weight: .bold))
-                    .foregroundColor(Color(hex: "#666666"))
-                    .frame(width: 14, height: 14)
+                    .foregroundColor(value > range.lowerBound ? Color(hex: "#999999") : Color(hex: "#444444"))
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(value <= range.lowerBound)
 
-            Text("\(value)")
+            Text(signed ? "\(value >= 0 ? "+" : "")\(value)" : "\(value)")
                 .font(.system(size: 9, weight: .bold, design: .monospaced))
                 .foregroundColor(Color(hex: "#AAAAAA"))
-                .frame(width: 20)
+                .frame(width: signed ? 26 : 20)
 
             Button(action: { if value < range.upperBound { onChange(value + 1) } }) {
                 Image(systemName: "plus")
                     .font(.system(size: 7, weight: .bold))
-                    .foregroundColor(Color(hex: "#666666"))
-                    .frame(width: 14, height: 14)
+                    .foregroundColor(value < range.upperBound ? Color(hex: "#999999") : Color(hex: "#444444"))
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(value >= range.upperBound)
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 2)

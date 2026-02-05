@@ -122,7 +122,7 @@ struct NewMixerView: View {
     // MARK: - Meter Update Timer
 
     private func startMeterUpdates() {
-        meterTimer = Timer.scheduledTimer(withTimeInterval: 1.0/30.0, repeats: true) { _ in
+        meterTimer = Timer.scheduledTimer(withTimeInterval: 1.0/15.0, repeats: true) { _ in
             Task { @MainActor in
                 mixerState.updateMetersFromEngine(audioEngine)
             }

@@ -56,12 +56,6 @@ struct ProChannelStripView: View {
             // Channel name (scribble strip)
             channelHeader
 
-            Divider()
-                .background(ColorPalette.divider)
-
-            // VU Meter
-            meterSection
-
             // Insert effects (collapsible)
             if showInserts {
                 insertSection
@@ -79,7 +73,7 @@ struct ProChannelStripView: View {
             Divider()
                 .background(ColorPalette.divider)
 
-            // Fader with dB display
+            // Fader with VU meter alongside
             faderSection
 
             // Mute/Solo buttons
@@ -101,25 +95,26 @@ struct ProChannelStripView: View {
                 .padding(.vertical, 2)
                 .background(ColorPalette.backgroundPrimary)
 
-            // Compact meter
-            VUMeterBarView(
-                level: Binding(
-                    get: { channel.isMuted ? 0 : channel.meterLevel },
-                    set: { _ in }
-                ),
-                segments: 8,
-                width: 6,
-                height: 40
-            )
+            // Compact fader with meter alongside
+            HStack(spacing: 1) {
+                VUMeterBarView(
+                    level: Binding(
+                        get: { channel.isMuted ? 0 : channel.meterLevel },
+                        set: { _ in }
+                    ),
+                    segments: 8,
+                    width: 4,
+                    height: 60
+                )
 
-            // Compact fader
-            ProFaderView(
-                value: $channel.gain,
-                accentColor: channel.accentColor,
-                size: .small,
-                showScale: false,
-                isMuted: channel.isMuted
-            )
+                ProFaderView(
+                    value: $channel.gain,
+                    accentColor: channel.accentColor,
+                    size: .small,
+                    showScale: false,
+                    isMuted: channel.isMuted
+                )
+            }
 
             // Mini mute/solo
             HStack(spacing: 2) {
@@ -135,11 +130,15 @@ struct ProChannelStripView: View {
 
     private var channelHeader: some View {
         VStack(spacing: 2) {
-            // LED indicator
-            Circle()
-                .fill(channel.meterLevel > 0.01 ? channel.accentColor : ColorPalette.ledOff)
-                .frame(width: 6, height: 6)
-                .shadow(color: channel.meterLevel > 0.01 ? channel.accentColor.opacity(0.5) : .clear, radius: 3)
+            // Peak LED + activity LED
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(channel.meterLevel > 0.01 ? channel.accentColor : ColorPalette.ledOff)
+                    .frame(width: 6, height: 6)
+                    .shadow(color: channel.meterLevel > 0.01 ? channel.accentColor.opacity(0.5) : .clear, radius: 3)
+
+                PeakLEDView(level: $channel.meterLevel, threshold: 0.9)
+            }
 
             // Channel name
             Text(channel.name)
@@ -236,13 +235,26 @@ struct ProChannelStripView: View {
 
     private var faderSection: some View {
         VStack(spacing: 4) {
-            ProFaderView(
-                value: $channel.gain,
-                accentColor: channel.accentColor,
-                size: .medium,
-                showScale: false,
-                isMuted: channel.isMuted
-            )
+            HStack(spacing: 2) {
+                // VU meter alongside fader
+                VUMeterBarView(
+                    level: Binding(
+                        get: { channel.isMuted ? 0 : channel.meterLevel },
+                        set: { _ in }
+                    ),
+                    segments: 10,
+                    width: 5,
+                    height: 80
+                )
+
+                ProFaderView(
+                    value: $channel.gain,
+                    accentColor: channel.accentColor,
+                    size: .medium,
+                    showScale: false,
+                    isMuted: channel.isMuted
+                )
+            }
 
             // dB display
             Text(channel.gainDB)

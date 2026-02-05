@@ -206,18 +206,50 @@ final class MetropolixSequencer: ObservableObject {
         let targetRaw: UInt8
     }
 
+    /// Immutable snapshot of sequencer state for off-MainActor scheduling.
+    /// Captured on MainActor, consumed on clockQueue — no shared mutable state.
+    private struct SchedulingSnapshot {
+        let tracks: [SequencerTrack]
+        let tempoBPM: Double
+        let rootNote: Int
+        let sequenceOctave: Int
+        let scaleIntervals: [Int]
+        let transportToken: UInt64
+        let plaitsTriggerOffsetMs: Double
+        let ringsTriggerOffsetMs: Double
+        let sampleRate: Double
+        let lookaheadSamples: UInt64
+        let dedupe: Bool
+    }
+
+    /// Mutable scheduling state protected by schedulingLock for clockQueue access.
+    private struct SchedulingState {
+        var runtimes: [TrackRuntimeState]
+        var transportStartSample: UInt64 = 0
+        // Playhead feedback (written on clockQueue, read on MainActor)
+        var playheadStages: [Int] = [0, 0]
+        var playheadPulses: [Int] = [0, 0]
+        var lastPlayedNotes: [UInt8?] = [nil, nil]
+        var lastGateSamples: [UInt64?] = [nil, nil]
+        var lastScheduledNoteOnSamples: [UInt64?] = [nil, nil]
+    }
+
     private weak var audioEngine: AudioEngineWrapper?
     private weak var masterClock: MasterClock?
     private var clockTimer: DispatchSourceTimer?
     private let clockQueue = DispatchQueue(label: "com.grainulator.sequencer.clock", qos: .userInteractive)
-    private var runtimes: [TrackRuntimeState] = [
-        TrackRuntimeState(),
-        TrackRuntimeState()
-    ]
-    private var transportStartSample: UInt64 = 0
+
+    /// Lock protecting schedulingState for cross-thread access (MainActor ↔ clockQueue)
+    private let schedulingLock = NSLock()
+    private var schedulingState = SchedulingState(
+        runtimes: [TrackRuntimeState(), TrackRuntimeState()]
+    )
+
     private var transportToken: UInt64 = 0
     private let schedulerLookaheadSeconds: Double = 0.10
     private let schedulerLeadInSeconds: Double = 0.02
+    /// Counter for throttling playhead UI updates from clockQueue
+    private var playheadUpdateCounter: Int = 0
     // Temporarily disabled while diagnosing onset/attack mismatch.
     @Published var interEngineCompensationSamples: Int = 0
     @Published var plaitsTriggerOffsetMs: Double = 0.0
@@ -290,6 +322,7 @@ final class MetropolixSequencer: ObservableObject {
         audioEngine?.allNotesOff()
         let startSample = (audioEngine?.currentSampleTime() ?? 0) + secondsToSamples(schedulerLeadInSeconds)
         resetRuntimeState(startSample: startSample)
+        playheadUpdateCounter = 0
         // Sync the master clock to the same start sample for phase alignment
         masterClock?.startSynced(startSample: startSample)
         scheduleTimer()
@@ -301,9 +334,13 @@ final class MetropolixSequencer: ObservableObject {
         transportToken &+= 1
         clockTimer?.cancel()
         clockTimer = nil
+        snapshotRefreshTimer?.invalidate()
+        snapshotRefreshTimer = nil
         audioEngine?.clearScheduledNotes()
         audioEngine?.allNotesOff()
         releaseAllHeldTieNotes()
+        // Pull final playhead state
+        pullPlayheadUpdates()
         // Stop the master clock too
         masterClock?.stop()
     }
@@ -400,9 +437,21 @@ final class MetropolixSequencer: ObservableObject {
     func setTrackDivision(_ trackIndex: Int, _ division: SequencerClockDivision) {
         guard tracks.indices.contains(trackIndex) else { return }
         tracks[trackIndex].division = division
-        if isPlaying, runtimes.indices.contains(trackIndex) {
-            let now = audioEngine?.currentSampleTime() ?? 0
-            runtimes[trackIndex].nextPulseSample = quantizedNextPulseSample(for: tracks[trackIndex], nowSample: now)
+        if isPlaying {
+            schedulingLock.lock()
+            if schedulingState.runtimes.indices.contains(trackIndex) {
+                let now = audioEngine?.currentSampleTime() ?? 0
+                let anchor = schedulingState.transportStartSample
+                let pulse = pulseDurationSamples(for: tracks[trackIndex])
+                if now <= anchor {
+                    schedulingState.runtimes[trackIndex].nextPulseSample = anchor
+                } else {
+                    let elapsed = now - anchor
+                    let stepCount = (elapsed + pulse - 1) / pulse
+                    schedulingState.runtimes[trackIndex].nextPulseSample = anchor + (stepCount * pulse)
+                }
+            }
+            schedulingLock.unlock()
         }
     }
 
@@ -505,60 +554,145 @@ final class MetropolixSequencer: ObservableObject {
         return tracks[track].stages.indices.contains(stage)
     }
 
+    /// Creates a frozen snapshot of sequencer state for off-MainActor scheduling.
+    /// Must be called on MainActor.
+    private func createSchedulingSnapshot() -> SchedulingSnapshot {
+        let scale = currentScale
+        return SchedulingSnapshot(
+            tracks: tracks,
+            tempoBPM: tempoBPM,
+            rootNote: rootNote,
+            sequenceOctave: sequenceOctave,
+            scaleIntervals: scale.intervals,
+            transportToken: transportToken,
+            plaitsTriggerOffsetMs: plaitsTriggerOffsetMs,
+            ringsTriggerOffsetMs: ringsTriggerOffsetMs,
+            sampleRate: max(audioEngine?.sampleRate ?? 48_000.0, 1.0),
+            lookaheadSamples: secondsToSamples(schedulerLookaheadSeconds),
+            dedupe: dedupeSameSampleSharedTargetNoteOn
+        )
+    }
+
     private func scheduleTimer() {
         clockTimer?.cancel()
+
+        // Capture initial snapshot and engine handle on MainActor
+        let snapshot = createSchedulingSnapshot()
+        let engineHandle = audioEngine?.cppEngineHandle
 
         let timer = DispatchSource.makeTimerSource(queue: clockQueue)
         timer.schedule(deadline: .now(), repeating: .milliseconds(5), leeway: .milliseconds(1))
         timer.setEventHandler { [weak self] in
-            Task { @MainActor in
-                self?.scheduleLookahead()
-            }
+            guard let self else { return }
+            // Run scheduling directly on clockQueue — no MainActor dispatch needed
+            self.scheduleLookaheadOnClockQueue(snapshot: snapshot, engineHandle: engineHandle)
         }
 
         clockTimer = timer
         timer.resume()
+
+        // Periodically refresh the snapshot from MainActor (catches track/scale/BPM edits)
+        // This runs on MainActor and updates the snapshot the clock queue uses
+        startSnapshotRefreshTimer()
+    }
+
+    /// Holds the latest snapshot for the clock queue to read
+    private var _latestSnapshot: SchedulingSnapshot?
+    private let snapshotLock = NSLock()
+    private var snapshotRefreshTimer: Timer?
+
+    private func startSnapshotRefreshTimer() {
+        snapshotRefreshTimer?.invalidate()
+        snapshotRefreshTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            // This runs on MainActor (RunLoop.main)
+            Task { @MainActor in
+                guard let self, self.isPlaying else { return }
+                let snap = self.createSchedulingSnapshot()
+                self.snapshotLock.lock()
+                self._latestSnapshot = snap
+                self.snapshotLock.unlock()
+
+                // Also pull playhead updates from clockQueue → MainActor
+                self.pullPlayheadUpdates()
+            }
+        }
+    }
+
+    /// Pull playhead state from scheduling state to @Published properties (on MainActor)
+    private func pullPlayheadUpdates() {
+        schedulingLock.lock()
+        let stages = schedulingState.playheadStages
+        let pulses = schedulingState.playheadPulses
+        let lastNotes = schedulingState.lastPlayedNotes
+        let lastGates = schedulingState.lastGateSamples
+        let lastScheduled = schedulingState.lastScheduledNoteOnSamples
+        schedulingLock.unlock()
+
+        playheadStagePerTrack = stages
+        playheadPulsePerTrack = pulses
+        lastPlayedNotePerTrack = lastNotes
+        lastGateSamplePerTrack = lastGates
+        lastScheduledNoteOnSamplePerTrack = lastScheduled
     }
 
     private func resetRuntimeState(startSample: UInt64) {
-        transportStartSample = startSample
         lastGateSamplePerTrack = [nil, nil]
         lastScheduledNoteOnSamplePerTrack = [nil, nil]
+
+        schedulingLock.lock()
+        schedulingState.transportStartSample = startSample
+        schedulingState.lastGateSamples = [nil, nil]
+        schedulingState.lastScheduledNoteOnSamples = [nil, nil]
         for trackIndex in tracks.indices {
             let start = tracks[trackIndex].loopStart
-            runtimes[trackIndex] = TrackRuntimeState(
+            schedulingState.runtimes[trackIndex] = TrackRuntimeState(
                 stageIndex: start,
                 pulseInStage: 0,
                 nextPulseSample: startSample,
                 alternateForward: true,
                 heldTieNote: nil
             )
-            playheadStagePerTrack[trackIndex] = start
+            schedulingState.playheadStages[trackIndex] = start
+            schedulingState.playheadPulses[trackIndex] = 0
+            schedulingState.lastPlayedNotes[trackIndex] = nil
+        }
+        schedulingLock.unlock()
+
+        for trackIndex in tracks.indices {
+            playheadStagePerTrack[trackIndex] = tracks[trackIndex].loopStart
             playheadPulsePerTrack[trackIndex] = 0
             lastPlayedNotePerTrack[trackIndex] = nil
         }
     }
 
-    private var debugLookaheadCounter = 0
-    private func scheduleLookahead() {
-        guard isPlaying else { return }
-        guard let audioEngine else { return }
+    // MARK: - Clock Queue Scheduling (runs OFF MainActor)
 
-        let nowSample = audioEngine.currentSampleTime()
-        let lookaheadSamples = secondsToSamples(schedulerLookaheadSeconds)
-        let horizonSample = nowSample &+ lookaheadSamples
+    /// Main scheduling entry point — runs on clockQueue, never blocks MainActor.
+    /// Uses snapshot for immutable state, schedulingState (under lock) for mutable runtime.
+    private func scheduleLookaheadOnClockQueue(snapshot initialSnapshot: SchedulingSnapshot, engineHandle: OpaquePointer?) {
+        guard let handle = engineHandle else { return }
 
-        // Debug: log occasionally
-        debugLookaheadCounter += 1
-        if debugLookaheadCounter <= 5 || debugLookaheadCounter % 100 == 0 {
-            print("[Sequencer] lookahead: now=\(nowSample) horizon=\(horizonSample) nextPulse[0]=\(runtimes[0].nextPulseSample)")
-        }
+        // Check for a newer snapshot from the refresh timer
+        snapshotLock.lock()
+        let snapshot = _latestSnapshot ?? initialSnapshot
+        snapshotLock.unlock()
+
+        // Get current sample time directly from C++ (thread-safe, no MainActor needed)
+        let nowSample = AudioEngine_GetCurrentSampleTime(handle)
+        let horizonSample = nowSample &+ snapshot.lookaheadSamples
+
+        // Grab mutable runtime state under lock
+        schedulingLock.lock()
+        var state = schedulingState
+        schedulingLock.unlock()
+
+        let tracks = snapshot.tracks
 
         while true {
             var earliestSample: UInt64 = UInt64.max
 
             for trackIndex in tracks.indices {
-                let nextSample = runtimes[trackIndex].nextPulseSample
+                let nextSample = state.runtimes[trackIndex].nextPulseSample
                 if nextSample <= horizonSample && nextSample < earliestSample {
                     earliestSample = nextSample
                 }
@@ -569,7 +703,7 @@ final class MetropolixSequencer: ObservableObject {
             var dueTracks: [Int] = []
             dueTracks.reserveCapacity(tracks.count)
             for trackIndex in tracks.indices {
-                if runtimes[trackIndex].nextPulseSample == earliestSample {
+                if state.runtimes[trackIndex].nextPulseSample == earliestSample {
                     dueTracks.append(trackIndex)
                 }
             }
@@ -577,28 +711,39 @@ final class MetropolixSequencer: ObservableObject {
             var dedupKeys = Set<NoteOnDedupKey>()
 
             for trackIndex in dueTracks {
-                let pulseSamples = pulseDurationSamples(for: tracks[trackIndex])
-                processPulse(
+                let pulseSamples = pulseDurationSamplesFromSnapshot(for: tracks[trackIndex], snapshot: snapshot)
+                processPulseOnClockQueue(
                     trackIndex: trackIndex,
                     pulseDurationSamples: pulseSamples,
                     eventSample: earliestSample,
-                    token: transportToken,
+                    snapshot: snapshot,
+                    state: &state,
+                    handle: handle,
                     dedupKeys: &dedupKeys
                 )
-                runtimes[trackIndex].nextPulseSample = earliestSample &+ pulseSamples
+                state.runtimes[trackIndex].nextPulseSample = earliestSample &+ pulseSamples
             }
         }
+
+        // Write back mutable state under lock
+        schedulingLock.lock()
+        schedulingState = state
+        schedulingLock.unlock()
     }
 
-    private func processPulse(
+    /// Process a single pulse for a track — runs on clockQueue.
+    private func processPulseOnClockQueue(
         trackIndex: Int,
         pulseDurationSamples: UInt64,
         eventSample: UInt64,
-        token: UInt64,
+        snapshot: SchedulingSnapshot,
+        state: inout SchedulingState,
+        handle: OpaquePointer,
         dedupKeys: inout Set<NoteOnDedupKey>
     ) {
+        let tracks = snapshot.tracks
         guard tracks.indices.contains(trackIndex) else { return }
-        var runtime = runtimes[trackIndex]
+        var runtime = state.runtimes[trackIndex]
         let track = tracks[trackIndex]
 
         runtime.stageIndex = min(max(runtime.stageIndex, track.loopStart), track.loopEnd)
@@ -615,7 +760,7 @@ final class MetropolixSequencer: ObservableObject {
             elideHops += 1
         }
         if elideHops >= track.stages.count {
-            runtimes[trackIndex] = runtime
+            state.runtimes[trackIndex] = runtime
             return
         }
 
@@ -643,62 +788,57 @@ final class MetropolixSequencer: ObservableObject {
 
         if stage.stepType == .rest || stage.stepType == .skip {
             if let oldNote = runtime.heldTieNote {
-                scheduleAlignedNoteOff(note: oldNote, sampleTime: eventSample, output: track.output)
+                scheduleNoteOffDirect(note: oldNote, sampleTime: eventSample, output: track.output, snapshot: snapshot, handle: handle)
                 runtime.heldTieNote = nil
             }
         }
 
         if shouldGate && stage.probability >= Double.random(in: 0...1) {
-            let note = noteForStage(track: track, stage: stage)
-            lastPlayedNotePerTrack[trackIndex] = note
-            lastGateSamplePerTrack[trackIndex] = eventSample
+            let note = noteForStageFromSnapshot(track: track, stage: stage, snapshot: snapshot)
+            state.lastPlayedNotes[trackIndex] = note
+            state.lastGateSamples[trackIndex] = eventSample
 
             if stage.stepType == .tie || stage.slide {
                 if !track.muted {
                     if runtime.heldTieNote != note {
                         if let oldNote = runtime.heldTieNote {
-                            scheduleAlignedNoteOff(note: oldNote, sampleTime: eventSample, output: track.output)
+                            scheduleNoteOffDirect(note: oldNote, sampleTime: eventSample, output: track.output, snapshot: snapshot, handle: handle)
                         }
-                        scheduleAlignedNoteOn(
-                            note: note,
-                            velocity: UInt8(track.velocity),
-                            sampleTime: eventSample,
-                            output: track.output,
-                            trackIndex: trackIndex,
-                            dedupKeys: &dedupKeys
+                        scheduleNoteOnDirect(
+                            note: note, velocity: UInt8(track.velocity), sampleTime: eventSample,
+                            output: track.output, snapshot: snapshot, handle: handle, dedupKeys: &dedupKeys
                         )
                     }
                 }
                 runtime.heldTieNote = note
             } else if !track.muted {
                 if let oldNote = runtime.heldTieNote {
-                    scheduleAlignedNoteOff(note: oldNote, sampleTime: eventSample, output: track.output)
+                    scheduleNoteOffDirect(note: oldNote, sampleTime: eventSample, output: track.output, snapshot: snapshot, handle: handle)
                     runtime.heldTieNote = nil
                 }
-                triggerRatchets(
-                    note: note,
-                    velocity: UInt8(track.velocity),
-                    ratchets: stage.ratchets,
-                    pulseDurationSamples: pulseDurationSamples,
-                    eventSample: eventSample,
-                    token: token,
-                    target: targetMask(for: track.output),
-                    trackIndex: trackIndex,
+                triggerRatchetsDirect(
+                    note: note, velocity: UInt8(track.velocity), ratchets: stage.ratchets,
+                    pulseDurationSamples: pulseDurationSamples, eventSample: eventSample,
+                    target: targetMask(for: track.output), snapshot: snapshot, handle: handle,
                     dedupKeys: &dedupKeys
                 )
             }
+
+            if trackIndex < state.lastScheduledNoteOnSamples.count {
+                state.lastScheduledNoteOnSamples[trackIndex] = eventSample
+            }
         }
 
-        // UI playhead should indicate the step currently being processed.
-        playheadStagePerTrack[trackIndex] = runtime.stageIndex
-        playheadPulsePerTrack[trackIndex] = runtime.pulseInStage
+        // Update playhead in scheduling state (pulled to MainActor by refresh timer)
+        state.playheadStages[trackIndex] = runtime.stageIndex
+        state.playheadPulses[trackIndex] = runtime.pulseInStage
 
         runtime.pulseInStage += 1
         if runtime.pulseInStage >= stage.pulses {
             runtime.pulseInStage = 0
 
             if let held = runtime.heldTieNote, stage.stepType != .tie, !stage.slide {
-                scheduleAlignedNoteOff(note: held, sampleTime: eventSample, output: track.output)
+                scheduleNoteOffDirect(note: held, sampleTime: eventSample, output: track.output, snapshot: snapshot, handle: handle)
                 runtime.heldTieNote = nil
             }
 
@@ -706,7 +846,141 @@ final class MetropolixSequencer: ObservableObject {
             runtime.stageIndex = resolveNextPlayableStage(track: track, candidate: runtime.stageIndex, runtime: &runtime)
         }
 
-        runtimes[trackIndex] = runtime
+        state.runtimes[trackIndex] = runtime
+    }
+
+    // MARK: - Direct C Bridge Helpers (called from clockQueue, no MainActor)
+
+    private func pulseDurationSamplesFromSnapshot(for track: SequencerTrack, snapshot: SchedulingSnapshot) -> UInt64 {
+        let bpm = max(snapshot.tempoBPM, 1.0)
+        let quarterSeconds = 60.0 / bpm
+        let multiplier = max(track.division.multiplier, 0.0001)
+        let pulseSeconds = quarterSeconds / multiplier
+        return UInt64(max(1.0, (pulseSeconds * snapshot.sampleRate).rounded()))
+    }
+
+    private func noteForStageFromSnapshot(track: SequencerTrack, stage: SequencerStage, snapshot: SchedulingSnapshot) -> UInt8 {
+        let rootMidi = (track.baseOctave + snapshot.sequenceOctave + 1) * 12 + snapshot.rootNote
+        let degree = degreeForNoteSlot(stage.noteSlot) + track.transpose
+        let semitoneOffset = semitoneForDegree(degree, intervals: snapshot.scaleIntervals)
+        let note = rootMidi + semitoneOffset + stage.octave * 12
+        return UInt8(min(max(note, 0), 127))
+    }
+
+    private func compensatedSampleTimeDirect(base: UInt64, for target: AudioEngineWrapper.NoteTargetMask, snapshot: SchedulingSnapshot) -> UInt64 {
+        let offsetMs: Double
+        switch target {
+        case .plaits: offsetMs = snapshot.plaitsTriggerOffsetMs
+        case .rings: offsetMs = snapshot.ringsTriggerOffsetMs
+        case .both: offsetMs = 0.0
+        }
+        let offsetSamples = Int64((offsetMs * snapshot.sampleRate / 1000.0).rounded())
+        let shifted = Int64(base) + offsetSamples
+        return shifted <= 0 ? 0 : UInt64(shifted)
+    }
+
+    private func scheduleNoteOnDirect(
+        note: UInt8, velocity: UInt8, sampleTime: UInt64,
+        output: SequencerTrackOutput, snapshot: SchedulingSnapshot, handle: OpaquePointer,
+        dedupKeys: inout Set<NoteOnDedupKey>
+    ) {
+        let target = targetMask(for: output)
+        scheduleNoteOnDirect(note: note, velocity: velocity, sampleTime: sampleTime,
+                             target: target, snapshot: snapshot, handle: handle, dedupKeys: &dedupKeys)
+    }
+
+    private func scheduleNoteOnDirect(
+        note: UInt8, velocity: UInt8, sampleTime: UInt64,
+        target: AudioEngineWrapper.NoteTargetMask, snapshot: SchedulingSnapshot, handle: OpaquePointer,
+        dedupKeys: inout Set<NoteOnDedupKey>
+    ) {
+        switch target {
+        case .plaits:
+            emitNoteOnDirect(note: note, velocity: velocity,
+                             sampleTime: compensatedSampleTimeDirect(base: sampleTime, for: .plaits, snapshot: snapshot),
+                             target: .plaits, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys)
+        case .rings:
+            emitNoteOnDirect(note: note, velocity: velocity,
+                             sampleTime: compensatedSampleTimeDirect(base: sampleTime, for: .rings, snapshot: snapshot),
+                             target: .rings, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys)
+        case .both:
+            let ps = compensatedSampleTimeDirect(base: sampleTime, for: .plaits, snapshot: snapshot)
+            let rs = compensatedSampleTimeDirect(base: sampleTime, for: .rings, snapshot: snapshot)
+            if rs <= ps {
+                emitNoteOnDirect(note: note, velocity: velocity, sampleTime: rs, target: .rings, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys)
+                emitNoteOnDirect(note: note, velocity: velocity, sampleTime: ps, target: .plaits, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys)
+            } else {
+                emitNoteOnDirect(note: note, velocity: velocity, sampleTime: ps, target: .plaits, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys)
+                emitNoteOnDirect(note: note, velocity: velocity, sampleTime: rs, target: .rings, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys)
+            }
+        }
+    }
+
+    private func emitNoteOnDirect(
+        note: UInt8, velocity: UInt8, sampleTime: UInt64,
+        target: AudioEngineWrapper.NoteTargetMask, handle: OpaquePointer,
+        dedupe: Bool, dedupKeys: inout Set<NoteOnDedupKey>
+    ) {
+        if dedupe {
+            let key = NoteOnDedupKey(sampleTime: sampleTime, note: note, targetRaw: target.rawValue)
+            if dedupKeys.contains(key) { return }
+            dedupKeys.insert(key)
+        }
+        AudioEngine_ScheduleNoteOnTarget(handle, Int32(note), Int32(velocity), sampleTime, target.rawValue)
+    }
+
+    private func scheduleNoteOffDirect(
+        note: UInt8, sampleTime: UInt64, output: SequencerTrackOutput,
+        snapshot: SchedulingSnapshot, handle: OpaquePointer
+    ) {
+        let target = targetMask(for: output)
+        switch target {
+        case .plaits:
+            AudioEngine_ScheduleNoteOffTarget(handle, Int32(note),
+                compensatedSampleTimeDirect(base: sampleTime, for: .plaits, snapshot: snapshot), AudioEngineWrapper.NoteTargetMask.plaits.rawValue)
+        case .rings:
+            AudioEngine_ScheduleNoteOffTarget(handle, Int32(note),
+                compensatedSampleTimeDirect(base: sampleTime, for: .rings, snapshot: snapshot), AudioEngineWrapper.NoteTargetMask.rings.rawValue)
+        case .both:
+            let ps = compensatedSampleTimeDirect(base: sampleTime, for: .plaits, snapshot: snapshot)
+            let rs = compensatedSampleTimeDirect(base: sampleTime, for: .rings, snapshot: snapshot)
+            if rs <= ps {
+                AudioEngine_ScheduleNoteOffTarget(handle, Int32(note), rs, AudioEngineWrapper.NoteTargetMask.rings.rawValue)
+                AudioEngine_ScheduleNoteOffTarget(handle, Int32(note), ps, AudioEngineWrapper.NoteTargetMask.plaits.rawValue)
+            } else {
+                AudioEngine_ScheduleNoteOffTarget(handle, Int32(note), ps, AudioEngineWrapper.NoteTargetMask.plaits.rawValue)
+                AudioEngine_ScheduleNoteOffTarget(handle, Int32(note), rs, AudioEngineWrapper.NoteTargetMask.rings.rawValue)
+            }
+        }
+    }
+
+    private func triggerRatchetsDirect(
+        note: UInt8, velocity: UInt8, ratchets: Int, pulseDurationSamples: UInt64,
+        eventSample: UInt64, target: AudioEngineWrapper.NoteTargetMask,
+        snapshot: SchedulingSnapshot, handle: OpaquePointer,
+        dedupKeys: inout Set<NoteOnDedupKey>
+    ) {
+        let ratchetCount = max(ratchets, 1)
+        let subdivisionSamples = max(1, Int(pulseDurationSamples) / ratchetCount)
+        let maxGateLengthSamples = max(1, Int(snapshot.sampleRate * 0.14))
+
+        for ratchetIndex in 0..<ratchetCount {
+            let onSample = eventSample &+ UInt64(ratchetIndex * subdivisionSamples)
+            let gateLengthSamples = max(1, min(maxGateLengthSamples, Int(Double(subdivisionSamples) * 0.65)))
+            let offSample = onSample &+ UInt64(gateLengthSamples)
+
+            scheduleNoteOnDirect(note: note, velocity: velocity, sampleTime: onSample,
+                                 target: target, snapshot: snapshot, handle: handle, dedupKeys: &dedupKeys)
+            scheduleNoteOffDirect(note: note, sampleTime: offSample, output: targetToOutput(target), snapshot: snapshot, handle: handle)
+        }
+    }
+
+    private func targetToOutput(_ target: AudioEngineWrapper.NoteTargetMask) -> SequencerTrackOutput {
+        switch target {
+        case .plaits: return .plaits
+        case .rings: return .rings
+        case .both: return .both
+        }
     }
 
     private func resolveNextPlayableStage(track: SequencerTrack, candidate: Int, runtime: inout TrackRuntimeState) -> Int {
@@ -824,205 +1098,7 @@ final class MetropolixSequencer: ObservableObject {
         return secondsToSamples(pulseSeconds)
     }
 
-    private func quantizedNextPulseSample(for track: SequencerTrack, nowSample: UInt64) -> UInt64 {
-        let pulse = pulseDurationSamples(for: track)
-        let anchor = transportStartSample
-        if nowSample <= anchor {
-            return anchor
-        }
-
-        let elapsed = nowSample - anchor
-        let stepCount = (elapsed + pulse - 1) / pulse
-        return anchor + (stepCount * pulse)
-    }
-
-    private func triggerRatchets(
-        note: UInt8,
-        velocity: UInt8,
-        ratchets: Int,
-        pulseDurationSamples: UInt64,
-        eventSample: UInt64,
-        token: UInt64,
-        target: AudioEngineWrapper.NoteTargetMask,
-        trackIndex: Int,
-        dedupKeys: inout Set<NoteOnDedupKey>
-    ) {
-        _ = token
-        let ratchetCount = max(ratchets, 1)
-        let subdivisionSamples = max(1, Int(pulseDurationSamples) / ratchetCount)
-        let maxGateLengthSamples = max(1, Int(engineSampleRate * 0.14))
-
-        for ratchetIndex in 0..<ratchetCount {
-            let onSample = eventSample &+ UInt64(ratchetIndex * subdivisionSamples)
-            let gateLengthSamples = max(
-                1,
-                min(maxGateLengthSamples, Int(Double(subdivisionSamples) * 0.65))
-            )
-            let offSample = onSample &+ UInt64(gateLengthSamples)
-
-            scheduleAlignedNoteOn(
-                note: note,
-                velocity: velocity,
-                sampleTime: onSample,
-                target: target,
-                trackIndex: trackIndex,
-                dedupKeys: &dedupKeys
-            )
-            scheduleAlignedNoteOff(note: note, sampleTime: offSample, target: target)
-        }
-    }
-
-    private func scheduleAlignedNoteOn(
-        note: UInt8,
-        velocity: UInt8,
-        sampleTime: UInt64,
-        output: SequencerTrackOutput,
-        trackIndex: Int,
-        dedupKeys: inout Set<NoteOnDedupKey>
-    ) {
-        scheduleAlignedNoteOn(
-            note: note,
-            velocity: velocity,
-            sampleTime: sampleTime,
-            target: targetMask(for: output),
-            trackIndex: trackIndex,
-            dedupKeys: &dedupKeys
-        )
-    }
-
-    private func scheduleAlignedNoteOff(note: UInt8, sampleTime: UInt64, output: SequencerTrackOutput) {
-        scheduleAlignedNoteOff(note: note, sampleTime: sampleTime, target: targetMask(for: output))
-    }
-
-    private func emitScheduledNoteOn(
-        note: UInt8,
-        velocity: UInt8,
-        sampleTime: UInt64,
-        target: AudioEngineWrapper.NoteTargetMask,
-        dedupKeys: inout Set<NoteOnDedupKey>
-    ) {
-        if dedupeSameSampleSharedTargetNoteOn {
-            let key = NoteOnDedupKey(sampleTime: sampleTime, note: note, targetRaw: target.rawValue)
-            if dedupKeys.contains(key) {
-                return
-            }
-            dedupKeys.insert(key)
-        }
-
-        audioEngine?.scheduleNoteOn(note: note, velocity: velocity, sampleTime: sampleTime, target: target)
-    }
-
-    private func scheduleAlignedNoteOn(
-        note: UInt8,
-        velocity: UInt8,
-        sampleTime: UInt64,
-        target: AudioEngineWrapper.NoteTargetMask,
-        trackIndex: Int,
-        dedupKeys: inout Set<NoteOnDedupKey>
-    ) {
-        if trackIndex >= 0 && trackIndex < lastScheduledNoteOnSamplePerTrack.count {
-            lastScheduledNoteOnSamplePerTrack[trackIndex] = sampleTime
-        }
-
-        switch target {
-        case .plaits:
-            emitScheduledNoteOn(
-                note: note,
-                velocity: velocity,
-                sampleTime: compensatedSampleTime(base: sampleTime, for: .plaits),
-                target: .plaits,
-                dedupKeys: &dedupKeys
-            )
-        case .rings:
-            emitScheduledNoteOn(
-                note: note,
-                velocity: velocity,
-                sampleTime: compensatedSampleTime(base: sampleTime, for: .rings),
-                target: .rings,
-                dedupKeys: &dedupKeys
-            )
-        case .both:
-            let plaitsSample = compensatedSampleTime(base: sampleTime, for: .plaits)
-            let ringsSample = compensatedSampleTime(base: sampleTime, for: .rings)
-            if ringsSample <= plaitsSample {
-                emitScheduledNoteOn(
-                    note: note,
-                    velocity: velocity,
-                    sampleTime: ringsSample,
-                    target: .rings,
-                    dedupKeys: &dedupKeys
-                )
-                emitScheduledNoteOn(
-                    note: note,
-                    velocity: velocity,
-                    sampleTime: plaitsSample,
-                    target: .plaits,
-                    dedupKeys: &dedupKeys
-                )
-            } else {
-                emitScheduledNoteOn(
-                    note: note,
-                    velocity: velocity,
-                    sampleTime: plaitsSample,
-                    target: .plaits,
-                    dedupKeys: &dedupKeys
-                )
-                emitScheduledNoteOn(
-                    note: note,
-                    velocity: velocity,
-                    sampleTime: ringsSample,
-                    target: .rings,
-                    dedupKeys: &dedupKeys
-                )
-            }
-        }
-    }
-
-    private func scheduleAlignedNoteOff(note: UInt8, sampleTime: UInt64, target: AudioEngineWrapper.NoteTargetMask) {
-        switch target {
-        case .plaits:
-            audioEngine?.scheduleNoteOff(
-                note: note,
-                sampleTime: compensatedSampleTime(base: sampleTime, for: .plaits),
-                target: .plaits
-            )
-        case .rings:
-            audioEngine?.scheduleNoteOff(
-                note: note,
-                sampleTime: compensatedSampleTime(base: sampleTime, for: .rings),
-                target: .rings
-            )
-        case .both:
-            let plaitsSample = compensatedSampleTime(base: sampleTime, for: .plaits)
-            let ringsSample = compensatedSampleTime(base: sampleTime, for: .rings)
-            if ringsSample <= plaitsSample {
-                audioEngine?.scheduleNoteOff(note: note, sampleTime: ringsSample, target: .rings)
-                audioEngine?.scheduleNoteOff(note: note, sampleTime: plaitsSample, target: .plaits)
-            } else {
-                audioEngine?.scheduleNoteOff(note: note, sampleTime: plaitsSample, target: .plaits)
-                audioEngine?.scheduleNoteOff(note: note, sampleTime: ringsSample, target: .rings)
-            }
-        }
-    }
-
-    private func compensatedSampleTime(base: UInt64, for target: AudioEngineWrapper.NoteTargetMask) -> UInt64 {
-        let offsetMs: Double
-        switch target {
-        case .plaits:
-            offsetMs = plaitsTriggerOffsetMs
-        case .rings:
-            offsetMs = ringsTriggerOffsetMs
-        case .both:
-            offsetMs = 0.0
-        }
-
-        let offsetSamples = Int64((offsetMs * engineSampleRate / 1000.0).rounded())
-        let shifted = Int64(base) + offsetSamples
-        if shifted <= 0 {
-            return 0
-        }
-        return UInt64(shifted)
-    }
+    // Old MainActor scheduling methods removed — replaced by clockQueue versions above
 
     private func targetMask(for output: SequencerTrackOutput) -> AudioEngineWrapper.NoteTargetMask {
         switch output {
@@ -1036,15 +1112,23 @@ final class MetropolixSequencer: ObservableObject {
     }
 
     private func releaseAllHeldTieNotes() {
-        for index in runtimes.indices {
-            if let note = runtimes[index].heldTieNote {
+        schedulingLock.lock()
+        var rts = schedulingState.runtimes
+        schedulingLock.unlock()
+
+        let now = audioEngine?.currentSampleTime() ?? 0
+        for index in rts.indices {
+            if let note = rts[index].heldTieNote {
                 let output = tracks.indices.contains(index) ? tracks[index].output : .both
                 let target = targetMask(for: output)
-                let now = audioEngine?.currentSampleTime() ?? 0
                 audioEngine?.scheduleNoteOff(note: note, sampleTime: now, target: target)
             }
-            runtimes[index].heldTieNote = nil
+            rts[index].heldTieNote = nil
         }
+
+        schedulingLock.lock()
+        schedulingState.runtimes = rts
+        schedulingLock.unlock()
     }
 
     private func midiNoteName(_ midiNote: Int) -> String {

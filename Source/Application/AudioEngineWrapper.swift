@@ -33,6 +33,9 @@ func AudioEngine_ProcessMultiChannel(_ handle: OpaquePointer, _ channelBuffers: 
 @_silgen_name("AudioEngine_SetParameter")
 func AudioEngine_SetParameter(_ handle: OpaquePointer, _ parameterId: Int32, _ voiceIndex: Int32, _ value: Float)
 
+@_silgen_name("AudioEngine_GetParameter")
+func AudioEngine_GetParameter(_ handle: OpaquePointer, _ parameterId: Int32, _ voiceIndex: Int32) -> Float
+
 @_silgen_name("AudioEngine_SetChannelSendLevel")
 func AudioEngine_SetChannelSendLevel(_ handle: OpaquePointer, _ channelIndex: Int32, _ sendIndex: Int32, _ level: Float)
 
@@ -199,6 +202,9 @@ class AudioEngineWrapper: ObservableObject {
     // Waveform data for display (indexed by reel)
     @Published var waveformOverviews: [Int: [Float]] = [:]
 
+    // Loaded audio file paths for project save/load (indexed by reel)
+    @Published var loadedAudioFilePaths: [Int: URL] = [:]
+
     // Playhead positions for granular voices (0-1, indexed by voice)
     @Published var granularPositions: [Int: Float] = [:]
 
@@ -228,9 +234,14 @@ class AudioEngineWrapper: ObservableObject {
     private var legacySendLevelsA: [Float] = Array(repeating: 0, count: 6)
     private var legacySendLevelsB: [Float] = Array(repeating: 0, count: 6)
     @MainActor private var legacySendRebuildInProgress: Set<Int> = []
+    /// Serial queue for audio graph mutations (stop/attach/connect/start).
+    /// Keeps heavy AVAudioEngine operations off MainActor to prevent UI stalls.
+    private let graphMutationQueue = DispatchQueue(label: "com.grainulator.graph-mutation", qos: .userInitiated)
 
     // C++ Audio Engine Bridge
-    private var cppEngineHandle: OpaquePointer?
+    // Read-only access is thread-safe (set once during init, never changed).
+    // Used by the sequencer's clock queue to call thread-safe C bridge functions directly.
+    private(set) var cppEngineHandle: OpaquePointer?
 
     // Audio buffer for processing
     private var audioFormat: AVAudioFormat?
@@ -447,100 +458,125 @@ class AudioEngineWrapper: ObservableObject {
     private func rebuildLegacySendChain(_ busIndex: Int, engineAlreadyStopped: Bool = false) {
         guard !legacySendRebuildInProgress.contains(busIndex) else { return }
         legacySendRebuildInProgress.insert(busIndex)
-        defer { legacySendRebuildInProgress.remove(busIndex) }
 
         guard let engine = audioEngine,
               let format = audioFormat,
               busIndex >= 0,
               busIndex < legacySendSourceNodes.count,
               busIndex < legacySendReturnMixers.count else {
+            legacySendRebuildInProgress.remove(busIndex)
             return
         }
 
-        let needsRestart = isRunning && !engineAlreadyStopped
-        if needsRestart {
-            engine.stop()
-        }
-        defer {
-            if needsRestart {
-                restartEngineAfterLegacyGraphMutation(engine)
-            }
-        }
-
+        // Capture everything we need from MainActor-isolated state
         let source = legacySendSourceNodes[busIndex]
         let returnMixer = legacySendReturnMixers[busIndex]
         let slot = busIndex == 0 ? sendDelaySlot : sendReverbSlot
-        guard let slot else { return }
+        guard let slot else {
+            legacySendRebuildInProgress.remove(busIndex)
+            return
+        }
         let currentAU = slot.audioUnit
+        let previousAU = busIndex < legacyAttachedSendAUs.count ? legacyAttachedSendAUs[busIndex] : nil
+        let hasPlugin = slot.hasPluginSafe
+        let isBypassed = slot.isBypassedSafe
+        let needsRestart = isRunning && !engineAlreadyStopped
 
-        // Detach previous AU plugin if it was swapped out.
-        if busIndex < legacyAttachedSendAUs.count,
-           let previousAU = legacyAttachedSendAUs[busIndex],
-           previousAU !== currentAU {
-            engine.disconnectNodeInput(previousAU)
-            engine.disconnectNodeOutput(previousAU)
-            if engine.attachedNodes.contains(previousAU) {
-                engine.detach(previousAU)
-            }
+        // Pre-update: clear tracked AU if swapping
+        if let previousAU, previousAU !== currentAU, busIndex < legacyAttachedSendAUs.count {
             legacyAttachedSendAUs[busIndex] = nil
-        }
-
-        // Disconnect current AU if it's in the graph (might be reconnected below).
-        if let au = currentAU, engine.attachedNodes.contains(au) {
-            engine.disconnectNodeInput(au)
-            engine.disconnectNodeOutput(au)
-        }
-
-        // Safely disconnect source and return mixer only if they're attached.
-        if engine.attachedNodes.contains(source) {
-            engine.disconnectNodeOutput(source)
-        }
-        if engine.attachedNodes.contains(returnMixer) {
-            engine.disconnectNodeInput(returnMixer)
         }
 
         updateLegacySendReturnGain(busIndex)
 
-        // If no plugin is loaded, fully detach the send source and return mixer
-        // so they don't pull audio from the C++ engine for nothing.
-        guard slot.hasPluginSafe else {
+        // Dispatch heavy engine work off MainActor
+        graphMutationQueue.async { [weak self] in
+            if needsRestart {
+                engine.stop()
+            }
+
+            // Detach previous AU plugin if it was swapped out.
+            if let previousAU, previousAU !== currentAU {
+                engine.disconnectNodeInput(previousAU)
+                engine.disconnectNodeOutput(previousAU)
+                if engine.attachedNodes.contains(previousAU) {
+                    engine.detach(previousAU)
+                }
+            }
+
+            // Disconnect current AU if it's in the graph.
+            if let au = currentAU, engine.attachedNodes.contains(au) {
+                engine.disconnectNodeInput(au)
+                engine.disconnectNodeOutput(au)
+            }
+
+            // Safely disconnect source and return mixer.
             if engine.attachedNodes.contains(source) {
-                engine.detach(source)
+                engine.disconnectNodeOutput(source)
             }
             if engine.attachedNodes.contains(returnMixer) {
-                engine.disconnectNodeOutput(returnMixer)
-                engine.detach(returnMixer)
+                engine.disconnectNodeInput(returnMixer)
             }
-            if busIndex < legacyAttachedSendAUs.count {
-                legacyAttachedSendAUs[busIndex] = nil
-            }
-            return
-        }
 
-        // Ensure source and return mixer are attached and connected.
-        if !engine.attachedNodes.contains(source) {
-            engine.attach(source)
-        }
-        if !engine.attachedNodes.contains(returnMixer) {
-            engine.attach(returnMixer)
-        }
-        // Always (re-)connect returnMixer → mainMixer to ensure the path is intact.
-        engine.connect(returnMixer, to: engine.mainMixerNode, format: format)
+            if !hasPlugin {
+                // No plugin: fully detach source and return mixer.
+                if engine.attachedNodes.contains(source) {
+                    engine.detach(source)
+                }
+                if engine.attachedNodes.contains(returnMixer) {
+                    engine.disconnectNodeOutput(returnMixer)
+                    engine.detach(returnMixer)
+                }
+            } else {
+                // Ensure source and return mixer are attached.
+                if !engine.attachedNodes.contains(source) {
+                    engine.attach(source)
+                }
+                if !engine.attachedNodes.contains(returnMixer) {
+                    engine.attach(returnMixer)
+                }
+                engine.connect(returnMixer, to: engine.mainMixerNode, format: format)
 
-        if let au = currentAU, !slot.isBypassedSafe {
-            if !engine.attachedNodes.contains(au) {
-                engine.attach(au)
+                if let au = currentAU, !isBypassed {
+                    if !engine.attachedNodes.contains(au) {
+                        engine.attach(au)
+                    }
+                    engine.connect(source, to: au, format: format)
+                    engine.connect(au, to: returnMixer, format: format)
+                } else {
+                    engine.connect(source, to: returnMixer, format: format)
+                }
             }
-            engine.connect(source, to: au, format: format)
-            engine.connect(au, to: returnMixer, format: format)
-            if busIndex < legacyAttachedSendAUs.count {
-                legacyAttachedSendAUs[busIndex] = au
+
+            if needsRestart {
+                engine.prepare()
+                do {
+                    try engine.start()
+                } catch {
+                    print("✗ Failed to restart engine after send chain rebuild: \(error)")
+                    // Recovery attempt
+                    engine.stop()
+                    engine.reset()
+                    engine.prepare()
+                    do {
+                        try engine.start()
+                        print("✓ Recovered audio engine after send chain rebuild")
+                    } catch {
+                        print("✗ Audio engine recovery failed: \(error)")
+                    }
+                }
             }
-        } else {
-            // Bypass: route send directly to return.
-            engine.connect(source, to: returnMixer, format: format)
-            if busIndex < legacyAttachedSendAUs.count {
-                legacyAttachedSendAUs[busIndex] = nil
+
+            // Update MainActor state after graph work completes
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.isRunning = engine.isRunning
+                if hasPlugin, let au = currentAU, !isBypassed, busIndex < self.legacyAttachedSendAUs.count {
+                    self.legacyAttachedSendAUs[busIndex] = au
+                } else if busIndex < self.legacyAttachedSendAUs.count {
+                    self.legacyAttachedSendAUs[busIndex] = nil
+                }
+                self.legacySendRebuildInProgress.remove(busIndex)
             }
         }
     }
@@ -1021,6 +1057,11 @@ class AudioEngineWrapper: ObservableObject {
         return slot?.audioUnit
     }
 
+    /// Gets the raw AUSendSlot for snapshot/restore operations
+    func getSendSlot(busIndex: Int) -> AUSendSlot? {
+        return busIndex == 0 ? sendDelaySlot : sendReverbSlot
+    }
+
     /// Gets send slot data as a value type (avoids @ObservedObject crashes in SwiftUI)
     /// Uses thread-safe accessors so SwiftUI can safely call this from any thread
     func getSendSlotData(busIndex: Int) -> SendSlotData {
@@ -1229,8 +1270,9 @@ class AudioEngineWrapper: ObservableObject {
     // MARK: - Performance Monitoring
 
     private func setupPerformanceMonitoring() {
-        // Poll at 30fps for smooth playhead animation
-        performanceTimer = Timer.scheduledTimer(withTimeInterval: 1.0/30.0, repeats: true) { [weak self] _ in
+        // Poll at 15fps — still visually smooth for VU meters, halves SwiftUI rebuild load.
+        // All C++ bridge reads are batched into local vars, then committed in one pass.
+        performanceTimer = Timer.scheduledTimer(withTimeInterval: 1.0/15.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.updatePerformanceMetrics()
             }
@@ -1238,139 +1280,138 @@ class AudioEngineWrapper: ObservableObject {
     }
 
     private func updatePerformanceMetrics() {
-        // Calculate CPU usage
-        // This is a simplified version - real implementation would use more accurate metrics
-        cpuLoad = ProcessInfo.processInfo.systemUptime.truncatingRemainder(dividingBy: 100.0) / 4.0
-
-        // Calculate latency (buffer size / sample rate * 1000 for ms)
-        latency = (Double(bufferSize) / sampleRate) * 1000.0
-
-        // Update granular playhead positions
-        updateGranularPositions()
-
-        // Update level meters
-        updateLevelMeters()
-    }
-
-    private func updateLevelMeters() {
         guard let handle = cppEngineHandle else { return }
 
-        // Update channel levels (0=Plaits, 1=Rings, 2-5=track voices)
+        // --- Batch-read all C++ values into local vars (no @Published writes yet) ---
+
+        let newCpuLoad = ProcessInfo.processInfo.systemUptime.truncatingRemainder(dividingBy: 100.0) / 4.0
+        let newLatency = (Double(bufferSize) / sampleRate) * 1000.0
+
+        // Channel levels (6 channels)
+        var newChannelLevels: [Float] = [0, 0, 0, 0, 0, 0]
         for i in 0..<6 {
-            channelLevels[i] = AudioEngine_GetChannelLevel(handle, Int32(i))
+            newChannelLevels[i] = AudioEngine_GetChannelLevel(handle, Int32(i))
         }
 
-        // Update master levels
-        masterLevelL = AudioEngine_GetMasterLevel(handle, 0)
-        masterLevelR = AudioEngine_GetMasterLevel(handle, 1)
-    }
+        // Master levels
+        let newMasterL = AudioEngine_GetMasterLevel(handle, 0)
+        let newMasterR = AudioEngine_GetMasterLevel(handle, 1)
 
-    private func updateGranularPositions() {
-        guard let handle = cppEngineHandle else { return }
-
+        // Granular positions
+        var newGranularPositions: [Int: Float] = [:]
         for voiceIndex in 0..<4 {
             let position = AudioEngine_GetGranularPosition(handle, Int32(voiceIndex))
-            granularPositions[voiceIndex] = position
+            newGranularPositions[voiceIndex] = position
         }
+
+        // --- Commit all values at once (minimizes @Published notification spread) ---
+        cpuLoad = newCpuLoad
+        latency = newLatency
+        channelLevels = newChannelLevels
+        masterLevelL = newMasterL
+        masterLevelR = newMasterR
+        granularPositions = newGranularPositions
     }
 
     // MARK: - Parameter Control
 
-    func setParameter(id: ParameterID, value: Float, voiceIndex: Int = 0) {
-        guard let handle = cppEngineHandle else { return }
-
-        // Map Swift ParameterID to C++ ParameterID
-        let cppParamId: Int32
+    /// Maps a Swift ParameterID to the corresponding C++ parameter ID
+    private func cppParameterID(for id: ParameterID) -> Int32 {
         switch id {
-        // Granular parameters (Mangl-style) (0-11)
-        case .granularSpeed: cppParamId = 0
-        case .granularPitch: cppParamId = 1
-        case .granularSize: cppParamId = 2
-        case .granularDensity: cppParamId = 3
-        case .granularJitter: cppParamId = 4
-        case .granularSpread: cppParamId = 5
-        case .granularPan: cppParamId = 6
-        case .granularFilterCutoff: cppParamId = 7
-        case .granularFilterResonance: cppParamId = 8
-        case .granularGain: cppParamId = 9
-        case .granularSend: cppParamId = 10
-        case .granularEnvelope: cppParamId = 11
-        case .granularDecay: cppParamId = 12
-        case .granularFilterModel: cppParamId = 43
-        case .granularReverse: cppParamId = 44
-        case .granularMorph: cppParamId = 45
+        // Granular parameters (Mangl-style) (0-12)
+        case .granularSpeed: return 0
+        case .granularPitch: return 1
+        case .granularSize: return 2
+        case .granularDensity: return 3
+        case .granularJitter: return 4
+        case .granularSpread: return 5
+        case .granularPan: return 6
+        case .granularFilterCutoff: return 7
+        case .granularFilterResonance: return 8
+        case .granularGain: return 9
+        case .granularSend: return 10
+        case .granularEnvelope: return 11
+        case .granularDecay: return 12
 
         // Legacy compatibility (map to new params)
-        case .granularSlide: cppParamId = 0     // Maps to speed (position control via seek)
-        case .granularGeneSize: cppParamId = 2  // Maps to size
-        case .granularVarispeed: cppParamId = 0 // Maps to speed
+        case .granularSlide: return 0
+        case .granularGeneSize: return 2
+        case .granularVarispeed: return 0
 
-        // Plaits parameters (13-23, shifted by 1 for GranularDecay)
-        case .plaitsModel: cppParamId = 13
-        case .plaitsHarmonics: cppParamId = 14
-        case .plaitsTimbre: cppParamId = 15
-        case .plaitsMorph: cppParamId = 16
-        case .plaitsFrequency: cppParamId = 17
-        case .plaitsLevel: cppParamId = 18
-        case .plaitsMidiNote: cppParamId = 19
-        case .plaitsLPGColor: cppParamId = 20
-        case .plaitsLPGDecay: cppParamId = 21
-        case .plaitsLPGAttack: cppParamId = 22
-        case .plaitsLPGBypass: cppParamId = 23
+        // Plaits parameters (13-23)
+        case .plaitsModel: return 13
+        case .plaitsHarmonics: return 14
+        case .plaitsTimbre: return 15
+        case .plaitsMorph: return 16
+        case .plaitsFrequency: return 17
+        case .plaitsLevel: return 18
+        case .plaitsMidiNote: return 19
+        case .plaitsLPGColor: return 20
+        case .plaitsLPGDecay: return 21
+        case .plaitsLPGAttack: return 22
+        case .plaitsLPGBypass: return 23
 
         // Effects parameters (24-29)
-        case .delayTime: cppParamId = 24
-        case .delayFeedback: cppParamId = 25
-        case .delayMix: cppParamId = 26
-        case .reverbSize: cppParamId = 27
-        case .reverbDamping: cppParamId = 28
-        case .reverbMix: cppParamId = 29
+        case .delayTime: return 24
+        case .delayFeedback: return 25
+        case .delayMix: return 26
+        case .reverbSize: return 27
+        case .reverbDamping: return 28
+        case .reverbMix: return 29
 
-        // Mixer parameters (32-35, after distortion params 30-31)
-        case .voiceGain: cppParamId = 32
-        case .voicePan: cppParamId = 33
-        case .voiceSend: cppParamId = 34
-        case .masterGain: cppParamId = 35
+        // Mixer parameters (32-35)
+        case .voiceGain: return 32
+        case .voicePan: return 33
+        case .voiceSend: return 34
+        case .masterGain: return 35
 
         // Master filter parameters (36-38)
-        case .masterFilterCutoff: cppParamId = 36
-        case .masterFilterResonance: cppParamId = 37
-        case .masterFilterModel: cppParamId = 38
+        case .masterFilterCutoff: return 36
+        case .masterFilterResonance: return 37
+        case .masterFilterModel: return 38
 
         // Tape delay extended parameters (39-45)
-        case .delayHeadMode: cppParamId = 39
-        case .delayWow: cppParamId = 40
-        case .delayFlutter: cppParamId = 41
-        case .delayTone: cppParamId = 42
-        case .delaySync: cppParamId = 43
-        case .delayTempo: cppParamId = 44
-        case .delaySubdivision: cppParamId = 45
+        case .delayHeadMode: return 39
+        case .delayWow: return 40
+        case .delayFlutter: return 41
+        case .delayTone: return 42
+        case .delaySync: return 43
+        case .delayTempo: return 44
+        case .delaySubdivision: return 45
 
         // Granular extended parameters (46-48)
-        case .granularFilterModel: cppParamId = 46
-        case .granularReverse: cppParamId = 47
-        case .granularMorph: cppParamId = 48
+        case .granularFilterModel: return 46
+        case .granularReverse: return 47
+        case .granularMorph: return 48
 
         // Rings parameters (49-54)
-        case .ringsModel: cppParamId = 49
-        case .ringsStructure: cppParamId = 50
-        case .ringsBrightness: cppParamId = 51
-        case .ringsDamping: cppParamId = 52
-        case .ringsPosition: cppParamId = 53
-        case .ringsLevel: cppParamId = 54
+        case .ringsModel: return 49
+        case .ringsStructure: return 50
+        case .ringsBrightness: return 51
+        case .ringsDamping: return 52
+        case .ringsPosition: return 53
+        case .ringsLevel: return 54
 
         // Looper parameters (55-59)
-        case .looperRate: cppParamId = 55
-        case .looperReverse: cppParamId = 56
-        case .looperLoopStart: cppParamId = 57
-        case .looperLoopEnd: cppParamId = 58
-        case .looperCut: cppParamId = 59
+        case .looperRate: return 55
+        case .looperReverse: return 56
+        case .looperLoopStart: return 57
+        case .looperLoopEnd: return 58
+        case .looperCut: return 59
 
         // Mixer timing alignment (60)
-        case .voiceMicroDelay: cppParamId = 60
+        case .voiceMicroDelay: return 60
         }
+    }
 
-        AudioEngine_SetParameter(handle, cppParamId, Int32(voiceIndex), value)
+    func setParameter(id: ParameterID, value: Float, voiceIndex: Int = 0) {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_SetParameter(handle, cppParameterID(for: id), Int32(voiceIndex), value)
+    }
+
+    func getParameter(id: ParameterID, voiceIndex: Int = 0) -> Float {
+        guard let handle = cppEngineHandle else { return 0 }
+        return AudioEngine_GetParameter(handle, cppParameterID(for: id), Int32(voiceIndex))
     }
 
     func loadAudioFile(url: URL, reelIndex: Int) {
@@ -1428,6 +1469,9 @@ class AudioEngineWrapper: ObservableObject {
                     if success {
                         print("✓ Loaded audio file: \(url.lastPathComponent) (\(sampleCount) samples @ \(sampleRate)Hz)")
 
+                        // Track loaded file path for project save/load
+                        self.loadedAudioFilePaths[reelIndex] = url
+
                         // Generate waveform overview for display
                         self.updateWaveformOverview(reelIndex: reelIndex)
                     } else {
@@ -1445,6 +1489,7 @@ class AudioEngineWrapper: ObservableObject {
         guard let handle = cppEngineHandle else { return }
         AudioEngine_ClearReel(handle, Int32(reelIndex))
         waveformOverviews[reelIndex] = nil
+        loadedAudioFilePaths[reelIndex] = nil
     }
 
     /// Gets the length of a reel in samples

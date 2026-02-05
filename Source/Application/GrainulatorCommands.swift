@@ -8,18 +8,32 @@
 import SwiftUI
 
 struct GrainulatorCommands: Commands {
+    @ObservedObject var projectManager: ProjectManager
+
     var body: some Commands {
         // File menu commands
         CommandGroup(replacing: .newItem) {
             Button("New Project") {
-                // TODO: Create new project
+                projectManager.newProject()
             }
             .keyboardShortcut("n", modifiers: .command)
 
             Button("Open Project...") {
-                // TODO: Open project
+                projectManager.openProject()
             }
             .keyboardShortcut("o", modifiers: .command)
+
+            Divider()
+
+            Button("Save Project") {
+                projectManager.saveProject()
+            }
+            .keyboardShortcut("s", modifiers: .command)
+
+            Button("Save Project As...") {
+                projectManager.saveProjectAs()
+            }
+            .keyboardShortcut("s", modifiers: [.command, .shift])
 
             Divider()
 
