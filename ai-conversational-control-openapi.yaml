@@ -1,0 +1,1309 @@
+openapi: 3.1.0
+info:
+  title: Grainulator Conversational Control API
+  version: 0.1.0-draft
+  description: |
+    Draft OpenAPI contract for conversational control of Grainulator.
+    This models state, actions, scenes, files, and recording control for granular/loop voices.
+servers:
+  - url: http://127.0.0.1:4850/v1
+    description: Localhost control bridge (v1)
+security:
+  - bearerAuth: []
+tags:
+  - name: sessions
+  - name: capabilities
+  - name: state
+  - name: actions
+  - name: history
+  - name: scenes
+  - name: files
+  - name: recording
+  - name: events
+paths:
+  /sessions:
+    post:
+      tags: [sessions]
+      summary: Create a control session
+      operationId: createSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionCreateRequest'
+      responses:
+        '201':
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionCreateResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /sessions/{sessionId}:
+    delete:
+      tags: [sessions]
+      summary: Close a session
+      operationId: deleteSession
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '204':
+          description: Session closed
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /capabilities:
+    get:
+      tags: [capabilities]
+      summary: Get negotiated capabilities
+      operationId: listCapabilities
+      responses:
+        '200':
+          description: Capability list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Capability'
+
+  /parameters:
+    get:
+      tags: [capabilities]
+      summary: List parameter specifications
+      operationId: listParameters
+      parameters:
+        - name: module
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [sequencer, synth, granular, loop, fx, files, transport]
+      responses:
+        '200':
+          description: Parameter metadata
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ParameterSpec'
+
+  /state:
+    get:
+      tags: [state]
+      summary: Get canonical state
+      operationId: getState
+      responses:
+        '200':
+          description: Full state snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CanonicalState'
+
+  /state/query:
+    post:
+      tags: [state]
+      summary: Query state by paths
+      operationId: queryState
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StateQueryRequest'
+      responses:
+        '200':
+          description: Queried values
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StateQueryResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /actions/validate:
+    post:
+      tags: [actions]
+      summary: Validate action bundle and generate musical diff
+      operationId: validateActions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidateActionsRequest'
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidateActionsResponse'
+        '422':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /actions/schedule:
+    post:
+      tags: [actions]
+      summary: Schedule action bundle for execution
+      operationId: scheduleActions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleActionsRequest'
+      responses:
+        '202':
+          description: Scheduled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduleActionsResponse'
+        '409':
+          $ref: '#/components/responses/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /actions/scheduled:
+    get:
+      tags: [actions]
+      summary: List scheduled/action statuses
+      operationId: listScheduledActions
+      responses:
+        '200':
+          description: Scheduled action bundles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ScheduledBundle'
+
+  /actions/{bundleId}/cancel:
+    post:
+      tags: [actions]
+      summary: Cancel scheduled action bundle
+      operationId: cancelScheduledActions
+      parameters:
+        - $ref: '#/components/parameters/BundleId'
+      responses:
+        '200':
+          description: Cancellation status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelBundleResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /history:
+    get:
+      tags: [history]
+      summary: List recent activity history for the current session
+      operationId: listHistory
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+        - name: afterSeq
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: beforeSeq
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: types
+          in: query
+          required: false
+          description: Comma-separated event type names
+          schema:
+            type: string
+        - name: includeStateChanged
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: Recent history entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityHistoryResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /history/undo:
+    post:
+      tags: [history]
+      summary: Undo last change
+      operationId: undo
+      responses:
+        '200':
+          description: Undo applied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UndoRedoResponse'
+
+  /history/redo:
+    post:
+      tags: [history]
+      summary: Redo last reverted change
+      operationId: redo
+      responses:
+        '200':
+          description: Redo applied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UndoRedoResponse'
+
+  /scenes:
+    post:
+      tags: [scenes]
+      summary: Save a scene snapshot
+      operationId: saveScene
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveSceneRequest'
+      responses:
+        '201':
+          description: Scene saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SaveSceneResponse'
+
+  /scenes/{sceneId}/recall:
+    post:
+      tags: [scenes]
+      summary: Recall scene with set/morph timing
+      operationId: recallScene
+      parameters:
+        - $ref: '#/components/parameters/SceneId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecallSceneRequest'
+      responses:
+        '202':
+          description: Scene recall scheduled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusScheduledResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /files/search:
+    post:
+      tags: [files]
+      summary: Search indexed audio files
+      operationId: searchFiles
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FileSearchRequest'
+      responses:
+        '200':
+          description: File search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileSearchResponse'
+
+  /files/{fileId}/load:
+    post:
+      tags: [files]
+      summary: Load file into a target slot
+      operationId: loadFile
+      parameters:
+        - $ref: '#/components/parameters/FileId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoadFileRequest'
+      responses:
+        '202':
+          description: File load scheduled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoadFileResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /recording/voices:
+    get:
+      tags: [recording]
+      summary: List current recording state for voices
+      operationId: listRecordingVoices
+      responses:
+        '200':
+          description: Voice recording states
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/VoiceRecordingState'
+
+  /recording/voices/{voiceId}/start:
+    post:
+      tags: [recording]
+      summary: Start recording for a voice
+      operationId: startRecording
+      parameters:
+        - $ref: '#/components/parameters/VoiceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartRecordingRequest'
+      responses:
+        '202':
+          description: Recording start scheduled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordingScheduleResponse'
+        '422':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /recording/voices/{voiceId}/stop:
+    post:
+      tags: [recording]
+      summary: Stop recording for a voice
+      operationId: stopRecording
+      parameters:
+        - $ref: '#/components/parameters/VoiceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StopRecordingRequest'
+      responses:
+        '202':
+          description: Recording stop scheduled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordingScheduleResponse'
+        '422':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /recording/voices/{voiceId}/feedback:
+    post:
+      tags: [recording]
+      summary: Set recording feedback for a voice
+      operationId: setRecordingFeedback
+      parameters:
+        - $ref: '#/components/parameters/VoiceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetRecordingFeedbackRequest'
+      responses:
+        '202':
+          description: Feedback change scheduled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordingFeedbackScheduleResponse'
+        '422':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /recording/voices/{voiceId}/mode:
+    post:
+      tags: [recording]
+      summary: Set recording mode for a voice
+      operationId: setRecordingMode
+      parameters:
+        - $ref: '#/components/parameters/VoiceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetRecordingModeRequest'
+      responses:
+        '202':
+          description: Mode change scheduled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordingFeedbackScheduleResponse'
+        '422':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /events:
+    get:
+      tags: [events]
+      summary: Event stream upgrade endpoint
+      description: |
+        Connect using WebSocket upgrade. Use `afterSeq` for recovery after disconnect.
+      operationId: connectEvents
+      parameters:
+        - name: afterSeq
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '101':
+          description: Switching Protocols (WebSocket)
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: token
+
+  parameters:
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
+    BundleId:
+      name: bundleId
+      in: path
+      required: true
+      schema:
+        type: string
+    SceneId:
+      name: sceneId
+      in: path
+      required: true
+      schema:
+        type: string
+    FileId:
+      name: fileId
+      in: path
+      required: true
+      schema:
+        type: string
+    VoiceId:
+      name: voiceId
+      in: path
+      required: true
+      schema:
+        type: string
+        description: Example `granular.voiceA` or `loop.voiceB`
+
+  responses:
+    ErrorResponse:
+      description: Error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    SessionCreateRequest:
+      type: object
+      required: [client, requestedScopes]
+      properties:
+        client:
+          type: object
+          required: [name, version]
+          properties:
+            name:
+              type: string
+            version:
+              type: string
+        requestedScopes:
+          type: array
+          items:
+            type: string
+        userLabel:
+          type: string
+
+    SessionCreateResponse:
+      type: object
+      required: [sessionId, token, expiresAt, capabilities]
+      properties:
+        sessionId:
+          type: string
+        token:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+        capabilities:
+          type: array
+          items:
+            $ref: '#/components/schemas/Capability'
+
+    Capability:
+      type: object
+      required: [module, actions, paths]
+      properties:
+        module:
+          type: string
+        actions:
+          type: array
+          items:
+            type: string
+        paths:
+          type: array
+          items:
+            type: string
+
+    ParameterSpec:
+      type: object
+      required:
+        - path
+        - type
+        - min
+        - max
+        - default
+        - unit
+        - safeUpdateMode
+        - smoothingMinMs
+        - quantizable
+        - riskClass
+        - musicalTags
+      properties:
+        path:
+          type: string
+        type:
+          type: string
+          enum: [bool, int, float, enum]
+        min:
+          type: number
+        max:
+          type: number
+        default:
+          oneOf:
+            - type: number
+            - type: boolean
+            - type: string
+        unit:
+          type: string
+        safeUpdateMode:
+          type: string
+          enum: [immediate, smoothed, quantized]
+        smoothingMinMs:
+          type: integer
+          minimum: 0
+        quantizable:
+          type: boolean
+        riskClass:
+          $ref: '#/components/schemas/RiskLevel'
+        musicalTags:
+          type: array
+          items:
+            type: string
+
+    CanonicalState:
+      type: object
+      required: [stateVersion, schemaVersion, session, transport]
+      properties:
+        stateVersion:
+          type: integer
+          minimum: 0
+        schemaVersion:
+          type: string
+        session:
+          type: object
+          required: [tempoBpm, timeSignature, key]
+          properties:
+            tempoBpm:
+              type: number
+            timeSignature:
+              type: string
+            key:
+              type: string
+        transport:
+          $ref: '#/components/schemas/TransportState'
+        sequencer:
+          type: object
+          additionalProperties: true
+        synth:
+          type: object
+          additionalProperties: true
+        granular:
+          type: object
+          additionalProperties: true
+        loop:
+          type: object
+          additionalProperties: true
+        fx:
+          type: object
+          additionalProperties: true
+        files:
+          type: object
+          additionalProperties: true
+        scenes:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    TransportState:
+      type: object
+      required: [playing, bar, beat]
+      properties:
+        playing:
+          type: boolean
+        bar:
+          type: integer
+          minimum: 1
+        beat:
+          type: number
+          minimum: 0
+
+    StateQueryRequest:
+      type: object
+      required: [paths]
+      properties:
+        paths:
+          type: array
+          items:
+            type: string
+
+    StateQueryResponse:
+      type: object
+      required: [values, stateVersion]
+      properties:
+        values:
+          type: object
+          additionalProperties: true
+        stateVersion:
+          type: integer
+          minimum: 0
+
+    TimeSpec:
+      type: object
+      properties:
+        anchor:
+          type: string
+          enum: [now, next_beat, next_bar, at_transport_position]
+        quantization:
+          type: string
+          enum: [off, 1/16, 1/8, 1/4, 1_bar]
+        durationMs:
+          type: integer
+          minimum: 0
+          nullable: true
+        durationBeats:
+          type: number
+          minimum: 0
+          nullable: true
+        durationBars:
+          type: number
+          minimum: 0
+          nullable: true
+      allOf:
+        - $ref: '#/components/schemas/TimeSpecOneOfDuration'
+
+    TimeSpecOneOfDuration:
+      type: object
+      description: Exactly one duration field may be non-null; all null means instantaneous.
+
+    Action:
+      type: object
+      required: [actionId, type, target]
+      properties:
+        actionId:
+          type: string
+        type:
+          type: string
+          enum:
+            - set
+            - ramp
+            - toggle
+            - trigger
+            - loadFile
+            - startRecording
+            - stopRecording
+            - setRecordingFeedback
+            - setRecordingMode
+            - saveScene
+            - recallScene
+            - morphScene
+        target:
+          type: string
+        value:
+          oneOf:
+            - type: number
+            - type: boolean
+            - type: string
+          nullable: true
+        from:
+          type: number
+          nullable: true
+        to:
+          type: number
+          nullable: true
+        curve:
+          type: string
+          enum: [linear, easeInOut, exponential]
+        time:
+          $ref: '#/components/schemas/TimeSpec'
+        reason:
+          type: string
+
+    ActionBundle:
+      type: object
+      required: [bundleId, intentId, atomic, actions]
+      properties:
+        bundleId:
+          type: string
+        intentId:
+          type: string
+        validationId:
+          type: string
+          nullable: true
+        preconditionStateVersion:
+          type: integer
+          nullable: true
+        atomic:
+          type: boolean
+        requireConfirmation:
+          type: boolean
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Action'
+
+    Policy:
+      type: object
+      properties:
+        maxRisk:
+          $ref: '#/components/schemas/RiskLevel'
+        lockModules:
+          type: array
+          items:
+            type: string
+        allowFileLoads:
+          type: boolean
+        allowRecording:
+          type: boolean
+        requireDiffForRiskAtLeast:
+          $ref: '#/components/schemas/RiskLevel'
+
+    ValidateActionsRequest:
+      type: object
+      required: [bundle]
+      properties:
+        bundle:
+          $ref: '#/components/schemas/ActionBundle'
+        policy:
+          $ref: '#/components/schemas/Policy'
+
+    ValidateActionsResponse:
+      type: object
+      required: [valid, validationId, risk, requiresConfirmation, musicalDiff]
+      properties:
+        valid:
+          type: boolean
+        validationId:
+          type: string
+        risk:
+          $ref: '#/components/schemas/RiskLevel'
+        requiresConfirmation:
+          type: boolean
+        confirmationToken:
+          type: string
+          nullable: true
+        confirmationTokenExpiresAt:
+          type: string
+          format: date-time
+          nullable: true
+        normalizedBundle:
+          $ref: '#/components/schemas/ActionBundle'
+        musicalDiff:
+          $ref: '#/components/schemas/MusicalDiff'
+
+    ScheduleActionsRequest:
+      type: object
+      required: [bundle, applyMode, idempotencyKey]
+      properties:
+        bundle:
+          $ref: '#/components/schemas/ActionBundle'
+        applyMode:
+          type: string
+          enum: [validated_only, best_effort]
+        confirmationToken:
+          type: string
+          nullable: true
+        idempotencyKey:
+          type: string
+
+    ScheduleActionsResponse:
+      type: object
+      required: [bundleId, status, idempotentReplay, stateVersion]
+      properties:
+        bundleId:
+          type: string
+        status:
+          $ref: '#/components/schemas/BundleStatus'
+        idempotentReplay:
+          type: boolean
+        scheduledAtTransport:
+          $ref: '#/components/schemas/TransportPosition'
+        stateVersion:
+          type: integer
+
+    ScheduledBundle:
+      type: object
+      required: [bundleId, status]
+      properties:
+        bundleId:
+          type: string
+        status:
+          $ref: '#/components/schemas/BundleStatus'
+        scheduledAtTransport:
+          $ref: '#/components/schemas/TransportPosition'
+
+    BundleStatus:
+      type: string
+      enum:
+        - scheduled
+        - in_progress
+        - applied
+        - partially_applied
+        - rejected
+        - canceled
+        - expired
+
+    TransportPosition:
+      type: object
+      required: [bar, beat]
+      properties:
+        bar:
+          type: integer
+        beat:
+          type: number
+
+    CancelBundleResponse:
+      type: object
+      required: [bundleId, status]
+      properties:
+        bundleId:
+          type: string
+        status:
+          type: string
+          enum: [canceled]
+
+    ActivityHistoryEntry:
+      type: object
+      required: [eventId, seq, type, ts, scope, stateVersion, summary, payload]
+      properties:
+        eventId:
+          type: string
+        seq:
+          type: integer
+        type:
+          type: string
+        ts:
+          type: string
+          format: date-time
+        sessionId:
+          type: string
+          nullable: true
+        scope:
+          type: string
+          enum: [global, session]
+        stateVersion:
+          type: integer
+        summary:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+
+    ActivityHistoryPaging:
+      type: object
+      required: [limit, returned, hasMore]
+      properties:
+        limit:
+          type: integer
+        returned:
+          type: integer
+        hasMore:
+          type: boolean
+        nextBeforeSeq:
+          type: integer
+          nullable: true
+        newestSeq:
+          type: integer
+          nullable: true
+        oldestSeq:
+          type: integer
+          nullable: true
+
+    ActivityHistoryFilters:
+      type: object
+      required: [types, includeStateChanged]
+      properties:
+        afterSeq:
+          type: integer
+          nullable: true
+        beforeSeq:
+          type: integer
+          nullable: true
+        types:
+          type: array
+          items:
+            type: string
+        includeStateChanged:
+          type: boolean
+
+    ActivityHistoryResponse:
+      type: object
+      required: [sessionId, stateVersion, activities, paging, filters]
+      properties:
+        sessionId:
+          type: string
+        stateVersion:
+          type: integer
+        activities:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActivityHistoryEntry'
+        paging:
+          $ref: '#/components/schemas/ActivityHistoryPaging'
+        filters:
+          $ref: '#/components/schemas/ActivityHistoryFilters'
+
+    UndoRedoResponse:
+      type: object
+      required: [applied, stateVersion]
+      properties:
+        applied:
+          type: boolean
+        stateVersion:
+          type: integer
+        revertedBundleId:
+          type: string
+          nullable: true
+        reappliedBundleId:
+          type: string
+          nullable: true
+
+    SaveSceneRequest:
+      type: object
+      required: [name, includeModules]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        includeModules:
+          type: array
+          items:
+            type: string
+
+    SaveSceneResponse:
+      type: object
+      required: [sceneId, name]
+      properties:
+        sceneId:
+          type: string
+        name:
+          type: string
+
+    RecallSceneRequest:
+      type: object
+      required: [time, mode]
+      properties:
+        time:
+          $ref: '#/components/schemas/TimeSpec'
+        mode:
+          type: string
+          enum: [set, morph]
+
+    StatusScheduledResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [scheduled]
+
+    FileSearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+        constraints:
+          type: object
+          properties:
+            bpmMin:
+              type: number
+            bpmMax:
+              type: number
+            key:
+              type: string
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+
+    FileSearchResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileSearchResult'
+
+    FileSearchResult:
+      type: object
+      required: [fileId, path, score]
+      properties:
+        fileId:
+          type: string
+        path:
+          type: string
+        score:
+          type: number
+        features:
+          type: object
+          additionalProperties: true
+
+    LoadFileRequest:
+      type: object
+      required: [target, time]
+      properties:
+        target:
+          type: string
+        time:
+          $ref: '#/components/schemas/TimeSpec'
+        crossfadeMs:
+          type: integer
+          minimum: 0
+
+    LoadFileResponse:
+      type: object
+      required: [status, target]
+      properties:
+        status:
+          type: string
+          enum: [scheduled]
+        target:
+          type: string
+
+    RecordingMode:
+      type: string
+      enum: [replace, overdub, append, live_overdub]
+
+    VoiceRecordingState:
+      type: object
+      required: [voiceId, module, isRecording, mode, feedback]
+      properties:
+        voiceId:
+          type: string
+        module:
+          type: string
+          enum: [granular, loop]
+        isRecording:
+          type: boolean
+        mode:
+          $ref: '#/components/schemas/RecordingMode'
+        feedback:
+          type: number
+          minimum: 0
+          maximum: 1
+        inputLevel:
+          type: number
+          nullable: true
+        recordedDurationMs:
+          type: integer
+          nullable: true
+
+    StartRecordingRequest:
+      type: object
+      required: [mode, idempotencyKey]
+      properties:
+        mode:
+          $ref: '#/components/schemas/RecordingMode'
+        feedback:
+          type: number
+          minimum: 0
+          maximum: 1
+          nullable: true
+        time:
+          $ref: '#/components/schemas/TimeSpec'
+        idempotencyKey:
+          type: string
+
+    StopRecordingRequest:
+      type: object
+      required: [idempotencyKey]
+      properties:
+        time:
+          $ref: '#/components/schemas/TimeSpec'
+        idempotencyKey:
+          type: string
+
+    SetRecordingFeedbackRequest:
+      type: object
+      required: [value, idempotencyKey]
+      properties:
+        value:
+          type: number
+          minimum: 0
+          maximum: 1
+        time:
+          $ref: '#/components/schemas/TimeSpec'
+        idempotencyKey:
+          type: string
+
+    SetRecordingModeRequest:
+      type: object
+      required: [mode, idempotencyKey]
+      properties:
+        mode:
+          $ref: '#/components/schemas/RecordingMode'
+        time:
+          $ref: '#/components/schemas/TimeSpec'
+        idempotencyKey:
+          type: string
+
+    RecordingScheduleResponse:
+      type: object
+      required: [voiceId, status]
+      properties:
+        voiceId:
+          type: string
+        status:
+          type: string
+          enum: [scheduled]
+        scheduledAtTransport:
+          $ref: '#/components/schemas/TransportPosition'
+
+    RecordingFeedbackScheduleResponse:
+      type: object
+      required: [voiceId, status, target, scheduledAtTransport]
+      properties:
+        voiceId:
+          type: string
+        status:
+          type: string
+          enum: [scheduled]
+        target:
+          type: string
+        scheduledAtTransport:
+          $ref: '#/components/schemas/TransportPosition'
+
+    MusicalDiff:
+      type: object
+      required: [bundleId, risk, summary, changes, timing]
+      properties:
+        bundleId:
+          type: string
+        risk:
+          $ref: '#/components/schemas/RiskLevel'
+        summary:
+          type: string
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/MusicalDiffChange'
+        timing:
+          $ref: '#/components/schemas/TimeSpec'
+
+    MusicalDiffChange:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+        before:
+          oneOf:
+            - type: number
+            - type: string
+            - type: boolean
+            - type: 'null'
+        after:
+          oneOf:
+            - type: number
+            - type: string
+            - type: boolean
+            - type: 'null'
+
+    RiskLevel:
+      type: string
+      enum: [low, medium, high]
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - ACTION_OUT_OF_RANGE
+                - ACTION_PATH_UNKNOWN
+                - ACTION_TYPE_UNSUPPORTED
+                - MODULE_LOCKED
+                - RISK_EXCEEDS_POLICY
+                - DEPENDENCY_VIOLATION
+                - SCENE_NOT_FOUND
+                - FILE_NOT_FOUND
+                - TOKEN_EXPIRED
+                - QUEUE_FULL_RETRY
+                - STALE_STATE_VERSION
+                - CONFIRMATION_TOKEN_EXPIRED
+                - IDEMPOTENCY_KEY_CONFLICT
+                - RECORDING_ALREADY_ACTIVE
+                - RECORDING_NOT_ACTIVE
+                - RECORDING_MODE_UNSUPPORTED
+                - RECORDING_FEEDBACK_UNSUPPORTED
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+            suggestions:
+              type: array
+              items:
+                type: string

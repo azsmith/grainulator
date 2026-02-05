@@ -389,6 +389,7 @@ private:
 
     // Shared parameters (applied to all voices)
     int m_currentEngine;
+    int m_currentRingsModel;
     float m_harmonics;
     float m_timbre;
     float m_morph;

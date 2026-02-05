@@ -45,6 +45,7 @@ AudioEngine::AudioEngine()
     , m_activeGrains(0)
     , m_voiceCounter(0)
     , m_currentEngine(0)
+    , m_currentRingsModel(0)
     , m_harmonics(0.5f)
     , m_timbre(0.5f)
     , m_morph(0.5f)
@@ -1463,6 +1464,7 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
             if (m_ringsVoice) {
                 const int maxModel = static_cast<int>(rings::RESONATOR_MODEL_LAST) - 1;
                 const int model = std::clamp(static_cast<int>(clampedValue * maxModel + 0.5f), 0, maxModel);
+                m_currentRingsModel = model;
                 m_ringsVoice->SetModel(model);
             }
             break;
@@ -1741,9 +1743,135 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
 }
 
 float AudioEngine::getParameter(ParameterID id, int voiceIndex) const {
-    (void)id;
-    (void)voiceIndex;
-    return 0.0f;
+    const int granularVoice = std::max(0, std::min(voiceIndex, kNumGranularVoices - 1));
+
+    auto clamp01 = [](float x) -> float {
+        return std::max(0.0f, std::min(1.0f, x));
+    };
+
+    switch (id) {
+        case ParameterID::GranularSpeed:
+            if (m_granularVoices[granularVoice]) {
+                const float speed = m_granularVoices[granularVoice]->GetSpeed();
+                return clamp01((speed / 4.0f) + 0.5f);
+            }
+            return 0.0f;
+        case ParameterID::GranularPitch:
+            if (m_granularVoices[granularVoice]) {
+                const float pitchRatio = std::max(0.0001f, m_granularVoices[granularVoice]->GetPitch());
+                const float semitones = 12.0f * std::log2(pitchRatio);
+                return clamp01((semitones + 24.0f) / 48.0f);
+            }
+            return 0.0f;
+        case ParameterID::GranularSize:
+            if (m_granularVoices[granularVoice]) {
+                const float seconds = std::max(0.001f, m_granularVoices[granularVoice]->GetSize());
+                return clamp01(std::log(seconds / 0.001f) / std::log(500.0f));
+            }
+            return 0.0f;
+        case ParameterID::GranularDensity:
+            if (m_granularVoices[granularVoice]) {
+                const float density = std::max(1.0f, m_granularVoices[granularVoice]->GetDensity());
+                return clamp01(std::log(density) / std::log(512.0f));
+            }
+            return 0.0f;
+        case ParameterID::GranularJitter:
+            if (m_granularVoices[granularVoice]) {
+                return clamp01(m_granularVoices[granularVoice]->GetJitter() / 0.5f);
+            }
+            return 0.0f;
+        case ParameterID::GranularSpread:
+            if (m_granularVoices[granularVoice]) {
+                return clamp01(m_granularVoices[granularVoice]->GetSpread());
+            }
+            return 0.0f;
+        case ParameterID::GranularPan:
+            if (m_granularVoices[granularVoice]) {
+                return clamp01((m_granularVoices[granularVoice]->GetPan() + 1.0f) * 0.5f);
+            }
+            return 0.5f;
+        case ParameterID::GranularFilterCutoff:
+            if (m_granularVoices[granularVoice]) {
+                const float cutoff = std::max(20.0f, m_granularVoices[granularVoice]->GetCutoff());
+                return clamp01(std::log(cutoff / 20.0f) / std::log(1000.0f));
+            }
+            return 1.0f;
+        case ParameterID::GranularFilterResonance:
+            if (m_granularVoices[granularVoice]) {
+                return clamp01(m_granularVoices[granularVoice]->GetQ());
+            }
+            return 0.0f;
+        case ParameterID::GranularGain:
+            if (m_granularVoices[granularVoice]) {
+                return clamp01(m_granularVoices[granularVoice]->GetGain());
+            }
+            return 0.0f;
+        case ParameterID::GranularSend:
+            if (m_granularVoices[granularVoice]) {
+                return clamp01(m_granularVoices[granularVoice]->GetSend());
+            }
+            return 0.0f;
+        case ParameterID::GranularEnvelope:
+            if (m_granularVoices[granularVoice]) {
+                const int index = static_cast<int>(m_granularVoices[granularVoice]->GetWindowType());
+                return clamp01(static_cast<float>(std::max(0, std::min(index, 7))) / 7.0f);
+            }
+            return 0.0f;
+        case ParameterID::GranularDecay:
+            if (m_granularVoices[granularVoice]) {
+                const float decayRate = std::max(0.0001f, m_granularVoices[granularVoice]->GetDecayRate());
+                return clamp01(std::log(decayRate / 12.0f) / std::log(0.0125f));
+            }
+            return 0.0f;
+        case ParameterID::GranularFilterModel:
+            if (m_granularVoices[granularVoice]) {
+                const int maxIndex = static_cast<int>(GranularVoice::FilterModel::Count) - 1;
+                const int index = static_cast<int>(m_granularVoices[granularVoice]->GetFilterModel());
+                return clamp01(static_cast<float>(std::max(0, std::min(index, maxIndex))) / static_cast<float>(std::max(maxIndex, 1)));
+            }
+            return 0.0f;
+        case ParameterID::GranularReverse:
+            if (m_granularVoices[granularVoice]) {
+                return m_granularVoices[granularVoice]->GetReverseGrains() ? 1.0f : 0.0f;
+            }
+            return 0.0f;
+        case ParameterID::GranularMorph:
+            if (m_granularVoices[granularVoice]) {
+                return clamp01(m_granularVoices[granularVoice]->GetMorphAmount());
+            }
+            return 0.0f;
+
+        // Existing global state readbacks.
+        case ParameterID::RingsModel: {
+            const int maxModel = static_cast<int>(rings::RESONATOR_MODEL_LAST) - 1;
+            if (maxModel <= 0) { return 0.0f; }
+            return clamp01(static_cast<float>(m_currentRingsModel) / static_cast<float>(maxModel));
+        }
+        case ParameterID::PlaitsModel: return clamp01(static_cast<float>(m_currentEngine) / 15.0f);
+        case ParameterID::PlaitsHarmonics: return clamp01(m_harmonics);
+        case ParameterID::PlaitsTimbre: return clamp01(m_timbre);
+        case ParameterID::PlaitsMorph: return clamp01(m_morph);
+        case ParameterID::PlaitsLPGColor: return clamp01(m_lpgColor);
+        case ParameterID::PlaitsLPGDecay: return clamp01(m_lpgDecay);
+        case ParameterID::PlaitsLPGAttack: return clamp01(m_lpgAttack);
+        case ParameterID::PlaitsLPGBypass: return m_lpgBypass ? 1.0f : 0.0f;
+        case ParameterID::DelayTime: return clamp01(m_delayTime);
+        case ParameterID::DelayFeedback: return clamp01(m_delayFeedback / 0.95f);
+        case ParameterID::DelayMix: return clamp01(m_delayMix);
+        case ParameterID::DelayHeadMode: return clamp01(m_delayHeadMode);
+        case ParameterID::DelayWow: return clamp01(m_delayWow);
+        case ParameterID::DelayFlutter: return clamp01(m_delayFlutter);
+        case ParameterID::DelayTone: return clamp01(m_delayTone);
+        case ParameterID::DelaySync: return m_delaySync ? 1.0f : 0.0f;
+        case ParameterID::DelayTempo: return clamp01((m_delayTempoBPM - 60.0f) / 120.0f);
+        case ParameterID::DelaySubdivision: return clamp01(m_delaySubdivision);
+        case ParameterID::ReverbSize: return clamp01(m_reverbSize);
+        case ParameterID::ReverbDamping: return clamp01(m_reverbDamping);
+        case ParameterID::ReverbMix: return clamp01(m_reverbMix);
+        case ParameterID::MasterGain: return clamp01(m_masterGain / 2.0f);
+        default:
+            return 0.0f;
+    }
 }
 
 void AudioEngine::triggerPlaits(bool state) {
