@@ -30,6 +30,7 @@ void AudioEngine_Process(AudioEngineHandle handle, float** outputBuffers, int nu
 // Parameter control
 void AudioEngine_SetParameter(AudioEngineHandle handle, int parameterId, int voiceIndex, float value);
 float AudioEngine_GetParameter(AudioEngineHandle handle, int parameterId, int voiceIndex);
+void AudioEngine_SetChannelSendLevel(AudioEngineHandle handle, int channelIndex, int sendIndex, float level);
 
 // Performance metrics
 float AudioEngine_GetCPULoad(AudioEngineHandle handle);
@@ -60,6 +61,7 @@ float AudioEngine_GetGranularPosition(AudioEngineHandle handle, int voiceIndex);
 // Level metering
 float AudioEngine_GetChannelLevel(AudioEngineHandle handle, int channelIndex);
 float AudioEngine_GetMasterLevel(AudioEngineHandle handle, int channel);
+void AudioEngine_RenderAndReadLegacyBus(AudioEngineHandle handle, int busIndex, int64_t sampleTime, float* left, float* right, int numFrames);
 
 #ifdef __cplusplus
 }

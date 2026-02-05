@@ -14,6 +14,8 @@ struct GrainulatorApp: App {
     @StateObject private var midiManager = MIDIManager()
     @StateObject private var sequencer = MetropolixSequencer()
     @StateObject private var masterClock = MasterClock()
+    @StateObject private var mixerState = MixerState()  // New modular mixer state
+    @StateObject private var pluginManager = AUPluginManager()  // AU plugin browser
 
     var body: some Scene {
         WindowGroup {
@@ -23,12 +25,16 @@ struct GrainulatorApp: App {
                 .environmentObject(midiManager)
                 .environmentObject(sequencer)
                 .environmentObject(masterClock)
+                .environmentObject(mixerState)
+                .environmentObject(pluginManager)
                 .frame(minWidth: 1200, minHeight: 800)
                 .onAppear {
                     sequencer.connect(audioEngine: audioEngine)
                     sequencer.connectMasterClock(masterClock)
                     masterClock.connect(audioEngine: audioEngine)
                     masterClock.connectSequencer(sequencer)
+                    mixerState.syncToAudioEngine(audioEngine)  // Push default mixer/send levels to C++ engine
+                    pluginManager.refreshPluginList()  // Scan for AU plugins on launch
                     setupMIDICallbacks()
                 }
         }
@@ -49,16 +55,17 @@ struct GrainulatorApp: App {
     }
 
     private func setupMIDICallbacks() {
-        // Connect MIDI note events to audio engine
-        // Using synchronous calls for low-latency MIDI response
+        // Connect MIDI note events to audio engine on MainActor for isolation safety.
         midiManager.onNoteOn = { [weak audioEngine] note, velocity in
-            // Trigger note with pitch and velocity (synchronous for low latency)
-            audioEngine?.noteOn(note: note, velocity: velocity)
+            Task { @MainActor in
+                audioEngine?.noteOn(note: note, velocity: velocity)
+            }
         }
 
         midiManager.onNoteOff = { [weak audioEngine] note in
-            // Release specific note (for polyphony)
-            audioEngine?.noteOff(note: note)
+            Task { @MainActor in
+                audioEngine?.noteOff(note: note)
+            }
         }
 
         midiManager.onControlChange = { [weak audioEngine] controller, value in
@@ -97,6 +104,12 @@ class AppState: ObservableObject {
     @Published var selectedGranularVoice: Int = 0
     @Published var cpuUsage: Double = 0.0
     @Published var latency: Double = 0.0
+
+    // New mixer mode toggle (Phase 2 UI refactor)
+    @Published var useNewMixer: Bool = false
+
+    // New tab-based layout toggle (Phase 3 UI refactor)
+    @Published var useTabLayout: Bool = true
 
     enum ViewMode {
         case multiVoice

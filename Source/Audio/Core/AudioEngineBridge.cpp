@@ -40,6 +40,12 @@ void AudioEngine_Process(AudioEngineHandle handle, float** outputBuffers, int nu
     }
 }
 
+void AudioEngine_ProcessMultiChannel(AudioEngineHandle handle, float** channelBuffers, int numFrames) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->processMultiChannel(channelBuffers, numFrames);
+    }
+}
+
 void AudioEngine_SetParameter(AudioEngineHandle handle, int parameterId, int voiceIndex, float value) {
     if (handle) {
         static_cast<AudioEngine*>(handle)->setParameter(
@@ -56,6 +62,12 @@ float AudioEngine_GetParameter(AudioEngineHandle handle, int parameterId, int vo
         static_cast<AudioEngine::ParameterID>(parameterId),
         voiceIndex
     );
+}
+
+void AudioEngine_SetChannelSendLevel(AudioEngineHandle handle, int channelIndex, int sendIndex, float level) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setChannelSendLevel(channelIndex, sendIndex, level);
+    }
 }
 
 float AudioEngine_GetCPULoad(AudioEngineHandle handle) {
@@ -284,6 +296,57 @@ float AudioEngine_GetClockOutputValue(AudioEngineHandle handle, int outputIndex)
 float AudioEngine_GetModulationValue(AudioEngineHandle handle, int destination) {
     if (!handle) return 0.0f;
     return static_cast<AudioEngine*>(handle)->getModulationValue(destination);
+}
+
+// MARK: - Multi-channel Ring Buffer Processing
+
+void AudioEngine_StartMultiChannelProcessing(AudioEngineHandle handle) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->startMultiChannelProcessing();
+    }
+}
+
+void AudioEngine_StopMultiChannelProcessing(AudioEngineHandle handle) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->stopMultiChannelProcessing();
+    }
+}
+
+void AudioEngine_ReadChannelFromRingBuffer(AudioEngineHandle handle, int channelIndex, float* left, float* right, int numFrames) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->readChannelFromRingBuffer(channelIndex, left, right, numFrames);
+    }
+}
+
+size_t AudioEngine_GetRingBufferReadableFrames(AudioEngineHandle handle, int channelIndex) {
+    if (!handle) return 0;
+    return static_cast<AudioEngine*>(handle)->getRingBufferReadableFrames(channelIndex);
+}
+
+void AudioEngine_RenderAndReadMultiChannel(
+    AudioEngineHandle handle,
+    int channelIndex,
+    int64_t sampleTime,
+    float* left,
+    float* right,
+    int numFrames
+) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->renderAndReadMultiChannel(channelIndex, sampleTime, left, right, numFrames);
+    }
+}
+
+void AudioEngine_RenderAndReadLegacyBus(
+    AudioEngineHandle handle,
+    int busIndex,
+    int64_t sampleTime,
+    float* left,
+    float* right,
+    int numFrames
+) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->renderAndReadLegacyBus(busIndex, sampleTime, left, right, numFrames);
+    }
 }
 
 } // extern "C"

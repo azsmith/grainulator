@@ -27,9 +27,16 @@ void AudioEngine_Shutdown(AudioEngineHandle handle);
 // Audio processing
 void AudioEngine_Process(AudioEngineHandle handle, float** outputBuffers, int numChannels, int numFrames);
 
+// Multi-channel audio processing for AU plugin hosting
+// Outputs 6 separate stereo channels (12 buffers total) without mixing or effects
+// Buffer layout: [ch0_L, ch0_R, ch1_L, ch1_R, ch2_L, ch2_R, ch3_L, ch3_R, ch4_L, ch4_R, ch5_L, ch5_R]
+// Channel mapping: 0=Plaits, 1=Rings, 2=Granular1, 3=Looper1, 4=Looper2, 5=Granular4
+void AudioEngine_ProcessMultiChannel(AudioEngineHandle handle, float** channelBuffers, int numFrames);
+
 // Parameter control
 void AudioEngine_SetParameter(AudioEngineHandle handle, int parameterId, int voiceIndex, float value);
 float AudioEngine_GetParameter(AudioEngineHandle handle, int parameterId, int voiceIndex);
+void AudioEngine_SetChannelSendLevel(AudioEngineHandle handle, int channelIndex, int sendIndex, float level);
 
 // Performance metrics
 float AudioEngine_GetCPULoad(AudioEngineHandle handle);
@@ -80,6 +87,22 @@ void AudioEngine_SetClockOutputMuted(AudioEngineHandle handle, int outputIndex, 
 void AudioEngine_SetClockOutputSlowMode(AudioEngineHandle handle, int outputIndex, bool slow);
 float AudioEngine_GetClockOutputValue(AudioEngineHandle handle, int outputIndex);
 float AudioEngine_GetModulationValue(AudioEngineHandle handle, int destination);
+
+// Multi-channel ring buffer processing (for AU plugin hosting)
+// These functions enable a producer/consumer pattern where a background thread
+// fills ring buffers and audio callbacks only read from them (no race condition)
+void AudioEngine_StartMultiChannelProcessing(AudioEngineHandle handle);
+void AudioEngine_StopMultiChannelProcessing(AudioEngineHandle handle);
+void AudioEngine_ReadChannelFromRingBuffer(AudioEngineHandle handle, int channelIndex, float* left, float* right, int numFrames);
+size_t AudioEngine_GetRingBufferReadableFrames(AudioEngineHandle handle, int channelIndex);
+
+// Pull-synchronous rendering entry point used by AVAudioSourceNode callbacks.
+// Renders one multi-channel quantum exactly once per host sampleTime and returns one channel.
+void AudioEngine_RenderAndReadMultiChannel(AudioEngineHandle handle, int channelIndex, int64_t sampleTime, float* left, float* right, int numFrames);
+
+// Pull-synchronous legacy rendering with dedicated aux buses.
+// Bus mapping: 0=dry mix, 1=send A, 2=send B.
+void AudioEngine_RenderAndReadLegacyBus(AudioEngineHandle handle, int busIndex, int64_t sampleTime, float* left, float* right, int numFrames);
 
 #ifdef __cplusplus
 }

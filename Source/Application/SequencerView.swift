@@ -3,6 +3,7 @@
 //  Grainulator
 //
 //  Metropolix-inspired sequencer interface.
+//  Compact layout with context panel for step editing.
 //
 
 import SwiftUI
@@ -11,142 +12,146 @@ struct SequencerView: View {
     @EnvironmentObject var sequencer: MetropolixSequencer
 
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 10) {
             header
 
             ForEach(Array(sequencer.tracks.indices), id: \.self) { trackIndex in
                 trackSection(trackIndex: trackIndex)
             }
         }
-        .padding(16)
+        .padding(12)
         .background(Color(hex: "#0F0F11"))
         .cornerRadius(8)
         .environment(\.colorScheme, .dark)
     }
 
+    // MARK: - Compact Header (Single Line)
+
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ScrollView(.horizontal, showsIndicators: true) {
-                HStack(spacing: 14) {
-                    Text("SEQUENCER")
-                        .font(.system(size: 16, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color(hex: "#F39C12"))
+        HStack(spacing: 10) {
+            // Title
+            Text("SEQ")
+                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                .foregroundColor(Color(hex: "#F39C12"))
 
-                    Button(action: {
-                        sequencer.togglePlayback()
-                    }) {
-                        Text(sequencer.isPlaying ? "STOP" : "PLAY")
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            .foregroundColor(sequencer.isPlaying ? Color(hex: "#1A1A1D") : .white)
-                            .frame(width: 64, height: 28)
-                            .background(sequencer.isPlaying ? Color(hex: "#FF6B6B") : Color(hex: "#2A2A2D"))
-                            .cornerRadius(4)
-                    }
-                    .buttonStyle(.plain)
+            // Play/Stop button
+            HStack(spacing: 4) {
+                Image(systemName: sequencer.isPlaying ? "stop.fill" : "play.fill")
+                    .font(.system(size: 10))
+                Text(sequencer.isPlaying ? "STOP" : "PLAY")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+            }
+            .foregroundColor(sequencer.isPlaying ? Color(hex: "#1A1A1D") : .white)
+            .frame(width: 60, height: 26)
+            .background(sequencer.isPlaying ? Color(hex: "#FF6B6B") : Color(hex: "#2A2A2D"))
+            .cornerRadius(4)
+            .contentShape(RoundedRectangle(cornerRadius: 4))
+            .onTapGesture { [sequencer] in
+                DispatchQueue.main.async {
+                    sequencer.togglePlayback()
+                }
+            }
 
-                    Button(action: {
+            // Reset button (icon only)
+            Image(systemName: "arrow.counterclockwise")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(Color(hex: "#CCCCCC"))
+                .frame(width: 26, height: 26)
+                .background(Color(hex: "#2A2A2D"))
+                .cornerRadius(4)
+                .contentShape(RoundedRectangle(cornerRadius: 4))
+                .onTapGesture { [sequencer] in
+                    DispatchQueue.main.async {
                         sequencer.reset()
-                    }) {
-                        Text("RESET")
-                            .font(.system(size: 10, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(hex: "#CCCCCC"))
-                            .frame(width: 64, height: 28)
-                            .background(Color(hex: "#2A2A2D"))
-                            .cornerRadius(4)
                     }
-                    .buttonStyle(.plain)
-
-                    HStack(spacing: 6) {
-                        Text("BPM")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color(hex: "#888888"))
-                        Slider(
-                            value: Binding(
-                                get: { sequencer.tempoBPM },
-                                set: { sequencer.setTempoBPM($0) }
-                            ),
-                            in: 40...240,
-                            step: 1
-                        )
-                            .tint(Color(hex: "#F39C12"))
-                            .frame(width: 180)
-                        Text(String(format: "%.0f", sequencer.tempoBPM))
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(hex: "#F39C12"))
-                            .frame(width: 34, alignment: .trailing)
-                    }
-
-                    Spacer(minLength: 8)
                 }
+            .help("Reset")
+
+            // Root note dropdown (compact)
+            Menu {
+                ForEach(Array(sequencer.rootNames.enumerated()), id: \.offset) { index, name in
+                    Button(name) { sequencer.setRootNote(index) }
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Text(sequencer.rootNames[min(max(sequencer.rootNote, 0), sequencer.rootNames.count - 1)])
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundColor(Color(hex: "#888888"))
+                }
+                .frame(width: 44, height: 26)
+                .background(Color(hex: "#2A2A2D"))
+                .cornerRadius(4)
             }
+            .buttonStyle(.plain)
 
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("ROOT")
-                        .font(.system(size: 8, weight: .medium, design: .monospaced))
-                        .foregroundColor(Color(hex: "#777777"))
-                    Menu {
-                        ForEach(Array(sequencer.rootNames.enumerated()), id: \.offset) { index, name in
-                            Button(name) { sequencer.setRootNote(index) }
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(sequencer.rootNames[min(max(sequencer.rootNote, 0), sequencer.rootNames.count - 1)])
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundColor(.white)
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundColor(Color(hex: "#888888"))
-                        }
-                        .frame(width: 74, height: 24)
-                        .background(Color(hex: "#2A2A2D"))
-                        .cornerRadius(4)
-                    }
-                    .buttonStyle(.plain)
+            // Scale dropdown (compact)
+            Menu {
+                ForEach(Array(sequencer.scaleOptions.enumerated()), id: \.offset) { index, scale in
+                    Button(scale.name) { sequencer.setScaleIndex(index) }
                 }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("SCALE")
-                        .font(.system(size: 8, weight: .medium, design: .monospaced))
-                        .foregroundColor(Color(hex: "#777777"))
-                    Menu {
-                        ForEach(Array(sequencer.scaleOptions.enumerated()), id: \.offset) { index, scale in
-                            Button(scale.name) { sequencer.setScaleIndex(index) }
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(currentScaleName)
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundColor(.white)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundColor(Color(hex: "#888888"))
-                        }
-                        .frame(width: 210, height: 24, alignment: .leading)
-                        .padding(.horizontal, 8)
-                        .background(Color(hex: "#2A2A2D"))
-                        .cornerRadius(4)
-                    }
-                    .buttonStyle(.plain)
+            } label: {
+                HStack(spacing: 3) {
+                    Text(currentScaleName)
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundColor(Color(hex: "#888888"))
                 }
-
-                Stepper(
-                    "SEQ OCT \(sequencer.sequenceOctave >= 0 ? "+" : "")\(sequencer.sequenceOctave)",
-                    value: Binding(
-                        get: { sequencer.sequenceOctave },
-                        set: { sequencer.setSequenceOctave($0) }
-                    ),
-                    in: -2...2
-                )
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundColor(controlLabelColor)
-                .tint(controlLabelColor)
-                .frame(width: 150, alignment: .leading)
-
-                Spacer(minLength: 8)
+                .frame(width: 80, height: 26)
+                .background(Color(hex: "#2A2A2D"))
+                .cornerRadius(4)
             }
+            .buttonStyle(.plain)
+
+            // Sequence octave (compact stepper-like)
+            HStack(spacing: 2) {
+                Text("OCT")
+                    .font(.system(size: 8, weight: .medium, design: .monospaced))
+                    .foregroundColor(Color(hex: "#666666"))
+                Button(action: { sequencer.setSequenceOctave(sequencer.sequenceOctave - 1) }) {
+                    Image(systemName: "minus")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(Color(hex: "#888888"))
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.plain)
+                .disabled(sequencer.sequenceOctave <= -2)
+
+                Text("\(sequencer.sequenceOctave >= 0 ? "+" : "")\(sequencer.sequenceOctave)")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(hex: "#F39C12"))
+                    .frame(width: 24)
+
+                Button(action: { sequencer.setSequenceOctave(sequencer.sequenceOctave + 1) }) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(Color(hex: "#888888"))
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.plain)
+                .disabled(sequencer.sequenceOctave >= 2)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(Color(hex: "#1A1A1D"))
+            .cornerRadius(4)
+
+            // BPM (draggable)
+            DraggableBPMView(
+                value: Binding(
+                    get: { sequencer.tempoBPM },
+                    set: { sequencer.setTempoBPM($0) }
+                ),
+                range: 40...240,
+                accentColor: Color(hex: "#F39C12")
+            )
+
+            Spacer()
         }
     }
 
@@ -160,6 +165,8 @@ struct SequencerView: View {
         Color(hex: "#C8C8D0")
     }
 
+    // MARK: - Track Section
+
     @ViewBuilder
     private func trackSection(trackIndex: Int) -> some View {
         let track = sequencer.tracks[trackIndex]
@@ -168,340 +175,36 @@ struct SequencerView: View {
             track.stages.count - 1
         )
         let stage = track.stages[selectedStage]
+        let trackColor = trackIndex == 0 ? Color(hex: "#4A9EFF") : Color(hex: "#9B59B6")
 
-        VStack(spacing: 10) {
-            ScrollView(.horizontal, showsIndicators: true) {
-                HStack(spacing: 10) {
-                    Text(track.name)
-                        .font(.system(size: 12, weight: .bold, design: .monospaced))
-                        .foregroundColor(trackIndex == 0 ? Color(hex: "#4A9EFF") : Color(hex: "#9B59B6"))
+        VStack(spacing: 8) {
+            // Track header (compact single line)
+            trackHeaderRow(trackIndex: trackIndex, track: track, trackColor: trackColor)
 
-                    Toggle(
-                        isOn: Binding(
-                            get: { track.muted },
-                            set: { sequencer.setTrackMuted(trackIndex, $0) }
-                        )
-                    ) {
-                        Text("MUTE")
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color(hex: "#888888"))
-                    }
-                    .toggleStyle(.switch)
-                    .scaleEffect(0.8)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("OUTPUT")
-                            .font(.system(size: 7, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color(hex: "#777777"))
-
-                        Menu {
-                            ForEach(SequencerTrackOutput.allCases) { output in
-                                Button(output.rawValue) {
-                                    sequencer.setTrackOutput(trackIndex, output)
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Text(track.output.rawValue)
-                                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                    .foregroundColor(.white)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.75)
-                                Image(systemName: "chevron.down")
-                                    .font(.system(size: 8, weight: .bold))
-                                    .foregroundColor(trackIndex == 0 ? Color(hex: "#4A9EFF") : Color(hex: "#9B59B6"))
-                            }
-                            .frame(width: 82, height: 20)
-                            .background(Color(hex: "#2A2A2D"))
-                            .cornerRadius(4)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke((trackIndex == 0 ? Color(hex: "#4A9EFF") : Color(hex: "#9B59B6")).opacity(0.45), lineWidth: 1)
+            // Main content: Steps + Context Panel
+            HStack(spacing: 8) {
+                // Step sliders and buttons (scrollable)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 5) {
+                        ForEach(track.stages.indices, id: \.self) { stageIndex in
+                            stepColumn(
+                                trackIndex: trackIndex,
+                                stageIndex: stageIndex,
+                                track: track,
+                                selectedStage: selectedStage,
+                                trackColor: trackColor
                             )
                         }
-                        .buttonStyle(.plain)
-                    }
-                    .frame(width: 90)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("ORDER")
-                            .font(.system(size: 7, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color(hex: "#777777"))
-
-                        Menu {
-                            ForEach(SequencerDirection.allCases) { direction in
-                                Button(direction.rawValue) {
-                                    sequencer.setTrackDirection(trackIndex, direction)
-                                }
-                            }
-                        } label: {
-                            menuButtonLabel(text: track.direction.rawValue, width: 68)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .frame(width: 74)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("DIV")
-                            .font(.system(size: 7, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color(hex: "#777777"))
-
-                        Menu {
-                            ForEach(SequencerClockDivision.allCases) { division in
-                                Button(division.rawValue) {
-                                    sequencer.setTrackDivision(trackIndex, division)
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Text(track.division.rawValue)
-                                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                    .foregroundColor(.white)
-                                Image(systemName: "chevron.down")
-                                    .font(.system(size: 8, weight: .bold))
-                                    .foregroundColor(Color(hex: "#888888"))
-                            }
-                            .frame(width: 56, height: 20)
-                            .background(Color(hex: "#2A2A2D"))
-                            .cornerRadius(4)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .frame(width: 64)
-
-                    Stepper(
-                        "TRNS \(track.transpose >= 0 ? "+" : "")\(track.transpose)",
-                        value: Binding(
-                            get: { track.transpose },
-                            set: { sequencer.setTrackTranspose(trackIndex, $0) }
-                        ),
-                        in: -24...24
-                    )
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundColor(controlLabelColor)
-                    .tint(controlLabelColor)
-                    .frame(width: 140, alignment: .leading)
-
-                    Stepper(
-                        "TRK OCT \(sequencer.trackOctaveOffset(trackIndex) >= 0 ? "+" : "")\(sequencer.trackOctaveOffset(trackIndex))",
-                        value: Binding(
-                            get: { sequencer.trackOctaveOffset(trackIndex) },
-                            set: { sequencer.setTrackOctaveOffset(trackIndex, $0) }
-                        ),
-                        in: -2...2
-                    )
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundColor(controlLabelColor)
-                    .tint(controlLabelColor)
-                    .frame(width: 130, alignment: .leading)
-
-                    Stepper(
-                        "VEL \(track.velocity)",
-                        value: Binding(
-                            get: { track.velocity },
-                            set: { sequencer.setTrackVelocity(trackIndex, $0) }
-                        ),
-                        in: 1...127
-                    )
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundColor(controlLabelColor)
-                    .tint(controlLabelColor)
-                    .frame(width: 110, alignment: .leading)
-
-                    Stepper(
-                        "L START \(track.loopStart + 1)",
-                        value: Binding(
-                            get: { track.loopStart },
-                            set: { sequencer.setTrackLoopStart(trackIndex, $0) }
-                        ),
-                        in: 0...(track.stages.count - 1)
-                    )
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundColor(controlLabelColor)
-                    .tint(controlLabelColor)
-                    .frame(width: 128, alignment: .leading)
-
-                    Stepper(
-                        "L END \(track.loopEnd + 1)",
-                        value: Binding(
-                            get: { track.loopEnd },
-                            set: { sequencer.setTrackLoopEnd(trackIndex, $0) }
-                        ),
-                        in: 0...(track.stages.count - 1)
-                    )
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundColor(controlLabelColor)
-                    .tint(controlLabelColor)
-                    .frame(width: 118, alignment: .leading)
-
-                    Spacer(minLength: 8)
-
-                    Button(action: {
-                        sequencer.randomizeTrack(trackIndex)
-                    }) {
-                        Text("RANDOM")
-                            .font(.system(size: 9, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(hex: "#DDDDDD"))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(Color(hex: "#2A2A2D"))
-                            .cornerRadius(4)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            ScrollView(.horizontal, showsIndicators: true) {
-                HStack(spacing: 6) {
-                    ForEach(track.stages.indices, id: \.self) { stageIndex in
-                        let stageData = track.stages[stageIndex]
-                        let isSelected = selectedStage == stageIndex
-                        let isPlayhead = sequencer.playheadStagePerTrack[trackIndex] == stageIndex && sequencer.isPlaying
-
-                        VStack(spacing: 4) {
-                            StepVerticalSlider(
-                                value: Binding(
-                                    get: { Double(sequencer.tracks[trackIndex].stages[stageIndex].noteSlot) },
-                                    set: { sequencer.setStageNoteSlot(track: trackIndex, stage: stageIndex, value: Int($0.rounded())) }
-                                ),
-                                range: 0...8,
-                                color: Color(hex: "#4A9EFF")
-                            )
-                            .frame(width: 16, height: 62)
-
-                            Button(action: {
-                                sequencer.selectStage(trackIndex, stageIndex)
-                            }) {
-                                VStack(spacing: 3) {
-                                    Text("\(stageIndex + 1)")
-                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                    Text(sequencer.stageNoteText(track: trackIndex, stage: stageIndex))
-                                        .font(.system(size: 9, weight: .medium, design: .monospaced))
-                                    Text(stageData.stepType.shortLabel)
-                                        .font(.system(size: 8, weight: .medium, design: .monospaced))
-                                }
-                                .foregroundColor(stageTextColor(for: stageData))
-                                .frame(width: 54, height: 52)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .fill(isPlayhead ? Color(hex: "#F39C12") : stageFillColor(for: stageData, isSelected: isSelected))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 4)
-                                                .stroke(isSelected ? Color(hex: "#4A9EFF") : Color.clear, lineWidth: 1)
-                                        )
-                                )
-                            }
-                            .buttonStyle(.plain)
-                        }
                     }
                 }
-            }
 
-            ScrollView(.horizontal, showsIndicators: true) {
-                HStack(spacing: 14) {
-                    Stepper(
-                        "PULSES \(stage.pulses)",
-                        value: Binding(
-                            get: { stage.pulses },
-                            set: { sequencer.setStagePulses(track: trackIndex, stage: selectedStage, value: $0) }
-                        ),
-                        in: 1...8
-                    )
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundColor(controlLabelColor)
-                    .tint(controlLabelColor)
-                    .frame(width: 110, alignment: .leading)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("GATE")
-                            .font(.system(size: 7, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color(hex: "#777777"))
-
-                        Menu {
-                            ForEach(SequencerGateMode.allCases) { mode in
-                                Button(mode.rawValue) {
-                                    sequencer.setStageGateMode(track: trackIndex, stage: selectedStage, value: mode)
-                                }
-                            }
-                        } label: {
-                            menuButtonLabel(text: stage.gateMode.rawValue, width: 76)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .frame(width: 82)
-
-                    Stepper(
-                        "RATCH \(stage.ratchets)",
-                        value: Binding(
-                            get: { stage.ratchets },
-                            set: { sequencer.setStageRatchets(track: trackIndex, stage: selectedStage, value: $0) }
-                        ),
-                        in: 1...8
-                    )
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundColor(controlLabelColor)
-                    .tint(controlLabelColor)
-                    .frame(width: 108, alignment: .leading)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("STEP")
-                            .font(.system(size: 7, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color(hex: "#777777"))
-
-                        Menu {
-                            ForEach(SequencerStepType.allCases) { stepType in
-                                Button(stepType.rawValue) {
-                                    sequencer.setStageStepType(track: trackIndex, stage: selectedStage, value: stepType)
-                                }
-                            }
-                        } label: {
-                            menuButtonLabel(text: stage.stepType.rawValue, width: 80)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .frame(width: 86)
-
-                    Stepper(
-                        "OCT \(stage.octave >= 0 ? "+" : "")\(stage.octave)",
-                        value: Binding(
-                            get: { stage.octave },
-                            set: { sequencer.setStageOctave(track: trackIndex, stage: selectedStage, value: $0) }
-                        ),
-                        in: -2...2
-                    )
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundColor(controlLabelColor)
-                    .tint(controlLabelColor)
-                    .frame(width: 104, alignment: .leading)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("PROB \(Int(stage.probability * 100))%")
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color(hex: "#888888"))
-                        Slider(value: Binding(
-                            get: { stage.probability },
-                            set: { sequencer.setStageProbability(track: trackIndex, stage: selectedStage, value: $0) }
-                        ), in: 0...1)
-                        .tint(Color(hex: "#F39C12"))
-                        .frame(width: 110)
-                    }
-
-                    Toggle(
-                        isOn: Binding(
-                            get: { stage.slide },
-                            set: { sequencer.setStageSlide(track: trackIndex, stage: selectedStage, value: $0) }
-                        )
-                    ) {
-                        Text("SLIDE")
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color(hex: "#888888"))
-                    }
-                    .toggleStyle(.switch)
-                    .scaleEffect(0.8)
-                    .frame(width: 74)
-
-                    Spacer(minLength: 8)
-                }
+                // Context panel for selected step
+                stepContextPanel(
+                    trackIndex: trackIndex,
+                    selectedStage: selectedStage,
+                    stage: stage,
+                    trackColor: trackColor
+                )
             }
         }
         .padding(10)
@@ -514,6 +217,385 @@ struct SequencerView: View {
                 )
         )
     }
+
+    // MARK: - Track Header Row
+
+    @ViewBuilder
+    private func trackHeaderRow(trackIndex: Int, track: SequencerTrack, trackColor: Color) -> some View {
+        HStack(spacing: 8) {
+            // Track name
+            Text(track.name)
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .foregroundColor(trackColor)
+
+            // Mute toggle
+            Button(action: { sequencer.setTrackMuted(trackIndex, !track.muted) }) {
+                Text("M")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundColor(track.muted ? .white : Color(hex: "#555555"))
+                    .frame(width: 20, height: 18)
+                    .background(track.muted ? Color(hex: "#E74C3C") : Color(hex: "#252528"))
+                    .cornerRadius(3)
+            }
+            .buttonStyle(.plain)
+
+            // Output dropdown
+            compactDropdown(
+                label: track.output.rawValue,
+                width: 60,
+                accentColor: trackColor
+            ) {
+                ForEach(SequencerTrackOutput.allCases) { output in
+                    Button(output.rawValue) { sequencer.setTrackOutput(trackIndex, output) }
+                }
+            }
+
+            // Direction dropdown
+            compactDropdown(label: track.direction.rawValue, width: 50) {
+                ForEach(SequencerDirection.allCases) { direction in
+                    Button(direction.rawValue) { sequencer.setTrackDirection(trackIndex, direction) }
+                }
+            }
+
+            // Division dropdown
+            compactDropdown(label: track.division.rawValue, width: 40) {
+                ForEach(SequencerClockDivision.allCases) { division in
+                    Button(division.rawValue) { sequencer.setTrackDivision(trackIndex, division) }
+                }
+            }
+
+            // Transpose
+            compactStepper(
+                label: "TR",
+                value: track.transpose,
+                range: -24...24
+            ) { sequencer.setTrackTranspose(trackIndex, $0) }
+
+            // Velocity
+            compactStepper(
+                label: "VEL",
+                value: track.velocity,
+                range: 1...127
+            ) { sequencer.setTrackVelocity(trackIndex, $0) }
+
+            Spacer()
+
+            // Random button
+            Button(action: { sequencer.randomizeTrack(trackIndex) }) {
+                Image(systemName: "dice")
+                    .font(.system(size: 10))
+                    .foregroundColor(Color(hex: "#888888"))
+                    .frame(width: 24, height: 18)
+                    .background(Color(hex: "#252528"))
+                    .cornerRadius(3)
+            }
+            .buttonStyle(.plain)
+            .help("Randomize track")
+        }
+    }
+
+    // MARK: - Step Column (Slider + Button)
+
+    @ViewBuilder
+    private func stepColumn(
+        trackIndex: Int,
+        stageIndex: Int,
+        track: SequencerTrack,
+        selectedStage: Int,
+        trackColor: Color
+    ) -> some View {
+        let stageData = track.stages[stageIndex]
+        let isSelected = selectedStage == stageIndex
+        let isPlayhead = sequencer.playheadStagePerTrack[trackIndex] == stageIndex && sequencer.isPlaying
+
+        VStack(spacing: 3) {
+            // Taller step slider
+            StepVerticalSlider(
+                value: Binding(
+                    get: { Double(sequencer.tracks[trackIndex].stages[stageIndex].noteSlot) },
+                    set: { sequencer.setStageNoteSlot(track: trackIndex, stage: stageIndex, value: Int($0.rounded())) }
+                ),
+                range: 0...8,
+                color: trackColor
+            )
+            .frame(width: 14, height: 100)  // Taller slider
+
+            // Step button
+            Button(action: { sequencer.selectStage(trackIndex, stageIndex) }) {
+                VStack(spacing: 2) {
+                    Text("\(stageIndex + 1)")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    Text(sequencer.stageNoteText(track: trackIndex, stage: stageIndex))
+                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                    Text(stageData.stepType.shortLabel)
+                        .font(.system(size: 7, weight: .medium, design: .monospaced))
+                }
+                .foregroundColor(stageTextColor(for: stageData))
+                .frame(width: 42, height: 40)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(isPlayhead ? Color(hex: "#F39C12") : stageFillColor(for: stageData, isSelected: isSelected))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(isSelected ? trackColor : Color.clear, lineWidth: 2)
+                        )
+                )
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - Step Context Panel
+
+    @ViewBuilder
+    private func stepContextPanel(
+        trackIndex: Int,
+        selectedStage: Int,
+        stage: SequencerStage,
+        trackColor: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Header
+            HStack {
+                Text("STEP \(selectedStage + 1)")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(trackColor)
+                Text(sequencer.stageNoteText(track: trackIndex, stage: selectedStage))
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(Color(hex: "#AAAAAA"))
+            }
+
+            Divider()
+                .background(Color(hex: "#333333"))
+
+            // Step parameters in a compact grid
+            VStack(spacing: 4) {
+                // Row 1: Pulses + Ratchets
+                HStack(spacing: 8) {
+                    contextStepper(label: "PLS", value: stage.pulses, range: 1...8) {
+                        sequencer.setStagePulses(track: trackIndex, stage: selectedStage, value: $0)
+                    }
+                    contextStepper(label: "RCH", value: stage.ratchets, range: 1...8) {
+                        sequencer.setStageRatchets(track: trackIndex, stage: selectedStage, value: $0)
+                    }
+                }
+
+                // Row 2: Gate + Step Type
+                HStack(spacing: 8) {
+                    contextDropdown(label: "GATE", value: stage.gateMode.rawValue, width: 50) {
+                        ForEach(SequencerGateMode.allCases) { mode in
+                            Button(mode.rawValue) {
+                                sequencer.setStageGateMode(track: trackIndex, stage: selectedStage, value: mode)
+                            }
+                        }
+                    }
+                    contextDropdown(label: "TYPE", value: stage.stepType.rawValue, width: 50) {
+                        ForEach(SequencerStepType.allCases) { stepType in
+                            Button(stepType.rawValue) {
+                                sequencer.setStageStepType(track: trackIndex, stage: selectedStage, value: stepType)
+                            }
+                        }
+                    }
+                }
+
+                // Row 3: Octave + Probability
+                HStack(spacing: 8) {
+                    contextStepper(
+                        label: "OCT",
+                        value: stage.octave,
+                        range: -2...2,
+                        signed: true
+                    ) {
+                        sequencer.setStageOctave(track: trackIndex, stage: selectedStage, value: $0)
+                    }
+
+                    // Probability mini-slider
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("PROB")
+                            .font(.system(size: 7, weight: .medium, design: .monospaced))
+                            .foregroundColor(Color(hex: "#666666"))
+                        HStack(spacing: 2) {
+                            Slider(
+                                value: Binding(
+                                    get: { stage.probability },
+                                    set: { sequencer.setStageProbability(track: trackIndex, stage: selectedStage, value: $0) }
+                                ),
+                                in: 0...1
+                            )
+                            .tint(Color(hex: "#F39C12"))
+                            .frame(width: 40)
+                            Text("\(Int(stage.probability * 100))%")
+                                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                                .foregroundColor(Color(hex: "#888888"))
+                                .frame(width: 28, alignment: .trailing)
+                        }
+                    }
+                }
+
+                // Row 4: Slide toggle
+                HStack {
+                    Text("SLIDE")
+                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                        .foregroundColor(Color(hex: "#666666"))
+                    Spacer()
+                    Toggle("", isOn: Binding(
+                        get: { stage.slide },
+                        set: { sequencer.setStageSlide(track: trackIndex, stage: selectedStage, value: $0) }
+                    ))
+                    .toggleStyle(.switch)
+                    .scaleEffect(0.6)
+                    .frame(width: 40)
+                }
+            }
+        }
+        .padding(8)
+        .frame(width: 140)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color(hex: "#1A1A1D"))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(trackColor.opacity(0.3), lineWidth: 1)
+                )
+        )
+    }
+
+    // MARK: - Helper Views
+
+    @ViewBuilder
+    private func compactDropdown<Content: View>(
+        label: String,
+        width: CGFloat,
+        accentColor: Color = Color(hex: "#888888"),
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        Menu(content: content) {
+            HStack(spacing: 2) {
+                Text(label)
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 6, weight: .bold))
+                    .foregroundColor(accentColor)
+            }
+            .frame(width: width, height: 18)
+            .background(Color(hex: "#252528"))
+            .cornerRadius(3)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func compactStepper(
+        label: String,
+        value: Int,
+        range: ClosedRange<Int>,
+        onChange: @escaping (Int) -> Void
+    ) -> some View {
+        HStack(spacing: 2) {
+            Text(label)
+                .font(.system(size: 7, weight: .medium, design: .monospaced))
+                .foregroundColor(Color(hex: "#555555"))
+
+            Button(action: { if value > range.lowerBound { onChange(value - 1) } }) {
+                Image(systemName: "minus")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(Color(hex: "#666666"))
+                    .frame(width: 14, height: 14)
+            }
+            .buttonStyle(.plain)
+
+            Text("\(value)")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundColor(Color(hex: "#AAAAAA"))
+                .frame(width: 20)
+
+            Button(action: { if value < range.upperBound { onChange(value + 1) } }) {
+                Image(systemName: "plus")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(Color(hex: "#666666"))
+                    .frame(width: 14, height: 14)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2)
+        .background(Color(hex: "#1A1A1D"))
+        .cornerRadius(3)
+    }
+
+    @ViewBuilder
+    private func contextStepper(
+        label: String,
+        value: Int,
+        range: ClosedRange<Int>,
+        signed: Bool = false,
+        onChange: @escaping (Int) -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label)
+                .font(.system(size: 7, weight: .medium, design: .monospaced))
+                .foregroundColor(Color(hex: "#666666"))
+            HStack(spacing: 2) {
+                Button(action: { if value > range.lowerBound { onChange(value - 1) } }) {
+                    Image(systemName: "minus")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(Color(hex: "#888888"))
+                        .frame(width: 16, height: 16)
+                        .background(Color(hex: "#252528"))
+                        .cornerRadius(2)
+                }
+                .buttonStyle(.plain)
+
+                Text(signed ? "\(value >= 0 ? "+" : "")\(value)" : "\(value)")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(hex: "#CCCCCC"))
+                    .frame(width: 24)
+
+                Button(action: { if value < range.upperBound { onChange(value + 1) } }) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(Color(hex: "#888888"))
+                        .frame(width: 16, height: 16)
+                        .background(Color(hex: "#252528"))
+                        .cornerRadius(2)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func contextDropdown<Content: View>(
+        label: String,
+        value: String,
+        width: CGFloat,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label)
+                .font(.system(size: 7, weight: .medium, design: .monospaced))
+                .foregroundColor(Color(hex: "#666666"))
+            Menu(content: content) {
+                HStack(spacing: 2) {
+                    Text(value)
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 6))
+                        .foregroundColor(Color(hex: "#666666"))
+                }
+                .frame(width: width, height: 18)
+                .background(Color(hex: "#252528"))
+                .cornerRadius(3)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - Style Helpers
 
     private func stageFillColor(for stage: SequencerStage, isSelected: Bool) -> Color {
         if isSelected {
@@ -546,23 +628,9 @@ struct SequencerView: View {
             return .white
         }
     }
-
-    private func menuButtonLabel(text: String, width: CGFloat) -> some View {
-        HStack(spacing: 4) {
-            Text(text)
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                .foregroundColor(.white)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-            Image(systemName: "chevron.down")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundColor(Color(hex: "#888888"))
-        }
-        .frame(width: width, height: 20)
-        .background(Color(hex: "#2A2A2D"))
-        .cornerRadius(4)
-    }
 }
+
+// MARK: - Step Vertical Slider
 
 struct StepVerticalSlider: View {
     @Binding var value: Double

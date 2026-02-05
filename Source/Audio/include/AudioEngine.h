@@ -12,6 +12,8 @@
 #include <atomic>
 #include <array>
 #include <memory>
+#include <thread>
+#include <cstring>
 
 // Forward declaration for LadderFilterBase (in global namespace)
 class LadderFilterBase;
@@ -20,6 +22,47 @@ namespace Grainulator {
 
 // Forward declarations
 class PlaitsVoice;
+
+// Multi-channel ring buffer constants
+constexpr int kMultiChannelRingBufferSize = 4096;  // ~85ms @ 48kHz
+constexpr int kNumMixerChannelsForRing = 6;
+constexpr int kRingBufferProcessFrames = 256;      // Chunk size for background processing
+
+/// Lock-free ring buffer for multi-channel audio
+/// Uses single write index (producer writes all channels together)
+/// and per-channel read indices (callbacks fire independently)
+class MultiChannelRingBuffer {
+public:
+    MultiChannelRingBuffer();
+
+    // Producer (background thread) - writes all channels for a chunk
+    void writeChannel(int channelIndex, const float* left, const float* right, int numFrames);
+    void advanceWriteIndex(int numFrames);
+    bool canWrite(int numFrames) const;
+
+    // Consumer (audio callbacks) - reads one channel at a time
+    void readChannel(int channelIndex, float* left, float* right, int numFrames);
+    bool canRead(int channelIndex, int numFrames) const;
+
+    // Monitoring
+    size_t getReadableFrames(int channelIndex) const;
+    size_t getWritableFrames() const;
+
+    // Reset all indices and clear buffers
+    void reset();
+
+private:
+    // Stereo buffers for each channel
+    float m_bufferL[kNumMixerChannelsForRing][kMultiChannelRingBufferSize];
+    float m_bufferR[kNumMixerChannelsForRing][kMultiChannelRingBufferSize];
+
+    // Single write index (all channels written together by producer)
+    std::atomic<size_t> m_writeIndex{0};
+
+    // Per-channel read indices (callbacks fire independently)
+    std::atomic<size_t> m_readIndex[kNumMixerChannelsForRing];
+};
+
 class GranularVoice;
 class ReelBuffer;
 class RingsVoice;
@@ -33,6 +76,7 @@ constexpr int kNumLooperVoices = 2;
 constexpr int kMaxBufferSize = 2048;
 constexpr int kNumPlaitsVoices = 8;  // Polyphony
 constexpr int kNumClockOutputs = 8;  // Master clock outputs (Pam's style)
+constexpr int kNumLegacyOutputBuses = 3; // 0=dry, 1=send A, 2=send B
 
 // Audio processing callback type
 typedef void (*AudioCallback)(float** outputBuffers, int numChannels, int numFrames, void* userData);
@@ -56,6 +100,14 @@ public:
 
     // Audio processing
     void process(float** inputBuffers, float** outputBuffers, int numChannels, int numFrames);
+
+    // Multi-channel output for AU plugin hosting
+    // Outputs 6 separate stereo channels (12 buffers total) without mixing or effects
+    // Buffer layout: [ch0_L, ch0_R, ch1_L, ch1_R, ch2_L, ch2_R, ch3_L, ch3_R, ch4_L, ch4_R, ch5_L, ch5_R]
+    // Channel mapping: 0=Plaits, 1=Rings, 2=Granular1, 3=Looper1, 4=Looper2, 5=Granular4
+    void processMultiChannel(float** channelBuffers, int numFrames);
+    void renderAndReadMultiChannel(int channelIndex, int64_t sampleTime, float* left, float* right, int numFrames);
+    void renderAndReadLegacyBus(int busIndex, int64_t sampleTime, float* left, float* right, int numFrames);
 
     // Parameter control
     enum class ParameterID {
@@ -198,6 +250,7 @@ public:
     // Channel metering (returns peak level 0-1)
     float getChannelLevel(int channelIndex) const;  // 0=Plaits, 1=Rings, 2-5=tracks
     float getMasterLevel(int channel) const;        // 0=left, 1=right
+    void setChannelSendLevel(int channelIndex, int sendIndex, float level);
 
     // Trigger control (legacy - uses voice 0)
     void triggerPlaits(bool state);
@@ -371,16 +424,24 @@ private:
     size_t m_allpassLengths[kNumAllpasses];
     size_t m_allpassPos[kNumAllpasses];
 
-    // Effects send buffer
-    float* m_sendBufferL;
-    float* m_sendBufferR;
+    // Effects send buffers (A and B)
+    float* m_sendBufferAL;
+    float* m_sendBufferAR;
+    float* m_sendBufferBL;
+    float* m_sendBufferBR;
+    bool m_externalSendRoutingEnabled{false};
+    float m_lastSendBusAL[kMaxBufferSize]{};
+    float m_lastSendBusAR[kMaxBufferSize]{};
+    float m_lastSendBusBL[kMaxBufferSize]{};
+    float m_lastSendBusBR[kMaxBufferSize]{};
 
     // Per-channel mixer state (0=Plaits, 1=Rings, 2-5=Track voices)
     static constexpr int kNumMixerChannels = 6;
     static constexpr int kMaxChannelDelaySamples = 2400; // 50ms @ 48kHz
     float m_channelGain[kNumMixerChannels];
     float m_channelPan[kNumMixerChannels];
-    float m_channelSend[kNumMixerChannels];
+    float m_channelSendA[kNumMixerChannels];
+    float m_channelSendB[kNumMixerChannels];
     int m_channelDelaySamples[kNumMixerChannels];
     int m_channelDelayWritePos[kNumMixerChannels];
     std::array<std::array<float, kMaxChannelDelaySamples + 1>, kNumMixerChannels> m_channelDelayBufferL;
@@ -416,10 +477,12 @@ private:
     // Voice allocation helper
     int allocateVoice(int note);
 
-    // Lock-free queue state for sequencer-scheduled events (single producer, single consumer).
+    // Scheduled event queue state.
+    // Producers are serialized with m_scheduledWriteLock; consumer is the audio thread.
     std::array<ScheduledNoteEvent, kScheduledEventCapacity> m_scheduledEvents;
     std::atomic<uint32_t> m_scheduledReadIndex;
     std::atomic<uint32_t> m_scheduledWriteIndex;
+    std::atomic_flag m_scheduledWriteLock = ATOMIC_FLAG_INIT;
 
     // Master clock state (Pam's Pro Workout-style)
     struct ClockOutputState {
@@ -483,6 +546,35 @@ private:
         16.0f          // x16
     };
 
+    // Multi-channel ring buffer processing (for AU plugin hosting)
+    MultiChannelRingBuffer m_ringBuffer;
+    std::atomic<bool> m_multiChannelProcessingActive{false};
+    std::thread m_processingThread;
+    float m_cachedMultiChannelL[kNumMixerChannelsForRing][kMaxBufferSize]{};
+    float m_cachedMultiChannelR[kNumMixerChannelsForRing][kMaxBufferSize]{};
+    std::atomic<int64_t> m_cachedBlockSampleTime{-1};
+    std::atomic<int> m_cachedBlockFrames{0};
+    std::atomic<bool> m_cachedRenderInProgress{false};
+    std::atomic<int64_t> m_renderingBlockSampleTime{-1};
+    std::atomic<int> m_renderingBlockFrames{0};
+    float m_cachedLegacyBusL[kNumLegacyOutputBuses][kMaxBufferSize]{};
+    float m_cachedLegacyBusR[kNumLegacyOutputBuses][kMaxBufferSize]{};
+    std::atomic<int64_t> m_cachedLegacyBlockSampleTime{-1};
+    std::atomic<int> m_cachedLegacyBlockFrames{0};
+    std::atomic<bool> m_cachedLegacyRenderInProgress{false};
+    std::atomic<int64_t> m_renderingLegacyBlockSampleTime{-1};
+    std::atomic<int> m_renderingLegacyBlockFrames{0};
+
+    void multiChannelProcessingLoop();
+
+public:
+    // Ring buffer control (called from Swift)
+    void startMultiChannelProcessing();
+    void stopMultiChannelProcessing();
+    void readChannelFromRingBuffer(int channelIndex, float* left, float* right, int numFrames);
+    size_t getRingBufferReadableFrames(int channelIndex) const;
+
+private:
     // Prevent copying
     AudioEngine(const AudioEngine&) = delete;
     AudioEngine& operator=(const AudioEngine&) = delete;

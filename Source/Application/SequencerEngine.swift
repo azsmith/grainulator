@@ -539,6 +539,7 @@ final class MetropolixSequencer: ObservableObject {
         }
     }
 
+    private var debugLookaheadCounter = 0
     private func scheduleLookahead() {
         guard isPlaying else { return }
         guard let audioEngine else { return }
@@ -546,6 +547,12 @@ final class MetropolixSequencer: ObservableObject {
         let nowSample = audioEngine.currentSampleTime()
         let lookaheadSamples = secondsToSamples(schedulerLookaheadSeconds)
         let horizonSample = nowSample &+ lookaheadSamples
+
+        // Debug: log occasionally
+        debugLookaheadCounter += 1
+        if debugLookaheadCounter <= 5 || debugLookaheadCounter % 100 == 0 {
+            print("[Sequencer] lookahead: now=\(nowSample) horizon=\(horizonSample) nextPulse[0]=\(runtimes[0].nextPulseSample)")
+        }
 
         while true {
             var earliestSample: UInt64 = UInt64.max
@@ -937,20 +944,37 @@ final class MetropolixSequencer: ObservableObject {
         case .both:
             let plaitsSample = compensatedSampleTime(base: sampleTime, for: .plaits)
             let ringsSample = compensatedSampleTime(base: sampleTime, for: .rings)
-            emitScheduledNoteOn(
-                note: note,
-                velocity: velocity,
-                sampleTime: ringsSample,
-                target: .rings,
-                dedupKeys: &dedupKeys
-            )
-            emitScheduledNoteOn(
-                note: note,
-                velocity: velocity,
-                sampleTime: plaitsSample,
-                target: .plaits,
-                dedupKeys: &dedupKeys
-            )
+            if ringsSample <= plaitsSample {
+                emitScheduledNoteOn(
+                    note: note,
+                    velocity: velocity,
+                    sampleTime: ringsSample,
+                    target: .rings,
+                    dedupKeys: &dedupKeys
+                )
+                emitScheduledNoteOn(
+                    note: note,
+                    velocity: velocity,
+                    sampleTime: plaitsSample,
+                    target: .plaits,
+                    dedupKeys: &dedupKeys
+                )
+            } else {
+                emitScheduledNoteOn(
+                    note: note,
+                    velocity: velocity,
+                    sampleTime: plaitsSample,
+                    target: .plaits,
+                    dedupKeys: &dedupKeys
+                )
+                emitScheduledNoteOn(
+                    note: note,
+                    velocity: velocity,
+                    sampleTime: ringsSample,
+                    target: .rings,
+                    dedupKeys: &dedupKeys
+                )
+            }
         }
     }
 
@@ -971,8 +995,13 @@ final class MetropolixSequencer: ObservableObject {
         case .both:
             let plaitsSample = compensatedSampleTime(base: sampleTime, for: .plaits)
             let ringsSample = compensatedSampleTime(base: sampleTime, for: .rings)
-            audioEngine?.scheduleNoteOff(note: note, sampleTime: ringsSample, target: .rings)
-            audioEngine?.scheduleNoteOff(note: note, sampleTime: plaitsSample, target: .plaits)
+            if ringsSample <= plaitsSample {
+                audioEngine?.scheduleNoteOff(note: note, sampleTime: ringsSample, target: .rings)
+                audioEngine?.scheduleNoteOff(note: note, sampleTime: plaitsSample, target: .plaits)
+            } else {
+                audioEngine?.scheduleNoteOff(note: note, sampleTime: plaitsSample, target: .plaits)
+                audioEngine?.scheduleNoteOff(note: note, sampleTime: ringsSample, target: .rings)
+            }
         }
     }
 

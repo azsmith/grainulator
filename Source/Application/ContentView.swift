@@ -10,8 +10,29 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var audioEngine: AudioEngineWrapper
+    @EnvironmentObject var mixerState: MixerState
 
     var body: some View {
+        Group {
+            if appState.useTabLayout {
+                // New tab-based layout (Phase 3)
+                TabBasedLayoutView()
+            } else {
+                // Classic layout
+                classicLayout
+            }
+        }
+        .onAppear {
+            audioEngine.start()
+        }
+        .onDisappear {
+            audioEngine.stop()
+        }
+    }
+
+    // MARK: - Classic Layout
+
+    private var classicLayout: some View {
         ZStack {
             Color(hex: "#1A1A1D")
                 .ignoresSafeArea()
@@ -40,25 +61,26 @@ struct ContentView: View {
                 Divider()
                     .background(Color(hex: "#333333"))
 
-                // Mixer and Effects at the bottom
-                HStack(spacing: 0) {
-                    MixerView()
+                // Mixer section - conditionally use new or legacy mixer
+                if appState.useNewMixer {
+                    // New modular mixer with vintage analog components
+                    NewMixerView(mixerState: mixerState)
+                        .frame(height: 280)
+                } else {
+                    // Legacy mixer and effects
+                    HStack(spacing: 0) {
+                        MixerView()
 
-                    Rectangle()
-                        .fill(Color(hex: "#333333"))
-                        .frame(width: 1)
+                        Rectangle()
+                            .fill(Color(hex: "#333333"))
+                            .frame(width: 1)
 
-                    EffectsView()
-                        .frame(width: 520)
+                        AUSendEffectsView()
+                            .frame(width: 520)
+                    }
+                    .frame(height: 200)
                 }
-                .frame(height: 200)
             }
-        }
-        .onAppear {
-            audioEngine.start()
-        }
-        .onDisappear {
-            audioEngine.stop()
         }
     }
 }
@@ -86,6 +108,57 @@ struct StatusBarView: View {
             }
 
             Spacer()
+
+            // Layout mode toggles
+            HStack(spacing: 8) {
+                // Tab layout toggle
+                Button(action: { appState.useTabLayout.toggle() }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: appState.useTabLayout ? "rectangle.split.3x1" : "square.stack")
+                            .font(.system(size: 12))
+                        Text(appState.useTabLayout ? "Tabs" : "Stack")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    }
+                    .foregroundColor(appState.useTabLayout ? ColorPalette.ledBlue : Color(hex: "#888888"))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(appState.useTabLayout ? ColorPalette.ledBlue.opacity(0.2) : Color.clear)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(appState.useTabLayout ? ColorPalette.ledBlue : Color(hex: "#555555"), lineWidth: 1)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Toggle tab-based layout")
+
+                // Pro mixer toggle (only visible in classic layout)
+                if !appState.useTabLayout {
+                    Button(action: { appState.useNewMixer.toggle() }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: appState.useNewMixer ? "slider.horizontal.3" : "slider.horizontal.2.square")
+                                .font(.system(size: 12))
+                            Text(appState.useNewMixer ? "Pro" : "Classic")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        }
+                        .foregroundColor(appState.useNewMixer ? ColorPalette.accentMaster : Color(hex: "#888888"))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(appState.useNewMixer ? ColorPalette.accentMaster.opacity(0.2) : Color.clear)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .stroke(appState.useNewMixer ? ColorPalette.accentMaster : Color(hex: "#555555"), lineWidth: 1)
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Toggle between classic and Pro mixer")
+                }
+            }
 
             // CPU and latency monitoring
             HStack(spacing: 20) {

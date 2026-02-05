@@ -3,106 +3,172 @@
 //  Grainulator
 //
 //  Pam's Pro Workout-inspired master clock interface.
-//  Compact display with 8 configurable clock/LFO outputs.
+//  Compact display with 8 configurable clock/LFO outputs in 4x2 grid.
 //
 
 import SwiftUI
 
-struct MasterClockView: View {
-    @EnvironmentObject var masterClock: MasterClock
+// MARK: - Draggable BPM View
+
+struct DraggableBPMView: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let accentColor: Color
+
+    @State private var isEditing = false
+    @State private var editText = ""
+    @State private var dragStartValue: Double = 0
+    @State private var isDragging = false
 
     var body: some View {
-        VStack(spacing: 12) {
+        ZStack {
+            if isEditing {
+                // Text input mode
+                TextField("", text: $editText)
+                    .font(.system(size: 18, weight: .bold, design: .monospaced))
+                    .foregroundColor(accentColor)
+                    .multilineTextAlignment(.center)
+                    .frame(width: 70, height: 36)
+                    .background(Color(hex: "#1A1A1D"))
+                    .cornerRadius(4)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(accentColor, lineWidth: 2)
+                    )
+                    .onSubmit {
+                        if let newValue = Double(editText) {
+                            value = min(max(newValue, range.lowerBound), range.upperBound)
+                        }
+                        isEditing = false
+                    }
+                    .onAppear {
+                        editText = String(format: "%.0f", value)
+                    }
+            } else {
+                // Display mode - draggable
+                Text(String(format: "%.0f", value))
+                    .font(.system(size: 18, weight: .bold, design: .monospaced))
+                    .foregroundColor(isDragging ? .white : accentColor)
+                    .frame(width: 70, height: 36)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(isDragging ? accentColor.opacity(0.3) : Color(hex: "#1A1A1D"))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(accentColor.opacity(0.5), lineWidth: 1)
+                    )
+                    .gesture(
+                        DragGesture(minimumDistance: 1)
+                            .onChanged { gesture in
+                                if !isDragging {
+                                    isDragging = true
+                                    dragStartValue = value
+                                }
+                                // Vertical drag: up = increase, down = decrease
+                                let sensitivity: Double = NSEvent.modifierFlags.contains(.shift) ? 0.1 : 0.5
+                                let delta = -gesture.translation.height * sensitivity
+                                value = min(max(dragStartValue + delta, range.lowerBound), range.upperBound)
+                            }
+                            .onEnded { _ in
+                                isDragging = false
+                            }
+                    )
+                    .onTapGesture(count: 2) {
+                        isEditing = true
+                    }
+            }
+        }
+        .help("Drag up/down to adjust BPM, double-click to type")
+    }
+}
+
+// MARK: - Master Clock View
+
+struct MasterClockView: View {
+    @EnvironmentObject var masterClock: MasterClock
+    @EnvironmentObject var sequencer: MetropolixSequencer
+
+    var body: some View {
+        VStack(spacing: 10) {
             header
             outputGrid
         }
-        .padding(16)
+        .padding(12)
         .background(Color(hex: "#0F0F11"))
         .cornerRadius(8)
         .environment(\.colorScheme, .dark)
     }
 
-    // MARK: - Header
+    // MARK: - Header (Compact)
 
     private var header: some View {
-        HStack(spacing: 14) {
-            Text("MASTER CLOCK")
-                .font(.system(size: 16, weight: .bold, design: .monospaced))
+        HStack(spacing: 10) {
+            // Title
+            Text("M CLOCK")
+                .font(.system(size: 14, weight: .bold, design: .monospaced))
                 .foregroundColor(Color(hex: "#9B59B6"))
 
             // Play/Stop button
-            Button(action: {
-                masterClock.toggle()
-            }) {
-                Text(masterClock.isRunning ? "STOP" : "RUN")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(masterClock.isRunning ? Color(hex: "#1A1A1D") : .white)
-                    .frame(width: 54, height: 28)
-                    .background(masterClock.isRunning ? Color(hex: "#2ECC71") : Color(hex: "#2A2A2D"))
-                    .cornerRadius(4)
-            }
-            .buttonStyle(.plain)
+            Text(sequencer.isPlaying ? "STOP" : "RUN")
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundColor(sequencer.isPlaying ? Color(hex: "#1A1A1D") : .white)
+                .frame(width: 48, height: 28)
+                .background(sequencer.isPlaying ? Color(hex: "#2ECC71") : Color(hex: "#2A2A2D"))
+                .cornerRadius(4)
+                .contentShape(RoundedRectangle(cornerRadius: 4))
+                .onTapGesture {
+                    if sequencer.isPlaying {
+                        sequencer.stop()
+                    } else {
+                        sequencer.start()
+                    }
+                }
 
-            // BPM control
-            HStack(spacing: 6) {
-                Text("BPM")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color(hex: "#888888"))
+            // Draggable BPM
+            DraggableBPMView(
+                value: $masterClock.bpm,
+                range: 10...330,
+                accentColor: Color(hex: "#9B59B6")
+            )
 
-                Slider(
-                    value: Binding(
-                        get: { masterClock.bpm },
-                        set: { masterClock.bpm = $0 }
-                    ),
-                    in: 10...330,
-                    step: 1
-                )
-                .tint(Color(hex: "#9B59B6"))
-                .frame(width: 140)
-
-                Text(String(format: "%.0f", masterClock.bpm))
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    .foregroundColor(Color(hex: "#9B59B6"))
-                    .frame(width: 40, alignment: .trailing)
-            }
-
-            // Swing control
-            HStack(spacing: 6) {
+            // Swing control (compact)
+            HStack(spacing: 4) {
                 Text("SWG")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color(hex: "#888888"))
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundColor(Color(hex: "#666666"))
 
                 Slider(
                     value: $masterClock.swing,
                     in: 0...1
                 )
                 .tint(Color(hex: "#9B59B6"))
-                .frame(width: 60)
+                .frame(width: 50)
 
                 Text(String(format: "%.0f%%", masterClock.swing * 100))
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color(hex: "#AAAAAA"))
-                    .frame(width: 32, alignment: .trailing)
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundColor(Color(hex: "#888888"))
+                    .frame(width: 28, alignment: .trailing)
             }
 
             Spacer()
         }
     }
 
-    // MARK: - Output Grid
+    // MARK: - Output Grid (4x2)
 
     private var outputGrid: some View {
-        HStack(spacing: 8) {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
             ForEach(0..<8) { index in
-                ClockOutputCell(output: masterClock.outputs[index], index: index)
+                CompactClockOutputCell(output: masterClock.outputs[index], index: index)
             }
         }
     }
 }
 
-// MARK: - Clock Output Cell
+// MARK: - Compact Clock Output Cell (Square)
 
-struct ClockOutputCell: View {
+struct CompactClockOutputCell: View {
     @ObservedObject var output: ClockOutput
     let index: Int
 
@@ -112,7 +178,6 @@ struct ClockOutputCell: View {
         if output.muted {
             return Color(hex: "#444444")
         }
-        // Color based on current output value
         let value = abs(output.currentValue)
         if value > 0.8 {
             return Color(hex: "#E74C3C")
@@ -125,77 +190,69 @@ struct ClockOutputCell: View {
     }
 
     var body: some View {
-        VStack(spacing: 4) {
-            // Output number
-            Text("\(index + 1)")
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundColor(Color(hex: "#888888"))
+        VStack(spacing: 3) {
+            // Top row: Index + Activity indicator
+            HStack(spacing: 4) {
+                // Index badge
+                Text("\(index + 1)")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(hex: "#888888"))
+                    .frame(width: 14, height: 14)
+                    .background(Color(hex: "#252528"))
+                    .cornerRadius(3)
 
-            // Activity indicator (shows current output value)
-            ZStack {
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(Color(hex: "#1A1A1D"))
-                    .frame(width: 40, height: 40)
+                // Activity indicator
+                ZStack {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color(hex: "#1A1A1D"))
+                        .frame(width: 32, height: 32)
 
-                // Level meter
-                GeometryReader { geo in
-                    let normalizedValue = (output.currentValue + 1) / 2 // Convert -1..1 to 0..1
-                    Rectangle()
-                        .fill(levelColor)
-                        .frame(height: geo.size.height * CGFloat(normalizedValue))
-                        .frame(maxHeight: .infinity, alignment: .bottom)
+                    GeometryReader { geo in
+                        let normalizedValue = (output.currentValue + 1) / 2
+                        Rectangle()
+                            .fill(levelColor)
+                            .frame(height: geo.size.height * CGFloat(normalizedValue))
+                            .frame(maxHeight: .infinity, alignment: .bottom)
+                    }
+                    .frame(width: 28, height: 28)
+                    .clipShape(RoundedRectangle(cornerRadius: 2))
+
+                    // Mode overlay
+                    Text(output.mode == .clock ? "CLK" : "LFO")
+                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.6))
                 }
-                .frame(width: 36, height: 36)
-                .clipShape(RoundedRectangle(cornerRadius: 2))
-
-                // Mode indicator overlay
-                Text(output.mode == .clock ? "CLK" : "LFO")
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.7))
-            }
-            .frame(width: 40, height: 40)
-            .onTapGesture {
-                showingConfig = true
+                .frame(width: 32, height: 32)
             }
 
-            // Division/Waveform label with slow indicator
-            HStack(spacing: 2) {
+            // Bottom row: Division + Mute
+            HStack(spacing: 3) {
+                // Division/Waveform
                 Text(output.mode == .clock ? output.division.rawValue : output.waveform.rawValue)
                     .font(.system(size: 8, weight: .medium, design: .monospaced))
                     .foregroundColor(Color(hex: "#AAAAAA"))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                if output.mode == .lfo && output.slowMode {
-                    Text("S")
-                        .font(.system(size: 6, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color(hex: "#9B59B6"))
+                // Mute button
+                Button(action: { output.muted.toggle() }) {
+                    Text("M")
+                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .foregroundColor(output.muted ? Color(hex: "#E74C3C") : Color(hex: "#555555"))
+                        .frame(width: 16, height: 14)
+                        .background(output.muted ? Color(hex: "#E74C3C").opacity(0.2) : Color.clear)
+                        .cornerRadius(2)
                 }
+                .buttonStyle(.plain)
             }
-            .frame(width: 40)
-            .lineLimit(1)
-
-            // Destination label
-            Text(output.destination.rawValue)
-                .font(.system(size: 7, weight: .medium, design: .monospaced))
-                .foregroundColor(output.destination == .none ? Color(hex: "#555555") : Color(hex: "#9B59B6"))
-                .frame(width: 40)
-                .lineLimit(1)
-
-            // Mute button
-            Button(action: {
-                output.muted.toggle()
-            }) {
-                Text("M")
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundColor(output.muted ? Color(hex: "#E74C3C") : Color(hex: "#555555"))
-                    .frame(width: 20, height: 16)
-                    .background(output.muted ? Color(hex: "#E74C3C").opacity(0.2) : Color.clear)
-                    .cornerRadius(2)
-            }
-            .buttonStyle(.plain)
         }
         .padding(6)
+        .frame(minWidth: 60, minHeight: 60)
         .background(Color(hex: "#1A1A1D"))
         .cornerRadius(6)
+        .onTapGesture {
+            showingConfig = true
+        }
         .popover(isPresented: $showingConfig) {
             ClockOutputConfigView(output: output, index: index)
         }
@@ -261,7 +318,7 @@ struct ClockOutputConfigView: View {
                     .frame(width: 100)
                 }
 
-                // Slow/Fast toggle (applies /4 multiplier in slow mode)
+                // Slow/Fast toggle
                 HStack {
                     Text("Speed")
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -359,7 +416,7 @@ struct ClockOutputConfigView: View {
 #Preview {
     MasterClockView()
         .environmentObject(MasterClock())
-        .frame(width: 600)
+        .frame(width: 400)
         .padding()
         .background(Color(hex: "#0A0A0B"))
 }

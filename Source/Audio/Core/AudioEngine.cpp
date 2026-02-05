@@ -26,6 +26,13 @@
 #include <cstring>
 #include <cmath>
 #include <algorithm>
+#include <chrono>
+#include <thread>
+#include <vector>
+
+#if defined(__APPLE__)
+#include <pthread.h>
+#endif
 
 namespace Grainulator {
 
@@ -86,8 +93,10 @@ AudioEngine::AudioEngine()
     , m_tapeToneL(0.0f)
     , m_tapeToneR(0.0f)
     , m_tapeNoiseState(0x12345678u)
-    , m_sendBufferL(nullptr)
-    , m_sendBufferR(nullptr)
+    , m_sendBufferAL(nullptr)
+    , m_sendBufferAR(nullptr)
+    , m_sendBufferBL(nullptr)
+    , m_sendBufferBR(nullptr)
     , m_scheduledReadIndex(0)
     , m_scheduledWriteIndex(0)
 {
@@ -120,7 +129,8 @@ AudioEngine::AudioEngine()
     for (int i = 0; i < kNumMixerChannels; ++i) {
         m_channelGain[i] = 1.0f;  // Unity gain
         m_channelPan[i] = 0.0f;   // Center
-        m_channelSend[i] = 0.0f;
+        m_channelSendA[i] = 0.0f;
+        m_channelSendB[i] = 0.0f;
         m_channelDelaySamples[i] = 0;
         m_channelDelayWritePos[i] = 0;
         m_channelDelayBufferL[i].fill(0.0f);
@@ -185,6 +195,17 @@ bool AudioEngine::initialize(int sampleRate, int bufferSize) {
     m_sampleRate = sampleRate;
     m_bufferSize = bufferSize;
     m_currentSampleTime.store(0, std::memory_order_relaxed);
+    m_cachedBlockSampleTime.store(-1, std::memory_order_relaxed);
+    m_cachedBlockFrames.store(0, std::memory_order_relaxed);
+    m_cachedRenderInProgress.store(false, std::memory_order_relaxed);
+    m_renderingBlockSampleTime.store(-1, std::memory_order_relaxed);
+    m_renderingBlockFrames.store(0, std::memory_order_relaxed);
+    m_cachedLegacyBlockSampleTime.store(-1, std::memory_order_relaxed);
+    m_cachedLegacyBlockFrames.store(0, std::memory_order_relaxed);
+    m_cachedLegacyRenderInProgress.store(false, std::memory_order_relaxed);
+    m_renderingLegacyBlockSampleTime.store(-1, std::memory_order_relaxed);
+    m_renderingLegacyBlockFrames.store(0, std::memory_order_relaxed);
+    m_externalSendRoutingEnabled = false;
     m_scheduledReadIndex.store(0, std::memory_order_relaxed);
     m_scheduledWriteIndex.store(0, std::memory_order_relaxed);
 
@@ -243,6 +264,8 @@ void AudioEngine::shutdown() {
         return;
     }
 
+    stopMultiChannelProcessing();
+
     // Cleanup Plaits voices
     for (int i = 0; i < kNumPlaitsVoices; ++i) {
         m_plaitsVoices[i].reset();
@@ -283,6 +306,17 @@ void AudioEngine::shutdown() {
 
     m_scheduledReadIndex.store(0, std::memory_order_relaxed);
     m_scheduledWriteIndex.store(0, std::memory_order_relaxed);
+    m_cachedBlockSampleTime.store(-1, std::memory_order_relaxed);
+    m_cachedBlockFrames.store(0, std::memory_order_relaxed);
+    m_cachedRenderInProgress.store(false, std::memory_order_relaxed);
+    m_renderingBlockSampleTime.store(-1, std::memory_order_relaxed);
+    m_renderingBlockFrames.store(0, std::memory_order_relaxed);
+    m_cachedLegacyBlockSampleTime.store(-1, std::memory_order_relaxed);
+    m_cachedLegacyBlockFrames.store(0, std::memory_order_relaxed);
+    m_cachedLegacyRenderInProgress.store(false, std::memory_order_relaxed);
+    m_renderingLegacyBlockSampleTime.store(-1, std::memory_order_relaxed);
+    m_renderingLegacyBlockFrames.store(0, std::memory_order_relaxed);
+    m_externalSendRoutingEnabled = false;
 
     m_initialized.store(false);
 }
@@ -384,17 +418,23 @@ void AudioEngine::noteOffTarget(int note, uint8_t targetMask) {
 }
 
 bool AudioEngine::enqueueScheduledEvent(const ScheduledNoteEvent& event) {
+    while (m_scheduledWriteLock.test_and_set(std::memory_order_acquire)) {
+        // UI/control thread only; tiny spin is acceptable and keeps audio thread lock-free.
+    }
+
     const uint32_t write = m_scheduledWriteIndex.load(std::memory_order_relaxed);
     const uint32_t nextWrite = (write + 1) % kScheduledEventCapacity;
     const uint32_t read = m_scheduledReadIndex.load(std::memory_order_acquire);
 
     if (nextWrite == read) {
         // Queue full: drop newest event to avoid blocking the audio thread.
+        m_scheduledWriteLock.clear(std::memory_order_release);
         return false;
     }
 
     m_scheduledEvents[write] = event;
     m_scheduledWriteIndex.store(nextWrite, std::memory_order_release);
+    m_scheduledWriteLock.clear(std::memory_order_release);
     return true;
 }
 
@@ -436,8 +476,12 @@ void AudioEngine::scheduleNoteOffTarget(int note, uint64_t sampleTime, uint8_t t
 }
 
 void AudioEngine::clearScheduledNotes() {
-    m_scheduledReadIndex.store(0, std::memory_order_relaxed);
-    m_scheduledWriteIndex.store(0, std::memory_order_relaxed);
+    while (m_scheduledWriteLock.test_and_set(std::memory_order_acquire)) {
+    }
+    // Consume everything currently queued.
+    const uint32_t write = m_scheduledWriteIndex.load(std::memory_order_relaxed);
+    m_scheduledReadIndex.store(write, std::memory_order_release);
+    m_scheduledWriteLock.clear(std::memory_order_release);
 }
 
 uint64_t AudioEngine::getCurrentSampleTime() const {
@@ -445,10 +489,26 @@ uint64_t AudioEngine::getCurrentSampleTime() const {
 }
 
 void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numChannels, int numFrames) {
-    if (!m_initialized.load() || numFrames > kMaxBufferSize) {
-        // Not initialized or buffer too large - output silence
+    if (!m_initialized.load()) {
+        // Not initialized - output silence
         for (int ch = 0; ch < numChannels; ++ch) {
             std::memset(outputBuffers[ch], 0, numFrames * sizeof(float));
+        }
+        return;
+    }
+
+    if (numFrames > kMaxBufferSize) {
+        // Hosts can request larger render quanta. Process in fixed-size chunks so
+        // timing/sample counters continue to advance instead of returning silence.
+        int frameOffset = 0;
+        while (frameOffset < numFrames) {
+            const int chunkFrames = std::min(kMaxBufferSize, numFrames - frameOffset);
+            std::vector<float*> chunkOutputs(static_cast<size_t>(numChannels), nullptr);
+            for (int ch = 0; ch < numChannels; ++ch) {
+                chunkOutputs[static_cast<size_t>(ch)] = outputBuffers[ch] + frameOffset;
+            }
+            process(inputBuffers, chunkOutputs.data(), numChannels, chunkFrames);
+            frameOffset += chunkFrames;
         }
         return;
     }
@@ -461,17 +521,13 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
     const uint64_t bufferEndSample = bufferStartSample + static_cast<uint64_t>(numFrames);
 
     // Pop all queued note events that fall within this buffer.
-    // NOTE: Events may be enqueued out of chronological order (e.g., noteOn for track1,
-    // noteOff for track1, noteOn for track2). We must read ALL due events, not break early.
+    // Events can arrive out-of-order (e.g., different tracks scheduling future note-offs),
+    // so collect due events and keep future events for later.
     std::array<ScheduledNoteEvent, kScheduledEventCapacity> dueEvents{};
     int dueEventCount = 0;
 
-    // First, collect all events that are due (sampleTime < bufferEndSample)
-    // We need to scan past future events to find all due events
     uint32_t read = m_scheduledReadIndex.load(std::memory_order_relaxed);
     const uint32_t write = m_scheduledWriteIndex.load(std::memory_order_acquire);
-
-    // Temporary storage for events we need to keep (not yet due)
     std::array<ScheduledNoteEvent, kScheduledEventCapacity> futureEvents{};
     int futureEventCount = 0;
 
@@ -479,14 +535,12 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
         const ScheduledNoteEvent event = m_scheduledEvents[read];
 
         if (event.sampleTime < bufferEndSample) {
-            // Event is due - add to dueEvents
             dueEvents[dueEventCount] = event;
             if (dueEvents[dueEventCount].sampleTime < bufferStartSample) {
                 dueEvents[dueEventCount].sampleTime = bufferStartSample;
             }
             ++dueEventCount;
         } else {
-            // Event is in the future - keep for later
             futureEvents[futureEventCount] = event;
             ++futureEventCount;
         }
@@ -494,15 +548,12 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
         read = (read + 1) % kScheduledEventCapacity;
     }
 
-    // Update read index to consume all events we examined
     m_scheduledReadIndex.store(read, std::memory_order_release);
 
-    // Re-enqueue future events (they need to be processed in a later buffer)
     for (int i = 0; i < futureEventCount; ++i) {
         enqueueScheduledEvent(futureEvents[i]);
     }
 
-    // Sort due events by sampleTime for correct processing order
     std::sort(dueEvents.begin(), dueEvents.begin() + dueEventCount,
         [](const ScheduledNoteEvent& a, const ScheduledNoteEvent& b) {
             return a.sampleTime < b.sampleTime;
@@ -521,6 +572,10 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
     float masterPeakL = 0.0f;
     float masterPeakR = 0.0f;
     int totalActiveGrains = 0;
+    std::memset(m_lastSendBusAL, 0, numFrames * sizeof(float));
+    std::memset(m_lastSendBusAR, 0, numFrames * sizeof(float));
+    std::memset(m_lastSendBusBL, 0, numFrames * sizeof(float));
+    std::memset(m_lastSendBusBR, 0, numFrames * sizeof(float));
 
     auto renderChunk = [&](int frameOffset, int frameCount) {
         if (frameCount <= 0) return;
@@ -549,8 +604,10 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
         // Clear main processing and send buffers for this chunk.
         std::memset(m_processingBuffer[0], 0, frameCount * sizeof(float));
         std::memset(m_processingBuffer[1], 0, frameCount * sizeof(float));
-        std::memset(m_sendBufferL, 0, frameCount * sizeof(float));
-        std::memset(m_sendBufferR, 0, frameCount * sizeof(float));
+        std::memset(m_sendBufferAL, 0, frameCount * sizeof(float));
+        std::memset(m_sendBufferAR, 0, frameCount * sizeof(float));
+        std::memset(m_sendBufferBL, 0, frameCount * sizeof(float));
+        std::memset(m_sendBufferBR, 0, frameCount * sizeof(float));
 
         // ========== Channel 0: Plaits ==========
         {
@@ -575,7 +632,8 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
 
             float gain = m_channelGain[ch];
             float pan = m_channelPan[ch];
-            float send = m_channelSend[ch];
+            float sendA = m_channelSendA[ch];
+            float sendB = m_channelSendB[ch];
             float panL = std::cos((pan + 1.0f) * 0.25f * 3.14159265f);
             float panR = std::sin((pan + 1.0f) * 0.25f * 3.14159265f);
 
@@ -594,8 +652,19 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                     m_processingBuffer[1][i] += delayedR;
                 }
 
-                m_sendBufferL[i] += delayedL * send;
-                m_sendBufferR[i] += delayedR * send;
+                const int outputIndex = frameOffset + i;
+                const float sendAL = delayedL * sendA;
+                const float sendAR = delayedR * sendA;
+                const float sendBL = delayedL * sendB;
+                const float sendBR = delayedR * sendB;
+                m_sendBufferAL[i] += sendAL;
+                m_sendBufferAR[i] += sendAR;
+                m_sendBufferBL[i] += sendBL;
+                m_sendBufferBR[i] += sendBR;
+                m_lastSendBusAL[outputIndex] += sendAL;
+                m_lastSendBusAR[outputIndex] += sendAR;
+                m_lastSendBusBL[outputIndex] += sendBL;
+                m_lastSendBusBR[outputIndex] += sendBR;
             }
         }
 
@@ -612,7 +681,8 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
 
             float gain = m_channelGain[ch];
             float pan = m_channelPan[ch];
-            float send = m_channelSend[ch];
+            float sendA = m_channelSendA[ch];
+            float sendB = m_channelSendB[ch];
             float panL = std::cos((pan + 1.0f) * 0.25f * 3.14159265f);
             float panR = std::sin((pan + 1.0f) * 0.25f * 3.14159265f);
 
@@ -632,8 +702,19 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                     m_processingBuffer[1][i] += delayedR;
                 }
 
-                m_sendBufferL[i] += delayedL * send;
-                m_sendBufferR[i] += delayedR * send;
+                const int outputIndex = frameOffset + i;
+                const float sendAL = delayedL * sendA;
+                const float sendAR = delayedR * sendA;
+                const float sendBL = delayedL * sendB;
+                const float sendBR = delayedR * sendB;
+                m_sendBufferAL[i] += sendAL;
+                m_sendBufferAR[i] += sendAR;
+                m_sendBufferBL[i] += sendBL;
+                m_sendBufferBR[i] += sendBR;
+                m_lastSendBusAL[outputIndex] += sendAL;
+                m_lastSendBusAR[outputIndex] += sendAR;
+                m_lastSendBusBL[outputIndex] += sendBL;
+                m_lastSendBusBR[outputIndex] += sendBR;
             }
         }
 
@@ -659,7 +740,8 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
 
             float gain = m_channelGain[ch];
             float pan = m_channelPan[ch];
-            float send = m_channelSend[ch];
+            float sendA = m_channelSendA[ch];
+            float sendB = m_channelSendB[ch];
             float panL = std::cos((pan + 1.0f) * 0.25f * 3.14159265f);
             float panR = std::sin((pan + 1.0f) * 0.25f * 3.14159265f);
 
@@ -679,26 +761,39 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                     m_processingBuffer[1][i] += delayedR;
                 }
 
-                m_sendBufferL[i] += delayedL * send;
-                m_sendBufferR[i] += delayedR * send;
+                const int outputIndex = frameOffset + i;
+                const float sendAL = delayedL * sendA;
+                const float sendAR = delayedR * sendA;
+                const float sendBL = delayedL * sendB;
+                const float sendBR = delayedR * sendB;
+                m_sendBufferAL[i] += sendAL;
+                m_sendBufferAR[i] += sendAR;
+                m_sendBufferBL[i] += sendBL;
+                m_sendBufferBR[i] += sendBR;
+                m_lastSendBusAL[outputIndex] += sendAL;
+                m_lastSendBusAR[outputIndex] += sendAR;
+                m_lastSendBusBL[outputIndex] += sendBL;
+                m_lastSendBusBR[outputIndex] += sendBR;
             }
         }
 
-        // ========== Process Effects on Send Buffer ==========
-        for (int i = 0; i < frameCount; ++i) {
-            float wetL = m_sendBufferL[i];
-            float wetR = m_sendBufferR[i];
+        // ========== Process Internal Effects (disabled when external send routing is active) ==========
+        if (!m_externalSendRoutingEnabled) {
+            for (int i = 0; i < frameCount; ++i) {
+                float wetL = m_sendBufferAL[i];
+                float wetR = m_sendBufferAR[i];
 
-            if (m_delayMix > 0.001f) {
-                processDelay(wetL, wetR);
+                if (m_delayMix > 0.001f) {
+                    processDelay(wetL, wetR);
+                }
+
+                if (m_reverbMix > 0.001f) {
+                    processReverb(wetL, wetR);
+                }
+
+                m_processingBuffer[0][i] += wetL;
+                m_processingBuffer[1][i] += wetR;
             }
-
-            if (m_reverbMix > 0.001f) {
-                processReverb(wetL, wetR);
-            }
-
-            m_processingBuffer[0][i] += wetL;
-            m_processingBuffer[1][i] += wetR;
         }
 
         // ========== Final Processing + output ==========
@@ -773,6 +868,442 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
 
     m_activeGrains.store(totalActiveGrains);
     m_currentSampleTime.store(bufferEndSample, std::memory_order_relaxed);
+
+}
+
+void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
+    // Multi-channel output for AU plugin hosting
+    // Outputs 6 separate stereo channels without mixing or effects
+    // All mixing, effects, and routing are handled by Swift-side AVAudioEngine
+
+    static int uninitCounter = 0;
+    if (!m_initialized.load()) {
+        // Not initialized - output silence
+        if (++uninitCounter % 200 == 1) {
+            printf("[processMultiChannel] SKIPPING - initialized=%d numFrames=%d\n",
+                   m_initialized.load() ? 1 : 0, numFrames);
+            fflush(stdout);
+        }
+        for (int ch = 0; ch < kNumMixerChannels * 2; ++ch) {
+            if (channelBuffers[ch]) {
+                std::memset(channelBuffers[ch], 0, numFrames * sizeof(float));
+            }
+        }
+        return;
+    }
+
+    if (numFrames > kMaxBufferSize) {
+        // Same strategy as legacy process(): split large host quanta so render
+        // continues and m_currentSampleTime advances.
+        int frameOffset = 0;
+        while (frameOffset < numFrames) {
+            const int chunkFrames = std::min(kMaxBufferSize, numFrames - frameOffset);
+            float* chunkBuffers[kNumMixerChannels * 2];
+            for (int ch = 0; ch < kNumMixerChannels * 2; ++ch) {
+                chunkBuffers[ch] = channelBuffers[ch] + frameOffset;
+            }
+            processMultiChannel(chunkBuffers, chunkFrames);
+            frameOffset += chunkFrames;
+        }
+        return;
+    }
+
+    // Process master clock and update modulation values (still needed for voice modulation)
+    processClockOutputs(numFrames);
+    applyModulation();
+
+    const uint64_t bufferStartSample = m_currentSampleTime.load(std::memory_order_relaxed);
+    const uint64_t bufferEndSample = bufferStartSample + static_cast<uint64_t>(numFrames);
+
+    // Process scheduled note events.
+    // Events can be out-of-order, so collect due events and retain future ones.
+    std::array<ScheduledNoteEvent, kScheduledEventCapacity> dueEvents{};
+    int dueEventCount = 0;
+
+    uint32_t read = m_scheduledReadIndex.load(std::memory_order_relaxed);
+    const uint32_t write = m_scheduledWriteIndex.load(std::memory_order_acquire);
+    std::array<ScheduledNoteEvent, kScheduledEventCapacity> futureEvents{};
+    int futureEventCount = 0;
+
+    while (read != write && (dueEventCount + futureEventCount) < static_cast<int>(kScheduledEventCapacity)) {
+        const ScheduledNoteEvent event = m_scheduledEvents[read];
+
+        if (event.sampleTime < bufferEndSample) {
+            dueEvents[dueEventCount] = event;
+            if (dueEvents[dueEventCount].sampleTime < bufferStartSample) {
+                dueEvents[dueEventCount].sampleTime = bufferStartSample;
+            }
+            ++dueEventCount;
+        } else {
+            futureEvents[futureEventCount] = event;
+            ++futureEventCount;
+        }
+
+        read = (read + 1) % kScheduledEventCapacity;
+    }
+
+    m_scheduledReadIndex.store(read, std::memory_order_release);
+
+    for (int i = 0; i < futureEventCount; ++i) {
+        enqueueScheduledEvent(futureEvents[i]);
+    }
+
+    std::sort(dueEvents.begin(), dueEvents.begin() + dueEventCount,
+        [](const ScheduledNoteEvent& a, const ScheduledNoteEvent& b) {
+            return a.sampleTime < b.sampleTime;
+        });
+
+    float channelPeaks[kNumMixerChannels] = {0.0f};
+    int totalActiveGrains = 0;
+
+    // Lambda to render a chunk of audio for all channels
+    auto renderChunk = [&](int frameOffset, int frameCount) {
+        if (frameCount <= 0) return;
+
+        // ========== Channel 0: Plaits (buffers 0, 1) ==========
+        {
+            std::memset(m_voiceBuffer[0], 0, frameCount * sizeof(float));
+            std::memset(m_voiceBuffer[1], 0, frameCount * sizeof(float));
+
+            for (int v = 0; v < kNumPlaitsVoices; ++v) {
+                if (m_plaitsVoices[v]) {
+                    float tempL[kMaxBufferSize], tempR[kMaxBufferSize];
+                    std::memset(tempL, 0, frameCount * sizeof(float));
+                    std::memset(tempR, 0, frameCount * sizeof(float));
+                    m_plaitsVoices[v]->Render(tempL, tempR, frameCount);
+                    for (int i = 0; i < frameCount; ++i) {
+                        m_voiceBuffer[0][i] += tempL[i];
+                        m_voiceBuffer[1][i] += tempR[i];
+                    }
+                }
+            }
+
+            // Copy to output buffers (no mixing/effects)
+            if (channelBuffers[0]) {
+                std::memcpy(channelBuffers[0] + frameOffset, m_voiceBuffer[0], frameCount * sizeof(float));
+            }
+            if (channelBuffers[1]) {
+                std::memcpy(channelBuffers[1] + frameOffset, m_voiceBuffer[1], frameCount * sizeof(float));
+            }
+
+            // Update metering
+            for (int i = 0; i < frameCount; ++i) {
+                float mono = (m_voiceBuffer[0][i] + m_voiceBuffer[1][i]) * 0.5f;
+                channelPeaks[0] = std::max(channelPeaks[0], std::abs(mono));
+            }
+        }
+
+        // ========== Channel 1: Rings (buffers 2, 3) ==========
+        {
+            std::memset(m_voiceBuffer[0], 0, frameCount * sizeof(float));
+            std::memset(m_voiceBuffer[1], 0, frameCount * sizeof(float));
+
+            if (m_ringsVoice) {
+                m_ringsVoice->Render(m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+            }
+
+            if (channelBuffers[2]) {
+                std::memcpy(channelBuffers[2] + frameOffset, m_voiceBuffer[0], frameCount * sizeof(float));
+            }
+            if (channelBuffers[3]) {
+                std::memcpy(channelBuffers[3] + frameOffset, m_voiceBuffer[1], frameCount * sizeof(float));
+            }
+
+            for (int i = 0; i < frameCount; ++i) {
+                float peak = std::max(std::abs(m_voiceBuffer[0][i]), std::abs(m_voiceBuffer[1][i]));
+                channelPeaks[1] = std::max(channelPeaks[1], peak);
+            }
+        }
+
+        // ========== Channels 2-5: Granular/Looper voices (buffers 4-11) ==========
+        for (int trackIndex = 0; trackIndex < kNumGranularVoices; ++trackIndex) {
+            int bufferBaseIndex = (trackIndex + 2) * 2;  // 4, 6, 8, 10
+
+            std::memset(m_voiceBuffer[0], 0, frameCount * sizeof(float));
+            std::memset(m_voiceBuffer[1], 0, frameCount * sizeof(float));
+
+            const bool isLooperTrack = (trackIndex == 1 || trackIndex == 2);
+            if (isLooperTrack) {
+                const int looperIndex = trackIndex - 1;
+                if (looperIndex >= 0 && looperIndex < kNumLooperVoices && m_looperVoices[looperIndex]) {
+                    m_looperVoices[looperIndex]->Render(m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+                }
+            } else if (m_granularVoices[trackIndex]) {
+                m_granularVoices[trackIndex]->Render(m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+                totalActiveGrains += static_cast<int>(m_granularVoices[trackIndex]->GetNumActiveGrains());
+            }
+
+            if (channelBuffers[bufferBaseIndex]) {
+                std::memcpy(channelBuffers[bufferBaseIndex] + frameOffset, m_voiceBuffer[0], frameCount * sizeof(float));
+            }
+            if (channelBuffers[bufferBaseIndex + 1]) {
+                std::memcpy(channelBuffers[bufferBaseIndex + 1] + frameOffset, m_voiceBuffer[1], frameCount * sizeof(float));
+            }
+
+            int channelIndex = trackIndex + 2;
+            for (int i = 0; i < frameCount; ++i) {
+                float peak = std::max(std::abs(m_voiceBuffer[0][i]), std::abs(m_voiceBuffer[1][i]));
+                channelPeaks[channelIndex] = std::max(channelPeaks[channelIndex], peak);
+            }
+        }
+    };
+
+    // Process with sample-accurate note events
+    int cursorFrame = 0;
+    int eventIndex = 0;
+    while (eventIndex < dueEventCount) {
+        const uint64_t eventSample = dueEvents[eventIndex].sampleTime;
+        const int eventFrame = static_cast<int>(std::min<uint64_t>(numFrames, eventSample - bufferStartSample));
+
+        if (eventFrame > cursorFrame) {
+            renderChunk(cursorFrame, eventFrame - cursorFrame);
+            cursorFrame = eventFrame;
+        }
+
+        while (eventIndex < dueEventCount && dueEvents[eventIndex].sampleTime == eventSample) {
+            const ScheduledNoteEvent& event = dueEvents[eventIndex];
+            if (event.isNoteOn) {
+                noteOnTarget(static_cast<int>(event.note), static_cast<int>(event.velocity), event.targetMask);
+            } else {
+                noteOffTarget(static_cast<int>(event.note), event.targetMask);
+            }
+            ++eventIndex;
+        }
+    }
+
+    if (cursorFrame < numFrames) {
+        renderChunk(cursorFrame, numFrames - cursorFrame);
+    }
+
+    // Update channel level meters
+    for (int i = 0; i < kNumMixerChannels; ++i) {
+        float current = m_channelLevels[i].load();
+        float target = channelPeaks[i];
+        if (target > current) {
+            m_channelLevels[i].store(target);
+        } else {
+            m_channelLevels[i].store(current * 0.95f + target * 0.05f);
+        }
+    }
+
+    m_activeGrains.store(totalActiveGrains);
+    m_currentSampleTime.store(bufferEndSample, std::memory_order_relaxed);
+
+}
+
+void AudioEngine::renderAndReadMultiChannel(
+    int channelIndex,
+    int64_t sampleTime,
+    float* left,
+    float* right,
+    int numFrames
+) {
+    if (!left || !right || numFrames <= 0) {
+        return;
+    }
+    if (channelIndex < 0 || channelIndex >= kNumMixerChannelsForRing) {
+        std::memset(left, 0, numFrames * sizeof(float));
+        std::memset(right, 0, numFrames * sizeof(float));
+        return;
+    }
+
+    if (numFrames > kMaxBufferSize) {
+        int frameOffset = 0;
+        while (frameOffset < numFrames) {
+            const int chunkFrames = std::min(kMaxBufferSize, numFrames - frameOffset);
+            int64_t chunkSampleTime = sampleTime;
+            if (chunkSampleTime >= 0) {
+                chunkSampleTime += static_cast<int64_t>(frameOffset);
+            }
+            renderAndReadMultiChannel(
+                channelIndex,
+                chunkSampleTime,
+                left + frameOffset,
+                right + frameOffset,
+                chunkFrames
+            );
+            frameOffset += chunkFrames;
+        }
+        return;
+    }
+
+    const int cachedFramesAtEntry = m_cachedBlockFrames.load(std::memory_order_acquire);
+    const int64_t cachedSampleTimeAtEntry = m_cachedBlockSampleTime.load(std::memory_order_acquire);
+
+    int64_t requestedSampleTime = sampleTime >= 0
+        ? sampleTime
+        : (cachedFramesAtEntry == numFrames && cachedSampleTimeAtEntry >= 0)
+            ? cachedSampleTimeAtEntry
+            : static_cast<int64_t>(m_currentSampleTime.load(std::memory_order_acquire));
+    if (requestedSampleTime >= 0 && numFrames > 0) {
+        requestedSampleTime = (requestedSampleTime / numFrames) * numFrames;
+    }
+
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const int cachedFrames = m_cachedBlockFrames.load(std::memory_order_acquire);
+        const int64_t cachedSampleTime = m_cachedBlockSampleTime.load(std::memory_order_acquire);
+        if (cachedFrames == numFrames && cachedSampleTime == requestedSampleTime) {
+            std::memcpy(left, m_cachedMultiChannelL[channelIndex], numFrames * sizeof(float));
+            std::memcpy(right, m_cachedMultiChannelR[channelIndex], numFrames * sizeof(float));
+            return;
+        }
+
+        bool expected = false;
+        if (m_cachedRenderInProgress.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+            const int latestFrames = m_cachedBlockFrames.load(std::memory_order_relaxed);
+            const int64_t latestSampleTime = m_cachedBlockSampleTime.load(std::memory_order_relaxed);
+
+            if (latestFrames != numFrames || latestSampleTime != requestedSampleTime) {
+                m_renderingBlockFrames.store(numFrames, std::memory_order_release);
+                m_renderingBlockSampleTime.store(requestedSampleTime, std::memory_order_release);
+                m_currentSampleTime.store(static_cast<uint64_t>(requestedSampleTime), std::memory_order_relaxed);
+
+                float* bufferPtrs[kNumMixerChannelsForRing * 2];
+                for (int ch = 0; ch < kNumMixerChannelsForRing; ++ch) {
+                    bufferPtrs[ch * 2] = m_cachedMultiChannelL[ch];
+                    bufferPtrs[ch * 2 + 1] = m_cachedMultiChannelR[ch];
+                }
+
+                processMultiChannel(bufferPtrs, numFrames);
+                m_cachedBlockFrames.store(numFrames, std::memory_order_release);
+                m_cachedBlockSampleTime.store(requestedSampleTime, std::memory_order_release);
+            }
+
+            m_cachedRenderInProgress.store(false, std::memory_order_release);
+        } else {
+            int spinCount = 0;
+            while (m_cachedRenderInProgress.load(std::memory_order_acquire) && spinCount < 50000) {
+                ++spinCount;
+            }
+
+            if (sampleTime < 0) {
+                const int64_t renderingSample = m_renderingBlockSampleTime.load(std::memory_order_acquire);
+                if (renderingSample >= 0) {
+                    requestedSampleTime = renderingSample;
+                }
+            }
+        }
+    }
+
+    const int cachedFrames = m_cachedBlockFrames.load(std::memory_order_acquire);
+    if (cachedFrames == numFrames) {
+        std::memcpy(left, m_cachedMultiChannelL[channelIndex], numFrames * sizeof(float));
+        std::memcpy(right, m_cachedMultiChannelR[channelIndex], numFrames * sizeof(float));
+    } else {
+        std::memset(left, 0, numFrames * sizeof(float));
+        std::memset(right, 0, numFrames * sizeof(float));
+    }
+}
+
+void AudioEngine::renderAndReadLegacyBus(
+    int busIndex,
+    int64_t sampleTime,
+    float* left,
+    float* right,
+    int numFrames
+) {
+    if (!left || !right || numFrames <= 0) {
+        return;
+    }
+    if (busIndex < 0 || busIndex >= kNumLegacyOutputBuses) {
+        std::memset(left, 0, numFrames * sizeof(float));
+        std::memset(right, 0, numFrames * sizeof(float));
+        return;
+    }
+
+    if (numFrames > kMaxBufferSize) {
+        int frameOffset = 0;
+        while (frameOffset < numFrames) {
+            const int chunkFrames = std::min(kMaxBufferSize, numFrames - frameOffset);
+            int64_t chunkSampleTime = sampleTime;
+            if (chunkSampleTime >= 0) {
+                chunkSampleTime += static_cast<int64_t>(frameOffset);
+            }
+            renderAndReadLegacyBus(
+                busIndex,
+                chunkSampleTime,
+                left + frameOffset,
+                right + frameOffset,
+                chunkFrames
+            );
+            frameOffset += chunkFrames;
+        }
+        return;
+    }
+
+    const int cachedFramesAtEntry = m_cachedLegacyBlockFrames.load(std::memory_order_acquire);
+    const int64_t cachedSampleAtEntry = m_cachedLegacyBlockSampleTime.load(std::memory_order_acquire);
+
+    int64_t requestedSampleTime = sampleTime >= 0
+        ? sampleTime
+        : (cachedFramesAtEntry == numFrames && cachedSampleAtEntry >= 0)
+            ? cachedSampleAtEntry
+            : static_cast<int64_t>(m_currentSampleTime.load(std::memory_order_acquire));
+    if (requestedSampleTime >= 0 && numFrames > 0) {
+        requestedSampleTime = (requestedSampleTime / numFrames) * numFrames;
+    }
+
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const int cachedFrames = m_cachedLegacyBlockFrames.load(std::memory_order_acquire);
+        const int64_t cachedSample = m_cachedLegacyBlockSampleTime.load(std::memory_order_acquire);
+        if (cachedFrames == numFrames && cachedSample == requestedSampleTime) {
+            std::memcpy(left, m_cachedLegacyBusL[busIndex], numFrames * sizeof(float));
+            std::memcpy(right, m_cachedLegacyBusR[busIndex], numFrames * sizeof(float));
+            return;
+        }
+
+        bool expected = false;
+        if (m_cachedLegacyRenderInProgress.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+            const int latestFrames = m_cachedLegacyBlockFrames.load(std::memory_order_relaxed);
+            const int64_t latestSample = m_cachedLegacyBlockSampleTime.load(std::memory_order_relaxed);
+
+            if (latestFrames != numFrames || latestSample != requestedSampleTime) {
+                m_renderingLegacyBlockFrames.store(numFrames, std::memory_order_release);
+                m_renderingLegacyBlockSampleTime.store(requestedSampleTime, std::memory_order_release);
+                m_currentSampleTime.store(static_cast<uint64_t>(requestedSampleTime), std::memory_order_relaxed);
+
+                const bool previousExternalRouting = m_externalSendRoutingEnabled;
+                m_externalSendRoutingEnabled = true;
+                float* dryOut[2] = {
+                    m_cachedLegacyBusL[0],
+                    m_cachedLegacyBusR[0]
+                };
+                process(nullptr, dryOut, 2, numFrames);
+                m_externalSendRoutingEnabled = previousExternalRouting;
+
+                std::memcpy(m_cachedLegacyBusL[1], m_lastSendBusAL, numFrames * sizeof(float));
+                std::memcpy(m_cachedLegacyBusR[1], m_lastSendBusAR, numFrames * sizeof(float));
+                std::memcpy(m_cachedLegacyBusL[2], m_lastSendBusBL, numFrames * sizeof(float));
+                std::memcpy(m_cachedLegacyBusR[2], m_lastSendBusBR, numFrames * sizeof(float));
+
+                m_cachedLegacyBlockFrames.store(numFrames, std::memory_order_release);
+                m_cachedLegacyBlockSampleTime.store(requestedSampleTime, std::memory_order_release);
+            }
+
+            m_cachedLegacyRenderInProgress.store(false, std::memory_order_release);
+        } else {
+            int spinCount = 0;
+            while (m_cachedLegacyRenderInProgress.load(std::memory_order_acquire) && spinCount < 50000) {
+                ++spinCount;
+            }
+
+            if (sampleTime < 0) {
+                const int64_t renderingSample = m_renderingLegacyBlockSampleTime.load(std::memory_order_acquire);
+                if (renderingSample >= 0) {
+                    requestedSampleTime = renderingSample;
+                }
+            }
+        }
+    }
+
+    const int cachedFrames = m_cachedLegacyBlockFrames.load(std::memory_order_acquire);
+    if (cachedFrames == numFrames) {
+        std::memcpy(left, m_cachedLegacyBusL[busIndex], numFrames * sizeof(float));
+        std::memcpy(right, m_cachedLegacyBusR[busIndex], numFrames * sizeof(float));
+    } else {
+        std::memset(left, 0, numFrames * sizeof(float));
+        std::memset(right, 0, numFrames * sizeof(float));
+    }
 }
 
 void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
@@ -1145,7 +1676,7 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
 
         case ParameterID::VoiceSend:
             if (voiceIndex >= 0 && voiceIndex < kNumMixerChannels) {
-                m_channelSend[voiceIndex] = clampedValue;
+                m_channelSendA[voiceIndex] = clampedValue;
             }
             break;
 
@@ -1325,6 +1856,19 @@ float AudioEngine::getMasterLevel(int channel) const {
     return 0.0f;
 }
 
+void AudioEngine::setChannelSendLevel(int channelIndex, int sendIndex, float level) {
+    if (channelIndex < 0 || channelIndex >= kNumMixerChannels) {
+        return;
+    }
+
+    const float clamped = std::clamp(level, 0.0f, 1.0f);
+    if (sendIndex == 0) {
+        m_channelSendA[channelIndex] = clamped;
+    } else if (sendIndex == 1) {
+        m_channelSendB[channelIndex] = clamped;
+    }
+}
+
 // ========== Effects Implementation ==========
 
 void AudioEngine::initEffects() {
@@ -1353,10 +1897,14 @@ void AudioEngine::initEffects() {
     m_tapeNoiseState = 0x12345678u;
 
     // Allocate send buffers
-    m_sendBufferL = new float[kMaxBufferSize];
-    m_sendBufferR = new float[kMaxBufferSize];
-    std::memset(m_sendBufferL, 0, kMaxBufferSize * sizeof(float));
-    std::memset(m_sendBufferR, 0, kMaxBufferSize * sizeof(float));
+    m_sendBufferAL = new float[kMaxBufferSize];
+    m_sendBufferAR = new float[kMaxBufferSize];
+    m_sendBufferBL = new float[kMaxBufferSize];
+    m_sendBufferBR = new float[kMaxBufferSize];
+    std::memset(m_sendBufferAL, 0, kMaxBufferSize * sizeof(float));
+    std::memset(m_sendBufferAR, 0, kMaxBufferSize * sizeof(float));
+    std::memset(m_sendBufferBL, 0, kMaxBufferSize * sizeof(float));
+    std::memset(m_sendBufferBR, 0, kMaxBufferSize * sizeof(float));
 
     // Initialize reverb comb filters (Freeverb-style tunings)
     // These lengths are tuned for 48kHz
@@ -1401,13 +1949,21 @@ void AudioEngine::cleanupEffects() {
     }
 
     // Free send buffers
-    if (m_sendBufferL) {
-        delete[] m_sendBufferL;
-        m_sendBufferL = nullptr;
+    if (m_sendBufferAL) {
+        delete[] m_sendBufferAL;
+        m_sendBufferAL = nullptr;
     }
-    if (m_sendBufferR) {
-        delete[] m_sendBufferR;
-        m_sendBufferR = nullptr;
+    if (m_sendBufferAR) {
+        delete[] m_sendBufferAR;
+        m_sendBufferAR = nullptr;
+    }
+    if (m_sendBufferBL) {
+        delete[] m_sendBufferBL;
+        m_sendBufferBL = nullptr;
+    }
+    if (m_sendBufferBR) {
+        delete[] m_sendBufferBR;
+        m_sendBufferBR = nullptr;
     }
 
     // Free reverb buffers
@@ -2029,6 +2585,207 @@ void AudioEngine::processMasterFilter(float& left, float& right) {
     // Snap to zero to prevent denormals
     if (std::fabs(left) < 1.0e-20f) left = 0.0f;
     if (std::fabs(right) < 1.0e-20f) right = 0.0f;
+}
+
+// MARK: - MultiChannelRingBuffer Implementation
+
+MultiChannelRingBuffer::MultiChannelRingBuffer() {
+    reset();
+}
+
+void MultiChannelRingBuffer::reset() {
+    m_writeIndex.store(0, std::memory_order_release);
+    for (int i = 0; i < kNumMixerChannelsForRing; ++i) {
+        m_readIndex[i].store(0, std::memory_order_release);
+        std::memset(m_bufferL[i], 0, sizeof(m_bufferL[i]));
+        std::memset(m_bufferR[i], 0, sizeof(m_bufferR[i]));
+    }
+}
+
+void MultiChannelRingBuffer::writeChannel(int channelIndex, const float* left, const float* right, int numFrames) {
+    if (channelIndex < 0 || channelIndex >= kNumMixerChannelsForRing) return;
+
+    size_t writeIdx = m_writeIndex.load(std::memory_order_relaxed);
+
+    for (int i = 0; i < numFrames; ++i) {
+        size_t idx = (writeIdx + i) % kMultiChannelRingBufferSize;
+        m_bufferL[channelIndex][idx] = left[i];
+        m_bufferR[channelIndex][idx] = right[i];
+    }
+    // Note: advanceWriteIndex() is called separately after ALL channels are written
+}
+
+void MultiChannelRingBuffer::advanceWriteIndex(int numFrames) {
+    size_t writeIdx = m_writeIndex.load(std::memory_order_relaxed);
+    m_writeIndex.store((writeIdx + numFrames) % kMultiChannelRingBufferSize, std::memory_order_release);
+}
+
+bool MultiChannelRingBuffer::canWrite(int numFrames) const {
+    // Check if we have space for numFrames samples
+    // Find the slowest reader (minimum read index distance from write)
+    size_t writeIdx = m_writeIndex.load(std::memory_order_acquire);
+    size_t minAvailable = kMultiChannelRingBufferSize;
+
+    for (int i = 0; i < kNumMixerChannelsForRing; ++i) {
+        size_t readIdx = m_readIndex[i].load(std::memory_order_acquire);
+        // Calculate how many samples until we'd overwrite unread data
+        size_t available = (readIdx - writeIdx - 1 + kMultiChannelRingBufferSize) % kMultiChannelRingBufferSize;
+        if (available < minAvailable) {
+            minAvailable = available;
+        }
+    }
+
+    return minAvailable >= static_cast<size_t>(numFrames);
+}
+
+void MultiChannelRingBuffer::readChannel(int channelIndex, float* left, float* right, int numFrames) {
+    if (channelIndex < 0 || channelIndex >= kNumMixerChannelsForRing) {
+        // Invalid channel - output silence
+        std::memset(left, 0, numFrames * sizeof(float));
+        std::memset(right, 0, numFrames * sizeof(float));
+        return;
+    }
+
+    size_t readIdx = m_readIndex[channelIndex].load(std::memory_order_acquire);
+    size_t writeIdx = m_writeIndex.load(std::memory_order_acquire);
+
+    // Calculate available data (handle wrap-around)
+    size_t available = (writeIdx - readIdx + kMultiChannelRingBufferSize) % kMultiChannelRingBufferSize;
+
+    for (int i = 0; i < numFrames; ++i) {
+        if (static_cast<size_t>(i) < available) {
+            size_t idx = (readIdx + i) % kMultiChannelRingBufferSize;
+            left[i] = m_bufferL[channelIndex][idx];
+            right[i] = m_bufferR[channelIndex][idx];
+        } else {
+            // Underrun - output silence
+            left[i] = 0.0f;
+            right[i] = 0.0f;
+        }
+    }
+
+    // Advance read index
+    size_t actualRead = std::min(static_cast<size_t>(numFrames), available);
+    m_readIndex[channelIndex].store((readIdx + actualRead) % kMultiChannelRingBufferSize, std::memory_order_release);
+}
+
+bool MultiChannelRingBuffer::canRead(int channelIndex, int numFrames) const {
+    if (channelIndex < 0 || channelIndex >= kNumMixerChannelsForRing) return false;
+
+    size_t readIdx = m_readIndex[channelIndex].load(std::memory_order_acquire);
+    size_t writeIdx = m_writeIndex.load(std::memory_order_acquire);
+
+    size_t available = (writeIdx - readIdx + kMultiChannelRingBufferSize) % kMultiChannelRingBufferSize;
+    return available >= static_cast<size_t>(numFrames);
+}
+
+size_t MultiChannelRingBuffer::getReadableFrames(int channelIndex) const {
+    if (channelIndex < 0 || channelIndex >= kNumMixerChannelsForRing) return 0;
+
+    size_t readIdx = m_readIndex[channelIndex].load(std::memory_order_acquire);
+    size_t writeIdx = m_writeIndex.load(std::memory_order_acquire);
+
+    return (writeIdx - readIdx + kMultiChannelRingBufferSize) % kMultiChannelRingBufferSize;
+}
+
+size_t MultiChannelRingBuffer::getWritableFrames() const {
+    size_t writeIdx = m_writeIndex.load(std::memory_order_acquire);
+    size_t minAvailable = kMultiChannelRingBufferSize;
+
+    for (int i = 0; i < kNumMixerChannelsForRing; ++i) {
+        size_t readIdx = m_readIndex[i].load(std::memory_order_acquire);
+        size_t available = (readIdx - writeIdx - 1 + kMultiChannelRingBufferSize) % kMultiChannelRingBufferSize;
+        if (available < minAvailable) {
+            minAvailable = available;
+        }
+    }
+
+    return minAvailable;
+}
+
+// MARK: - Multi-Channel Processing Thread
+
+void AudioEngine::startMultiChannelProcessing() {
+    if (m_multiChannelProcessingActive.load(std::memory_order_acquire)) return;
+
+    m_ringBuffer.reset();
+    m_multiChannelProcessingActive.store(true, std::memory_order_release);
+
+    m_processingThread = std::thread([this]() {
+        multiChannelProcessingLoop();
+    });
+
+    // Note: Thread priority is set inside the loop for macOS
+    printf("✓ Multi-channel processing thread started\n");
+    fflush(stdout);
+}
+
+void AudioEngine::stopMultiChannelProcessing() {
+    m_multiChannelProcessingActive.store(false, std::memory_order_release);
+    if (m_processingThread.joinable()) {
+        m_processingThread.join();
+    }
+    printf("✓ Multi-channel processing thread stopped\n");
+}
+
+void AudioEngine::multiChannelProcessingLoop() {
+    // Set high priority for audio processing on macOS
+    #if defined(__APPLE__)
+    pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+    #endif
+
+    // Allocate temp buffers for processMultiChannel
+    // Layout: [ch0_L, ch0_R, ch1_L, ch1_R, ..., ch5_L, ch5_R]
+    constexpr int kNumBuffers = kNumMixerChannelsForRing * 2;  // 12 buffers (6 stereo pairs)
+    float tempBuffers[kNumBuffers][kRingBufferProcessFrames];
+    float* bufferPtrs[kNumBuffers];
+
+    for (int i = 0; i < kNumBuffers; ++i) {
+        bufferPtrs[i] = tempBuffers[i];
+        std::memset(bufferPtrs[i], 0, kRingBufferProcessFrames * sizeof(float));
+    }
+
+    int debugCounter = 0;
+    while (m_multiChannelProcessingActive.load(std::memory_order_acquire)) {
+        // Only process if ring buffer has space for another chunk
+        if (m_ringBuffer.canWrite(kRingBufferProcessFrames)) {
+            // Process all channels through the existing processMultiChannel
+            processMultiChannel(bufferPtrs, kRingBufferProcessFrames);
+
+            // Write each channel to ring buffer
+            for (int ch = 0; ch < kNumMixerChannelsForRing; ++ch) {
+                m_ringBuffer.writeChannel(ch, bufferPtrs[ch * 2], bufferPtrs[ch * 2 + 1], kRingBufferProcessFrames);
+            }
+            m_ringBuffer.advanceWriteIndex(kRingBufferProcessFrames);
+
+            // Debug: log sample time every second (~200 iterations at 4.8ms)
+            if (++debugCounter % 200 == 0) {
+                printf("[RingBuffer] sampleTime=%llu writable=%zu\n",
+                       m_currentSampleTime.load(std::memory_order_relaxed),
+                       m_ringBuffer.getWritableFrames());
+                fflush(stdout);
+            }
+        } else {
+            // Debug: buffer full, can't write
+            if (++debugCounter % 200 == 0) {
+                printf("[RingBuffer] BLOCKED - buffer full, writable=%zu\n",
+                       m_ringBuffer.getWritableFrames());
+                fflush(stdout);
+            }
+        }
+
+        // Sleep to maintain timing
+        // 256 samples @ 48kHz = 5.33ms, process slightly faster (~4.8ms) to maintain buffer lead
+        std::this_thread::sleep_for(std::chrono::microseconds(4800));
+    }
+}
+
+void AudioEngine::readChannelFromRingBuffer(int channelIndex, float* left, float* right, int numFrames) {
+    m_ringBuffer.readChannel(channelIndex, left, right, numFrames);
+}
+
+size_t AudioEngine::getRingBufferReadableFrames(int channelIndex) const {
+    return m_ringBuffer.getReadableFrames(channelIndex);
 }
 
 } // namespace Grainulator
