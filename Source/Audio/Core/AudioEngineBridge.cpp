@@ -349,4 +349,40 @@ void AudioEngine_RenderAndReadLegacyBus(
     }
 }
 
+// ========== Recording Control ==========
+
+void AudioEngine_StartRecording(AudioEngineHandle handle, int reelIndex, int mode, int sourceType, int sourceChannel) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->startRecording(reelIndex, mode, sourceType, sourceChannel);
+    }
+}
+
+void AudioEngine_StopRecording(AudioEngineHandle handle, int reelIndex) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->stopRecording(reelIndex);
+    }
+}
+
+void AudioEngine_SetRecordingFeedback(AudioEngineHandle handle, int reelIndex, float feedback) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setRecordingFeedback(reelIndex, feedback);
+    }
+}
+
+bool AudioEngine_IsRecording(AudioEngineHandle handle, int reelIndex) {
+    if (!handle) return false;
+    return static_cast<AudioEngine*>(handle)->isRecording(reelIndex);
+}
+
+float AudioEngine_GetRecordingPosition(AudioEngineHandle handle, int reelIndex) {
+    if (!handle) return 0.0f;
+    return static_cast<AudioEngine*>(handle)->getRecordingPosition(reelIndex);
+}
+
+void AudioEngine_WriteExternalInput(AudioEngineHandle handle, const float* left, const float* right, int numFrames) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->writeExternalInput(left, right, numFrames);
+    }
+}
+
 } // extern "C"

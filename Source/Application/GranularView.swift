@@ -36,12 +36,19 @@ struct GranularView: View {
     @State private var isDragOver: Bool = false
     @State private var loadedFileName: String?
 
-    // Voice colors
+    // Recording state
+    @State private var isRecording: Bool = false
+    @State private var recordMode: AudioEngineWrapper.RecordMode = .oneShot
+    @State private var recordSourceType: AudioEngineWrapper.RecordSourceType = .external
+    @State private var recordSourceChannel: Int = 0
+    @State private var recordFeedback: Float = 0.0
+
+    // Voice colors from design system
     let voiceColors: [Color] = [
-        Color(hex: "#4A9EFF"),  // Voice 1: Blue
-        Color(hex: "#9B59B6"),  // Voice 2: Purple
-        Color(hex: "#E67E22"),  // Voice 3: Orange
-        Color(hex: "#1ABC9C")   // Voice 4: Teal
+        ColorPalette.accentGranular1,  // Voice 1: Blue
+        ColorPalette.accentLooper1,    // Voice 2: Purple
+        ColorPalette.accentLooper2,    // Voice 3: Orange
+        ColorPalette.accentGranular4   // Voice 4: Teal
     ]
 
     // Envelope type names
@@ -64,12 +71,65 @@ struct GranularView: View {
     }
 
     var body: some View {
+        ConsoleModuleView(
+            title: "GRANULAR \(voiceIndex + 1)",
+            accentColor: voiceColor
+        ) {
         VStack(spacing: 16) {
-            // Header
+            // Transport controls
             HStack {
-                Text("GRANULAR \(voiceIndex + 1)")
-                    .font(.system(size: 18, weight: .bold, design: .monospaced))
-                    .foregroundColor(voiceColor)
+                // Recording source & mode controls
+                Menu {
+                    Section("Input Source") {
+                        Button(action: { recordSourceType = .external; recordSourceChannel = 0 }) {
+                            Label("Mic / Line In", systemImage: "mic")
+                        }
+                        Divider()
+                        Button("Plaits") { recordSourceType = .internalVoice; recordSourceChannel = 0 }
+                        Button("Rings") { recordSourceType = .internalVoice; recordSourceChannel = 1 }
+                        if voiceIndex != 0 {
+                            Button("Granular 1") { recordSourceType = .internalVoice; recordSourceChannel = 2 }
+                        }
+                        Button("Looper 1") { recordSourceType = .internalVoice; recordSourceChannel = 3 }
+                        Button("Looper 2") { recordSourceType = .internalVoice; recordSourceChannel = 4 }
+                        if voiceIndex != 3 {
+                            Button("Granular 4") { recordSourceType = .internalVoice; recordSourceChannel = 5 }
+                        }
+                    }
+                    Section("Mode") {
+                        Button(action: { recordMode = .oneShot }) {
+                            Label("One Shot", systemImage: recordMode == .oneShot ? "checkmark" : "")
+                        }
+                        Button(action: { recordMode = .liveLoop }) {
+                            Label("Live Loop", systemImage: recordMode == .liveLoop ? "checkmark" : "")
+                        }
+                    }
+                } label: {
+                    Text(recordSourceType == .external ? "MIC" : channelShortName(recordSourceChannel))
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(ColorPalette.textMuted)
+                        .frame(width: 40, height: 32)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(ColorPalette.backgroundTertiary))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+
+                if recordMode == .liveLoop {
+                    VStack(spacing: 1) {
+                        Text("FB")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(ColorPalette.textDimmed)
+                        Text("\(Int(recordFeedback * 100))%")
+                            .font(.system(size: 8, design: .monospaced))
+                            .foregroundColor(voiceColor)
+                    }
+                    .frame(width: 30)
+                    Slider(value: $recordFeedback, in: 0...1)
+                        .frame(width: 60)
+                        .onChange(of: recordFeedback) { newValue in
+                            audioEngine.setRecordingFeedback(reelIndex: voiceIndex, feedback: newValue)
+                        }
+                }
 
                 Spacer()
 
@@ -79,15 +139,45 @@ struct GranularView: View {
                 }) {
                     Image(systemName: "folder")
                         .font(.system(size: 14))
-                        .foregroundColor(Color(hex: "#888888"))
+                        .foregroundColor(ColorPalette.textMuted)
                         .frame(width: 32, height: 32)
                         .background(
                             RoundedRectangle(cornerRadius: 4)
-                                .fill(Color(hex: "#252528"))
+                                .fill(ColorPalette.backgroundTertiary)
                         )
                 }
                 .buttonStyle(.plain)
                 .help("Load audio file")
+
+                // Record button
+                Button(action: {
+                    isRecording.toggle()
+                    if isRecording {
+                        audioEngine.startRecording(
+                            reelIndex: voiceIndex,
+                            mode: recordMode,
+                            sourceType: recordSourceType,
+                            sourceChannel: recordSourceChannel
+                        )
+                    } else {
+                        audioEngine.stopRecording(reelIndex: voiceIndex)
+                    }
+                }) {
+                    Circle()
+                        .fill(isRecording ? Color.red : Color.red.opacity(0.4))
+                        .frame(width: 16, height: 16)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.red.opacity(0.6), lineWidth: 1)
+                        )
+                        .frame(width: 32, height: 32)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(ColorPalette.backgroundTertiary)
+                        )
+                }
+                .buttonStyle(.plain)
+                .help(isRecording ? "Stop recording" : "Start recording")
 
                 // Play button (gate)
                 Button(action: {
@@ -96,11 +186,11 @@ struct GranularView: View {
                 }) {
                     Image(systemName: isPlaying ? "stop.fill" : "play.fill")
                         .font(.system(size: 16))
-                        .foregroundColor(isPlaying ? Color(hex: "#FF6B6B") : voiceColor)
+                        .foregroundColor(isPlaying ? ColorPalette.accentPlaits : voiceColor)
                         .frame(width: 32, height: 32)
                         .background(
                             RoundedRectangle(cornerRadius: 4)
-                                .fill(Color(hex: "#252528"))
+                                .fill(ColorPalette.backgroundTertiary)
                         )
                 }
                 .buttonStyle(.plain)
@@ -116,7 +206,8 @@ struct GranularView: View {
                 isDragOver: isDragOver,
                 onSeek: { position in
                     audioEngine.setGranularPosition(voiceIndex: voiceIndex, position: position)
-                }
+                },
+                recordPosition: isRecording ? audioEngine.recordingPositions[voiceIndex] : nil
             )
             .frame(height: 80)
             .onDrop(of: [.audio, .fileURL], isTargeted: $isDragOver) { providers in
@@ -150,7 +241,7 @@ struct GranularView: View {
                 GranularSlider(
                     label: "PITCH",
                     value: $pitch,
-                    color: Color(hex: "#7B68EE"),
+                    color: ColorPalette.ledBlue,
                     formatter: { value in
                         let semitones = Int((Double(value) - 0.5) * 48)  // -24 to +24
                         if semitones == 0 {
@@ -205,6 +296,8 @@ struct GranularView: View {
                 }
             }
 
+            ConsoleSectionDivider(accentColor: ColorPalette.dividerSubtle)
+
             // Advanced toggle
             Button(action: {
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -215,9 +308,9 @@ struct GranularView: View {
                     Image(systemName: showAdvanced ? "chevron.down" : "chevron.right")
                         .font(.system(size: 10))
                     Text("ADVANCED")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(Typography.parameterLabel)
                 }
-                .foregroundColor(Color(hex: "#666666"))
+                .foregroundColor(ColorPalette.textDimmed)
             }
             .buttonStyle(.plain)
 
@@ -228,7 +321,7 @@ struct GranularView: View {
                     GranularSlider(
                         label: "JITTER",
                         value: $jitter,
-                        color: Color(hex: "#FFD93D"),
+                        color: ColorPalette.ledAmber,
                         formatter: { value in
                             // 0ms to 500ms
                             let ms = Double(value) * 500.0
@@ -243,7 +336,7 @@ struct GranularView: View {
                     GranularSlider(
                         label: "SPREAD",
                         value: $spread,
-                        color: Color(hex: "#FF6B6B")
+                        color: ColorPalette.accentPlaits
                     )
                     .onChange(of: spread) { newValue in
                         audioEngine.setParameter(id: .granularSpread, value: newValue, voiceIndex: voiceIndex)
@@ -253,7 +346,7 @@ struct GranularView: View {
                     GranularSlider(
                         label: "MORPH",
                         value: $morph,
-                        color: Color(hex: "#6BCB77"),
+                        color: ColorPalette.ledGreen,
                         formatter: { value in
                             String(format: "%.0f%%", value * 100)
                         }
@@ -266,7 +359,7 @@ struct GranularView: View {
                     GranularSlider(
                         label: "FILTER",
                         value: $filterCutoff,
-                        color: Color(hex: "#E67E22"),
+                        color: ColorPalette.accentLooper2,
                         formatter: { value in
                             let hz = 20.0 * pow(1000.0, Double(value))
                             if hz < 1000 {
@@ -284,7 +377,7 @@ struct GranularView: View {
                     GranularSlider(
                         label: "RES",
                         value: $filterResonance,
-                        color: Color(hex: "#FF8C42"),
+                        color: ColorPalette.ledAmber,
                         formatter: { value in
                             String(format: "%.0f%%", value * 100)
                         }
@@ -299,7 +392,7 @@ struct GranularView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("ENVELOPE")
                             .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color(hex: "#888888"))
+                            .foregroundColor(ColorPalette.textMuted)
 
                         HStack(spacing: 4) {
                             ForEach(Array(envelopeNames.enumerated()), id: \.offset) { index, name in
@@ -309,12 +402,12 @@ struct GranularView: View {
                                 }) {
                                     Text(name)
                                         .font(.system(size: 9, weight: envelope == index ? .bold : .regular, design: .monospaced))
-                                        .foregroundColor(envelope == index ? .white : Color(hex: "#AAAAAA"))
+                                        .foregroundColor(envelope == index ? .white : ColorPalette.textPanelLabel)
                                         .padding(.horizontal, 6)
                                         .padding(.vertical, 4)
                                         .background(
                                             RoundedRectangle(cornerRadius: 3)
-                                                .fill(envelope == index ? voiceColor.opacity(0.6) : Color(hex: "#252528"))
+                                                .fill(envelope == index ? voiceColor.opacity(0.6) : ColorPalette.backgroundTertiary)
                                         )
                                 }
                                 .buttonStyle(.plain)
@@ -325,7 +418,7 @@ struct GranularView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("FILTER MODEL")
                             .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color(hex: "#888888"))
+                            .foregroundColor(ColorPalette.textMuted)
 
                         Menu {
                             ForEach(Array(filterModelNames.enumerated()), id: \.offset) { index, name in
@@ -348,7 +441,7 @@ struct GranularView: View {
                             .padding(.vertical, 5)
                             .background(
                                 RoundedRectangle(cornerRadius: 4)
-                                    .fill(Color(hex: "#252528"))
+                                    .fill(ColorPalette.backgroundTertiary)
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 4)
                                             .stroke(voiceColor.opacity(0.45), lineWidth: 1)
@@ -361,7 +454,7 @@ struct GranularView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("DIRECTION")
                             .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color(hex: "#888888"))
+                            .foregroundColor(ColorPalette.textMuted)
 
                         Button(action: {
                             reverseGrains.toggle()
@@ -378,7 +471,7 @@ struct GranularView: View {
                                 .padding(.vertical, 5)
                                 .background(
                                     RoundedRectangle(cornerRadius: 4)
-                                        .fill(reverseGrains ? voiceColor.opacity(0.75) : Color(hex: "#252528"))
+                                        .fill(reverseGrains ? voiceColor.opacity(0.75) : ColorPalette.backgroundTertiary)
                                         .overlay(
                                             RoundedRectangle(cornerRadius: 4)
                                                 .stroke(voiceColor.opacity(0.45), lineWidth: 1)
@@ -393,7 +486,7 @@ struct GranularView: View {
                         GranularSlider(
                             label: "DECAY",
                             value: $decay,
-                            color: Color(hex: "#FF9500"),
+                            color: ColorPalette.ledAmber,
                             formatter: { value in
                                 // Higher value = longer decay
                                 if value < 0.25 {
@@ -416,8 +509,7 @@ struct GranularView: View {
             }
         }
         .padding(16)
-        .background(Color(hex: "#0F0F11"))
-        .cornerRadius(8)
+        } // end ConsoleModuleView
         .onAppear {
             let normalized = Float(filterModel) / Float(max(filterModelNames.count - 1, 1))
             audioEngine.setParameter(id: .granularFilterModel, value: normalized, voiceIndex: voiceIndex)
@@ -474,6 +566,18 @@ struct GranularView: View {
             loadAudioFile(url: url)
         }
     }
+
+    private func channelShortName(_ channel: Int) -> String {
+        switch channel {
+        case 0: return "PLT"
+        case 1: return "RNG"
+        case 2: return "GR1"
+        case 3: return "LP1"
+        case 4: return "LP2"
+        case 5: return "GR4"
+        default: return "???"
+        }
+    }
 }
 
 // MARK: - Waveform View
@@ -489,6 +593,7 @@ struct WaveformView: View {
     let loopStart: Float?
     let loopEnd: Float?
     let onLoopRangeChange: ((Float, Float) -> Void)?
+    let recordPosition: Float?  // 0-1 normalized record head position (nil = not recording)
 
     init(
         waveformData: [Float]?,
@@ -500,7 +605,8 @@ struct WaveformView: View {
         onSeek: ((Float) -> Void)? = nil,
         loopStart: Float? = nil,
         loopEnd: Float? = nil,
-        onLoopRangeChange: ((Float, Float) -> Void)? = nil
+        onLoopRangeChange: ((Float, Float) -> Void)? = nil,
+        recordPosition: Float? = nil
     ) {
         self.waveformData = waveformData
         self.playheadPosition = playheadPosition
@@ -512,12 +618,13 @@ struct WaveformView: View {
         self.loopStart = loopStart
         self.loopEnd = loopEnd
         self.onLoopRangeChange = onLoopRangeChange
+        self.recordPosition = recordPosition
     }
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 4)
-                .fill(Color(hex: "#1A1A1D"))
+                .fill(ColorPalette.backgroundSecondary)
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
                         .stroke(isDragOver ? color : Color.clear, lineWidth: 2)
@@ -622,6 +729,27 @@ struct WaveformView: View {
                                 .frame(width: 6, height: 6)
                                 .position(x: playheadX, y: 4)
                         }
+
+                        // Record head (red line when recording)
+                        if let recPos = recordPosition {
+                            let recX = CGFloat(recPos) * width
+
+                            Rectangle()
+                                .fill(Color.red.opacity(0.4))
+                                .frame(width: 8)
+                                .blur(radius: 4)
+                                .position(x: recX, y: height / 2)
+
+                            Rectangle()
+                                .fill(Color.red)
+                                .frame(width: 2)
+                                .position(x: recX, y: height / 2)
+
+                            Circle()
+                                .fill(Color.red)
+                                .frame(width: 6, height: 6)
+                                .position(x: recX, y: height - 4)
+                        }
                     }
                     .contentShape(Rectangle())
                     .gesture(
@@ -642,10 +770,10 @@ struct WaveformView: View {
                         HStack {
                             Text(fileName)
                                 .font(.system(size: 10, design: .monospaced))
-                                .foregroundColor(Color(hex: "#888888"))
+                                .foregroundColor(ColorPalette.textMuted)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 2)
-                                .background(Color(hex: "#1A1A1D").opacity(0.8))
+                                .background(ColorPalette.backgroundSecondary.opacity(0.8))
                                 .cornerRadius(2)
                             Spacer()
                         }
@@ -657,10 +785,10 @@ struct WaveformView: View {
                 VStack(spacing: 4) {
                     Image(systemName: "waveform")
                         .font(.system(size: 24))
-                        .foregroundColor(isDragOver ? color : Color(hex: "#666666"))
+                        .foregroundColor(isDragOver ? color : ColorPalette.textDimmed)
                     Text(isDragOver ? "Drop to load" : "Drop audio file or use folder button")
                         .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(isDragOver ? color : Color(hex: "#666666"))
+                        .foregroundColor(isDragOver ? color : ColorPalette.textDimmed)
                 }
             }
         }
@@ -692,15 +820,15 @@ struct GranularSlider: View {
     var body: some View {
         VStack(spacing: 4) {
             Text(label)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundColor(Color(hex: "#888888"))
+                .font(Typography.valueSmall)
+                .foregroundColor(ColorPalette.textMuted)
 
             // Vertical slider
             GeometryReader { geometry in
                 ZStack(alignment: .bottom) {
                     // Background track
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(Color(hex: "#252528"))
+                        .fill(ColorPalette.backgroundTertiary)
 
                     // Value fill
                     RoundedRectangle(cornerRadius: 4)
@@ -718,7 +846,7 @@ struct GranularSlider: View {
             .frame(width: 50, height: 60)
 
             Text(displayValue)
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .font(Typography.channelLabel)
                 .foregroundColor(color)
         }
     }

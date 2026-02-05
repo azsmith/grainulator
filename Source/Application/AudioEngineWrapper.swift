@@ -176,6 +176,25 @@ func AudioEngine_RenderAndReadMultiChannel(_ handle: OpaquePointer, _ channelInd
 @_silgen_name("AudioEngine_RenderAndReadLegacyBus")
 func AudioEngine_RenderAndReadLegacyBus(_ handle: OpaquePointer, _ busIndex: Int32, _ sampleTime: Int64, _ left: UnsafeMutablePointer<Float>?, _ right: UnsafeMutablePointer<Float>?, _ numFrames: Int32)
 
+// Recording control
+@_silgen_name("AudioEngine_StartRecording")
+func AudioEngine_StartRecording(_ handle: OpaquePointer, _ reelIndex: Int32, _ mode: Int32, _ sourceType: Int32, _ sourceChannel: Int32)
+
+@_silgen_name("AudioEngine_StopRecording")
+func AudioEngine_StopRecording(_ handle: OpaquePointer, _ reelIndex: Int32)
+
+@_silgen_name("AudioEngine_SetRecordingFeedback")
+func AudioEngine_SetRecordingFeedback(_ handle: OpaquePointer, _ reelIndex: Int32, _ feedback: Float)
+
+@_silgen_name("AudioEngine_IsRecording")
+func AudioEngine_IsRecording(_ handle: OpaquePointer, _ reelIndex: Int32) -> Bool
+
+@_silgen_name("AudioEngine_GetRecordingPosition")
+func AudioEngine_GetRecordingPosition(_ handle: OpaquePointer, _ reelIndex: Int32) -> Float
+
+@_silgen_name("AudioEngine_WriteExternalInput")
+func AudioEngine_WriteExternalInput(_ handle: OpaquePointer, _ left: UnsafePointer<Float>?, _ right: UnsafePointer<Float>?, _ numFrames: Int32)
+
 /// Main audio engine wrapper that manages CoreAudio and the synthesis engine
 @MainActor
 class AudioEngineWrapper: ObservableObject {
@@ -213,6 +232,29 @@ class AudioEngineWrapper: ObservableObject {
     @Published var masterLevelL: Float = 0
     @Published var masterLevelR: Float = 0
 
+    // MARK: - Recording
+
+    enum RecordMode: Int, Sendable {
+        case oneShot = 0
+        case liveLoop = 1
+    }
+
+    enum RecordSourceType: Int, Sendable {
+        case external = 0       // Mic/line input
+        case internalVoice = 1  // Another voice (pre-mixer)
+    }
+
+    struct RecordingUIState {
+        var isRecording: Bool = false
+        var mode: RecordMode = .oneShot
+        var sourceType: RecordSourceType = .external
+        var sourceChannel: Int = 0  // 0=Plaits,1=Rings,2=Gran1,3=Loop1,4=Loop2,5=Gran4
+        var feedback: Float = 0.0
+    }
+
+    @Published var recordingStates: [Int: RecordingUIState] = [:]
+    @Published var recordingPositions: [Int: Float] = [:]
+
     // MARK: - Audio Graph Mode
 
     enum AudioGraphMode {
@@ -227,6 +269,7 @@ class AudioEngineWrapper: ObservableObject {
     private var audioEngine: AVAudioEngine?
     private var inputNode: AVAudioInputNode?
     private var outputNode: AVAudioOutputNode?
+    private var inputTapInstalled = false
     private var sourceNode: AVAudioSourceNode?  // Legacy mode
     private var legacySendSourceNodes: [AVAudioSourceNode] = []
     private var legacySendReturnMixers: [AVAudioMixerNode] = []
@@ -1304,6 +1347,21 @@ class AudioEngineWrapper: ObservableObject {
             newGranularPositions[voiceIndex] = position
         }
 
+        // Recording positions (for reels that are recording)
+        var newRecordingPositions: [Int: Float] = [:]
+        for (reelIndex, state) in recordingStates where state.isRecording {
+            let pos = AudioEngine_GetRecordingPosition(handle, Int32(reelIndex))
+            newRecordingPositions[reelIndex] = pos
+            // Check if recording auto-stopped (hit 2-min limit)
+            if !AudioEngine_IsRecording(handle, Int32(reelIndex)) {
+                recordingStates[reelIndex]?.isRecording = false
+                updateWaveformOverview(reelIndex: reelIndex)
+            } else {
+                // Refresh waveform while recording so user sees audio being written
+                updateWaveformOverview(reelIndex: reelIndex)
+            }
+        }
+
         // --- Commit all values at once (minimizes @Published notification spread) ---
         cpuLoad = newCpuLoad
         latency = newLatency
@@ -1311,6 +1369,7 @@ class AudioEngineWrapper: ObservableObject {
         masterLevelL = newMasterL
         masterLevelR = newMasterR
         granularPositions = newGranularPositions
+        recordingPositions = newRecordingPositions
     }
 
     // MARK: - Parameter Control
@@ -1532,6 +1591,91 @@ class AudioEngineWrapper: ObservableObject {
     func setGranularPosition(voiceIndex: Int, position: Float) {
         guard let handle = cppEngineHandle else { return }
         AudioEngine_SetGranularPosition(handle, Int32(voiceIndex), position)
+    }
+
+    // MARK: - Recording Control
+
+    /// Start recording into a reel buffer
+    func startRecording(reelIndex: Int, mode: RecordMode, sourceType: RecordSourceType, sourceChannel: Int = 0) {
+        guard let handle = cppEngineHandle else { return }
+
+        if sourceType == .external && !inputTapInstalled {
+            setupInputTap()
+        }
+
+        AudioEngine_StartRecording(
+            handle,
+            Int32(reelIndex),
+            Int32(mode.rawValue),
+            Int32(sourceType.rawValue),
+            Int32(sourceChannel)
+        )
+
+        recordingStates[reelIndex] = RecordingUIState(
+            isRecording: true,
+            mode: mode,
+            sourceType: sourceType,
+            sourceChannel: sourceChannel,
+            feedback: recordingStates[reelIndex]?.feedback ?? 0.0
+        )
+    }
+
+    /// Stop recording for a reel
+    func stopRecording(reelIndex: Int) {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_StopRecording(handle, Int32(reelIndex))
+        recordingStates[reelIndex]?.isRecording = false
+
+        // Remove input tap if no external recordings remain active
+        let anyExternalRecording = recordingStates.values.contains { $0.isRecording && $0.sourceType == .external }
+        if !anyExternalRecording && inputTapInstalled {
+            removeInputTap()
+        }
+
+        // Refresh waveform
+        updateWaveformOverview(reelIndex: reelIndex)
+    }
+
+    /// Set feedback level for live loop recording (0=destructive, 1=full overdub)
+    func setRecordingFeedback(reelIndex: Int, feedback: Float) {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_SetRecordingFeedback(handle, Int32(reelIndex), feedback)
+        recordingStates[reelIndex]?.feedback = feedback
+    }
+
+    /// Check if a reel is currently recording
+    func isReelRecording(reelIndex: Int) -> Bool {
+        guard let handle = cppEngineHandle else { return false }
+        return AudioEngine_IsRecording(handle, Int32(reelIndex))
+    }
+
+    // MARK: - Input Tap Management
+
+    private func setupInputTap() {
+        guard let engine = audioEngine else { return }
+        let input = engine.inputNode
+        let inputFormat = input.outputFormat(forBus: 0)
+
+        // Only install if format is valid
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else { return }
+
+        input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(bufferSize), format: inputFormat) { [weak self] buffer, _ in
+            guard let self = self, let handle = self.cppEngineHandle else { return }
+            guard let floatData = buffer.floatChannelData else { return }
+
+            let frameCount = Int32(buffer.frameLength)
+            let leftPtr = floatData[0]
+            let rightPtr = inputFormat.channelCount > 1 ? floatData[1] : floatData[0]
+
+            AudioEngine_WriteExternalInput(handle, leftPtr, rightPtr, frameCount)
+        }
+        inputTapInstalled = true
+    }
+
+    private func removeInputTap() {
+        guard let engine = audioEngine, inputTapInstalled else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        inputTapInstalled = false
     }
 
     /// Gets active grain count across all voices

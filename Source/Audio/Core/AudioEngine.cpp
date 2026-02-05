@@ -630,6 +630,9 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                 }
             }
 
+            // Record from Plaits (channel 0) pre-mixer
+            processRecordingForChannel(0, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+
             float gain = m_channelGain[ch];
             float pan = m_channelPan[ch];
             float sendA = m_channelSendA[ch];
@@ -678,6 +681,9 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
             if (m_ringsVoice) {
                 m_ringsVoice->Render(m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
             }
+
+            // Record from Rings (channel 1) pre-mixer
+            processRecordingForChannel(1, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
 
             float gain = m_channelGain[ch];
             float pan = m_channelPan[ch];
@@ -738,6 +744,9 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                 totalActiveGrains += static_cast<int>(m_granularVoices[trackIndex]->GetNumActiveGrains());
             }
 
+            // Record from track voice (channel ch) pre-mixer
+            processRecordingForChannel(ch, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+
             float gain = m_channelGain[ch];
             float pan = m_channelPan[ch];
             float sendA = m_channelSendA[ch];
@@ -776,6 +785,9 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                 m_lastSendBusBR[outputIndex] += sendBR;
             }
         }
+
+        // ========== Process external input recording ==========
+        processExternalInputRecording(frameCount);
 
         // ========== Process Internal Effects (disabled when external send routing is active) ==========
         if (!m_externalSendRoutingEnabled) {
@@ -978,6 +990,9 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
                 }
             }
 
+            // Record from Plaits (channel 0) pre-output
+            processRecordingForChannel(0, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+
             // Copy to output buffers (no mixing/effects)
             if (channelBuffers[0]) {
                 std::memcpy(channelBuffers[0] + frameOffset, m_voiceBuffer[0], frameCount * sizeof(float));
@@ -1001,6 +1016,9 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
             if (m_ringsVoice) {
                 m_ringsVoice->Render(m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
             }
+
+            // Record from Rings (channel 1) pre-output
+            processRecordingForChannel(1, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
 
             if (channelBuffers[2]) {
                 std::memcpy(channelBuffers[2] + frameOffset, m_voiceBuffer[0], frameCount * sizeof(float));
@@ -1033,6 +1051,9 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
                 totalActiveGrains += static_cast<int>(m_granularVoices[trackIndex]->GetNumActiveGrains());
             }
 
+            // Record from track voice (channel trackIndex+2) pre-output
+            processRecordingForChannel(trackIndex + 2, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+
             if (channelBuffers[bufferBaseIndex]) {
                 std::memcpy(channelBuffers[bufferBaseIndex] + frameOffset, m_voiceBuffer[0], frameCount * sizeof(float));
             }
@@ -1046,6 +1067,9 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
                 channelPeaks[channelIndex] = std::max(channelPeaks[channelIndex], peak);
             }
         }
+
+        // Process external input recording
+        processExternalInputRecording(frameCount);
     };
 
     // Process with sample-accurate note events
@@ -2786,6 +2810,142 @@ void AudioEngine::readChannelFromRingBuffer(int channelIndex, float* left, float
 
 size_t AudioEngine::getRingBufferReadableFrames(int channelIndex) const {
     return m_ringBuffer.getReadableFrames(channelIndex);
+}
+
+// ========== Recording Implementation ==========
+
+void AudioEngine::startRecording(int reelIndex, int mode, int sourceType, int sourceChannel) {
+    if (reelIndex < 0 || reelIndex >= 32) return;
+
+    // Create reel buffer if needed
+    if (!m_reelBuffers[reelIndex]) {
+        m_reelBuffers[reelIndex] = std::make_unique<ReelBuffer>();
+    }
+
+    auto& reel = m_reelBuffers[reelIndex];
+    RecordMode recMode = static_cast<RecordMode>(mode);
+
+    // For LiveLoop, if buffer has no content yet, initialize to 2 minutes of silence
+    if (recMode == RecordMode::LiveLoop && reel->GetLength() == 0) {
+        reel->SetLength(ReelBuffer::kMaxRecordSamples);
+        reel->SetLoopLength(ReelBuffer::kMaxRecordSamples);
+    } else if (recMode == RecordMode::LiveLoop) {
+        reel->SetLoopLength(reel->GetLength());
+    }
+
+    // Assign buffer to voice if this is a standard reel index
+    if (reelIndex < kNumGranularVoices && m_granularVoices[reelIndex]) {
+        m_granularVoices[reelIndex]->SetBuffer(reel.get());
+    }
+    if ((reelIndex == 1 || reelIndex == 2) && m_looperVoices[reelIndex - 1]) {
+        m_looperVoices[reelIndex - 1]->SetBuffer(reel.get());
+    }
+
+    // Find a free recording slot or reuse one targeting the same reel
+    int slot = -1;
+    for (int i = 0; i < kMaxRecordingSessions; ++i) {
+        if (!m_recordingStates[i].active.load(std::memory_order_relaxed)) {
+            slot = i;
+            break;
+        }
+        if (m_recordingStates[i].targetReel == reelIndex) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) return;  // No free slots
+
+    m_recordingStates[slot].sourceType = sourceType;
+    m_recordingStates[slot].sourceChannel = sourceChannel;
+    m_recordingStates[slot].targetReel = reelIndex;
+
+    reel->StartRecording(recMode);
+    m_recordingStates[slot].active.store(true, std::memory_order_release);
+}
+
+void AudioEngine::stopRecording(int reelIndex) {
+    if (reelIndex < 0 || reelIndex >= 32) return;
+
+    for (int i = 0; i < kMaxRecordingSessions; ++i) {
+        if (m_recordingStates[i].active.load(std::memory_order_relaxed) &&
+            m_recordingStates[i].targetReel == reelIndex) {
+            m_recordingStates[i].active.store(false, std::memory_order_release);
+        }
+    }
+
+    if (m_reelBuffers[reelIndex]) {
+        m_reelBuffers[reelIndex]->StopRecording();
+
+        // Update default splice to cover recorded content
+        auto& reel = m_reelBuffers[reelIndex];
+        if (reel->GetNumSplices() > 0) {
+            reel->GetSpliceMutable(0).end_sample = static_cast<uint32_t>(reel->GetLength());
+        }
+    }
+}
+
+void AudioEngine::setRecordingFeedback(int reelIndex, float feedback) {
+    if (reelIndex < 0 || reelIndex >= 32) return;
+    if (m_reelBuffers[reelIndex]) {
+        m_reelBuffers[reelIndex]->SetFeedback(std::clamp(feedback, 0.0f, 1.0f));
+    }
+}
+
+bool AudioEngine::isRecording(int reelIndex) const {
+    if (reelIndex < 0 || reelIndex >= 32) return false;
+    if (!m_reelBuffers[reelIndex]) return false;
+    return m_reelBuffers[reelIndex]->IsRecording();
+}
+
+float AudioEngine::getRecordingPosition(int reelIndex) const {
+    if (reelIndex < 0 || reelIndex >= 32) return 0.0f;
+    if (!m_reelBuffers[reelIndex]) return 0.0f;
+    return m_reelBuffers[reelIndex]->GetNormalizedRecordPosition();
+}
+
+void AudioEngine::writeExternalInput(const float* left, const float* right, int numFrames) {
+    int count = std::min(numFrames, kMaxBufferSize);
+    std::memcpy(m_externalInputL, left, count * sizeof(float));
+    std::memcpy(m_externalInputR, right, count * sizeof(float));
+    m_externalInputFrameCount.store(count, std::memory_order_release);
+}
+
+void AudioEngine::processRecordingForChannel(int channelIndex, const float* srcLeft, const float* srcRight, int numFrames) {
+    for (int r = 0; r < kMaxRecordingSessions; ++r) {
+        if (!m_recordingStates[r].active.load(std::memory_order_relaxed)) continue;
+        if (m_recordingStates[r].sourceType != 1) continue;  // Only internal voice sources
+        if (m_recordingStates[r].sourceChannel != channelIndex) continue;
+
+        int targetReel = m_recordingStates[r].targetReel;
+        if (targetReel < 0 || targetReel >= 32) continue;
+        auto& reel = m_reelBuffers[targetReel];
+        if (!reel || !reel->IsRecording()) continue;
+
+        for (int i = 0; i < numFrames; ++i) {
+            reel->RecordSampleWithFeedback(srcLeft[i], srcRight[i]);
+        }
+    }
+}
+
+void AudioEngine::processExternalInputRecording(int numFrames) {
+    int inputFrames = m_externalInputFrameCount.load(std::memory_order_acquire);
+    if (inputFrames == 0) return;
+
+    int framesToProcess = std::min(inputFrames, numFrames);
+
+    for (int r = 0; r < kMaxRecordingSessions; ++r) {
+        if (!m_recordingStates[r].active.load(std::memory_order_relaxed)) continue;
+        if (m_recordingStates[r].sourceType != 0) continue;  // Only external sources
+
+        int targetReel = m_recordingStates[r].targetReel;
+        if (targetReel < 0 || targetReel >= 32) continue;
+        auto& reel = m_reelBuffers[targetReel];
+        if (!reel || !reel->IsRecording()) continue;
+
+        for (int i = 0; i < framesToProcess; ++i) {
+            reel->RecordSampleWithFeedback(m_externalInputL[i], m_externalInputR[i]);
+        }
+    }
 }
 
 } // namespace Grainulator

@@ -63,6 +63,14 @@ float AudioEngine_GetChannelLevel(AudioEngineHandle handle, int channelIndex);
 float AudioEngine_GetMasterLevel(AudioEngineHandle handle, int channel);
 void AudioEngine_RenderAndReadLegacyBus(AudioEngineHandle handle, int busIndex, int64_t sampleTime, float* left, float* right, int numFrames);
 
+// Recording control
+void AudioEngine_StartRecording(AudioEngineHandle handle, int reelIndex, int mode, int sourceType, int sourceChannel);
+void AudioEngine_StopRecording(AudioEngineHandle handle, int reelIndex);
+void AudioEngine_SetRecordingFeedback(AudioEngineHandle handle, int reelIndex, float feedback);
+bool AudioEngine_IsRecording(AudioEngineHandle handle, int reelIndex);
+float AudioEngine_GetRecordingPosition(AudioEngineHandle handle, int reelIndex);
+void AudioEngine_WriteExternalInput(AudioEngineHandle handle, const float* left, const float* right, int numFrames);
+
 #ifdef __cplusplus
 }
 #endif

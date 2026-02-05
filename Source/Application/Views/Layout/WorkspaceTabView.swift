@@ -14,18 +14,19 @@ struct WorkspaceTabView: View {
 
     var body: some View {
         ZStack {
-            // Tab content with animation
-            Group {
-                switch layoutState.currentTab {
-                case .synths:
-                    SynthsTabView()
-                case .granular:
-                    GranularTabView()
-                case .performance:
-                    PerformanceTabView()
-                }
-            }
-            .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            // Keep all tab views alive so @State is preserved when switching tabs.
+            // Only the selected tab is visible; others are hidden but retain their state.
+            SynthsTabView()
+                .opacity(layoutState.currentTab == .synths ? 1 : 0)
+                .allowsHitTesting(layoutState.currentTab == .synths)
+
+            GranularTabView()
+                .opacity(layoutState.currentTab == .granular ? 1 : 0)
+                .allowsHitTesting(layoutState.currentTab == .granular)
+
+            PerformanceTabView()
+                .opacity(layoutState.currentTab == .performance ? 1 : 0)
+                .allowsHitTesting(layoutState.currentTab == .performance)
         }
         .animation(.easeInOut(duration: 0.2), value: layoutState.currentTab)
     }
@@ -51,16 +52,112 @@ struct SynthsTabView: View {
 // MARK: - Granular Tab View
 
 struct GranularTabView: View {
+    @EnvironmentObject var appState: AppState
+
+    private struct VoiceTab: Identifiable {
+        let id: Int
+        let name: String
+        let icon: String
+        let accentColor: Color
+    }
+
+    private let voiceTabs: [VoiceTab] = [
+        VoiceTab(id: 0, name: "GRAN 1", icon: "waveform", accentColor: ColorPalette.accentGranular1),
+        VoiceTab(id: 1, name: "LOOPER 1", icon: "repeat", accentColor: ColorPalette.accentLooper1),
+        VoiceTab(id: 2, name: "LOOPER 2", icon: "repeat", accentColor: ColorPalette.accentLooper2),
+        VoiceTab(id: 3, name: "GRAN 4", icon: "waveform", accentColor: ColorPalette.accentGranular4),
+    ]
+
     var body: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                // All granular and looper voices
-                GranularView(voiceIndex: 0)
-                LooperView(voiceIndex: 1, title: "LOOPER 1")
-                LooperView(voiceIndex: 2, title: "LOOPER 2")
-                GranularView(voiceIndex: 3)
+        VStack(spacing: 0) {
+            // Voice selector tabs
+            voiceTabBar
+
+            // Selected voice content
+            ScrollView {
+                selectedVoiceView
+                    .padding(20)
             }
-            .padding(20)
+        }
+    }
+
+    private var voiceTabBar: some View {
+        HStack(spacing: 4) {
+            ForEach(voiceTabs) { tab in
+                GranularVoiceTabButton(
+                    name: tab.name,
+                    icon: tab.icon,
+                    accentColor: tab.accentColor,
+                    isSelected: appState.selectedGranularVoice == tab.id
+                ) {
+                    appState.focusVoice(tab.id)
+                }
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(ColorPalette.backgroundSecondary)
+        .overlay(
+            Rectangle()
+                .fill(ColorPalette.divider)
+                .frame(height: 1),
+            alignment: .bottom
+        )
+    }
+
+    @ViewBuilder
+    private var selectedVoiceView: some View {
+        switch appState.selectedGranularVoice {
+        case 0:
+            GranularView(voiceIndex: 0)
+        case 1:
+            LooperView(voiceIndex: 1, title: "LOOPER 1")
+        case 2:
+            LooperView(voiceIndex: 2, title: "LOOPER 2")
+        case 3:
+            GranularView(voiceIndex: 3)
+        default:
+            GranularView(voiceIndex: 0)
+        }
+    }
+}
+
+// MARK: - Granular Voice Tab Button
+
+struct GranularVoiceTabButton: View {
+    let name: String
+    let icon: String
+    let accentColor: Color
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var isHovering: Bool = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 10))
+
+                Text(name)
+                    .font(Typography.buttonSmall)
+            }
+            .foregroundColor(isSelected ? .white : (isHovering ? accentColor : ColorPalette.textMuted))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(isSelected ? accentColor : (isHovering ? accentColor.opacity(0.1) : Color.clear))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .stroke(isSelected ? accentColor : Color.clear, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovering = hovering
         }
     }
 }

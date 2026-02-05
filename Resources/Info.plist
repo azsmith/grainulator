@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.grainulator.app</string>
+    <key>CFBundleName</key>
+    <string>Grainulator</string>
+    <key>CFBundleDisplayName</key>
+    <string>Grainulator</string>
+    <key>CFBundleVersion</key>
+    <string>1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleExecutable</key>
+    <string>Grainulator</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Grainulator needs microphone access to record audio from external inputs (mic, line in) into the granular and looper engines.</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>

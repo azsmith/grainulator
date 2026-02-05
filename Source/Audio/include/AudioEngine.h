@@ -277,6 +277,19 @@ public:
     void setGranularPosition(int voiceIndex, float position);
     float getGranularPosition(int voiceIndex) const;
 
+    // Recording control
+    // mode: 0=OneShot, 1=LiveLoop
+    // sourceType: 0=external (mic/line), 1=internal voice
+    // sourceChannel: mixer channel index (0=Plaits,1=Rings,2=Gran1,3=Loop1,4=Loop2,5=Gran4)
+    void startRecording(int reelIndex, int mode, int sourceType, int sourceChannel);
+    void stopRecording(int reelIndex);
+    void setRecordingFeedback(int reelIndex, float feedback);
+    bool isRecording(int reelIndex) const;
+    float getRecordingPosition(int reelIndex) const;  // 0-1 normalized
+
+    // External audio input (called from Swift input tap callback)
+    void writeExternalInput(const float* left, const float* right, int numFrames);
+
     // Quantization
     enum class QuantizationMode {
         None = 0,
@@ -354,6 +367,25 @@ private:
     std::unique_ptr<LooperVoice> m_looperVoices[kNumLooperVoices];
     std::unique_ptr<ReelBuffer> m_reelBuffers[32];  // Up to 32 reel buffers
     int m_activeGranularVoice;  // Currently selected granular voice for parameter control
+
+    // Recording state (up to 6 concurrent sessions, one per mixer channel target)
+    static constexpr int kMaxRecordingSessions = 6;
+    struct RecordingState {
+        std::atomic<bool> active{false};
+        int sourceType{0};       // 0=external, 1=internal voice
+        int sourceChannel{0};    // Mixer channel index (0=Plaits,1=Rings,2=Gran1,3=Loop1,4=Loop2,5=Gran4)
+        int targetReel{0};       // Which reel buffer to record into
+    };
+    RecordingState m_recordingStates[kMaxRecordingSessions];
+
+    // External audio input staging buffer (written by Swift input tap, read by process())
+    float m_externalInputL[kMaxBufferSize]{};
+    float m_externalInputR[kMaxBufferSize]{};
+    std::atomic<int> m_externalInputFrameCount{0};
+
+    // Recording helpers
+    void processRecordingForChannel(int channelIndex, const float* srcLeft, const float* srcRight, int numFrames);
+    void processExternalInputRecording(int numFrames);
 
     // Shared parameters (applied to all voices)
     int m_currentEngine;

@@ -23,30 +23,117 @@ struct LooperView: View {
     @State private var isDragOver: Bool = false
     @State private var loadedFileName: String?
 
+    // Recording state
+    @State private var isRecording: Bool = false
+    @State private var recordMode: AudioEngineWrapper.RecordMode = .liveLoop  // Default to LiveLoop for looper
+    @State private var recordSourceType: AudioEngineWrapper.RecordSourceType = .external
+    @State private var recordSourceChannel: Int = 0
+    @State private var recordFeedback: Float = 0.5  // Default 50% feedback for looper
+
     private let rateOptions: [Float] = [0.25, 0.5, 1.0, 1.5, 2.0]
     private let cutCount = 8
 
     private var accentColor: Color {
-        voiceIndex == 1 ? Color(hex: "#9B59B6") : Color(hex: "#E67E22")
+        voiceIndex == 1 ? ColorPalette.accentLooper1 : ColorPalette.accentLooper2
     }
 
     var body: some View {
+        ConsoleModuleView(
+            title: title,
+            accentColor: accentColor
+        ) {
         VStack(spacing: 14) {
             HStack {
-                Text(title)
-                    .font(.system(size: 18, weight: .bold, design: .monospaced))
-                    .foregroundColor(accentColor)
+                // Recording source & mode controls
+                Menu {
+                    Section("Input Source") {
+                        Button(action: { recordSourceType = .external; recordSourceChannel = 0 }) {
+                            Label("Mic / Line In", systemImage: "mic")
+                        }
+                        Divider()
+                        Button("Plaits") { recordSourceType = .internalVoice; recordSourceChannel = 0 }
+                        Button("Rings") { recordSourceType = .internalVoice; recordSourceChannel = 1 }
+                        Button("Granular 1") { recordSourceType = .internalVoice; recordSourceChannel = 2 }
+                        if voiceIndex != 1 {
+                            Button("Looper 1") { recordSourceType = .internalVoice; recordSourceChannel = 3 }
+                        }
+                        if voiceIndex != 2 {
+                            Button("Looper 2") { recordSourceType = .internalVoice; recordSourceChannel = 4 }
+                        }
+                        Button("Granular 4") { recordSourceType = .internalVoice; recordSourceChannel = 5 }
+                    }
+                    Section("Mode") {
+                        Button(action: { recordMode = .oneShot }) {
+                            Label("One Shot", systemImage: recordMode == .oneShot ? "checkmark" : "")
+                        }
+                        Button(action: { recordMode = .liveLoop }) {
+                            Label("Live Loop", systemImage: recordMode == .liveLoop ? "checkmark" : "")
+                        }
+                    }
+                } label: {
+                    Text(recordSourceType == .external ? "MIC" : channelShortName(recordSourceChannel))
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(ColorPalette.textMuted)
+                        .frame(width: 40, height: 32)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(ColorPalette.backgroundTertiary))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+
+                if recordMode == .liveLoop {
+                    VStack(spacing: 1) {
+                        Text("FB")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(ColorPalette.textDimmed)
+                        Text("\(Int(recordFeedback * 100))%")
+                            .font(.system(size: 8, design: .monospaced))
+                            .foregroundColor(accentColor)
+                    }
+                    .frame(width: 30)
+                    Slider(value: $recordFeedback, in: 0...1)
+                        .frame(width: 60)
+                        .onChange(of: recordFeedback) { newValue in
+                            audioEngine.setRecordingFeedback(reelIndex: voiceIndex, feedback: newValue)
+                        }
+                }
 
                 Spacer()
 
                 Button(action: openFilePicker) {
                     Image(systemName: "folder")
                         .font(.system(size: 14))
-                        .foregroundColor(Color(hex: "#888888"))
+                        .foregroundColor(ColorPalette.textMuted)
                         .frame(width: 32, height: 32)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Color(hex: "#252528")))
+                        .background(RoundedRectangle(cornerRadius: 4).fill(ColorPalette.backgroundTertiary))
                 }
                 .buttonStyle(.plain)
+
+                // Record button
+                Button(action: {
+                    isRecording.toggle()
+                    if isRecording {
+                        audioEngine.startRecording(
+                            reelIndex: voiceIndex,
+                            mode: recordMode,
+                            sourceType: recordSourceType,
+                            sourceChannel: recordSourceChannel
+                        )
+                    } else {
+                        audioEngine.stopRecording(reelIndex: voiceIndex)
+                    }
+                }) {
+                    Circle()
+                        .fill(isRecording ? Color.red : Color.red.opacity(0.4))
+                        .frame(width: 16, height: 16)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.red.opacity(0.6), lineWidth: 1)
+                        )
+                        .frame(width: 32, height: 32)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(ColorPalette.backgroundTertiary))
+                }
+                .buttonStyle(.plain)
+                .help(isRecording ? "Stop recording" : "Start recording")
 
                 Button(action: {
                     isPlaying.toggle()
@@ -54,9 +141,9 @@ struct LooperView: View {
                 }) {
                     Image(systemName: isPlaying ? "stop.fill" : "play.fill")
                         .font(.system(size: 16))
-                        .foregroundColor(isPlaying ? Color(hex: "#FF6B6B") : accentColor)
+                        .foregroundColor(isPlaying ? ColorPalette.accentPlaits : accentColor)
                         .frame(width: 32, height: 32)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Color(hex: "#252528")))
+                        .background(RoundedRectangle(cornerRadius: 4).fill(ColorPalette.backgroundTertiary))
                 }
                 .buttonStyle(.plain)
             }
@@ -75,7 +162,8 @@ struct LooperView: View {
                     loopStart = min(max(newStart, 0), newEnd)
                     loopEnd = max(min(newEnd, 1), loopStart)
                     sendLoopBounds()
-                }
+                },
+                recordPosition: isRecording ? audioEngine.recordingPositions[voiceIndex] : nil
             )
             .frame(height: 78)
             .onDrop(of: [.audio, .fileURL], isTargeted: $isDragOver) { providers in
@@ -86,7 +174,7 @@ struct LooperView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("RATE")
                         .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .foregroundColor(Color(hex: "#888888"))
+                        .foregroundColor(ColorPalette.textMuted)
 
                     Menu {
                         ForEach(rateOptions, id: \.self) { option in
@@ -105,7 +193,7 @@ struct LooperView: View {
                                 .foregroundColor(accentColor)
                         }
                         .frame(width: 78, height: 24)
-                        .background(Color(hex: "#252528"))
+                        .background(ColorPalette.backgroundTertiary)
                         .cornerRadius(4)
                     }
                     .buttonStyle(.plain)
@@ -114,7 +202,7 @@ struct LooperView: View {
                 Toggle(isOn: $isReverse) {
                     Text("REV")
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color(hex: "#DDDDDD"))
+                        .foregroundColor(ColorPalette.textSecondary)
                 }
                 .toggleStyle(SwitchToggleStyle(tint: accentColor))
                 .frame(width: 84)
@@ -123,7 +211,7 @@ struct LooperView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("LOOP START")
                         .font(.system(size: 8, weight: .medium, design: .monospaced))
-                        .foregroundColor(Color(hex: "#777777"))
+                        .foregroundColor(ColorPalette.textDimmed)
                     Slider(
                         value: Binding(
                             get: { Double(loopStart) },
@@ -141,7 +229,7 @@ struct LooperView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("LOOP END")
                         .font(.system(size: 8, weight: .medium, design: .monospaced))
-                        .foregroundColor(Color(hex: "#777777"))
+                        .foregroundColor(ColorPalette.textDimmed)
                     Slider(
                         value: Binding(
                             get: { Double(loopEnd) },
@@ -162,9 +250,9 @@ struct LooperView: View {
                     Button(action: { triggerCut(cut) }) {
                         Text("\(cut + 1)")
                             .font(.system(size: 10, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(hex: "#EEEEEE"))
+                            .foregroundColor(ColorPalette.textPrimary)
                             .frame(width: 34, height: 24)
-                            .background(Color(hex: "#252528"))
+                            .background(ColorPalette.backgroundTertiary)
                             .cornerRadius(4)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 4)
@@ -176,8 +264,7 @@ struct LooperView: View {
             }
         }
         .padding(16)
-        .background(Color(hex: "#0F0F11"))
-        .cornerRadius(8)
+        } // end ConsoleModuleView
         .onAppear {
             sendRate()
             sendReverse()
@@ -240,6 +327,18 @@ struct LooperView: View {
         if panel.runModal() == .OK, let url = panel.url {
             audioEngine.loadAudioFile(url: url, reelIndex: voiceIndex)
             loadedFileName = url.lastPathComponent
+        }
+    }
+
+    private func channelShortName(_ channel: Int) -> String {
+        switch channel {
+        case 0: return "PLT"
+        case 1: return "RNG"
+        case 2: return "GR1"
+        case 3: return "LP1"
+        case 4: return "LP2"
+        case 5: return "GR4"
+        default: return "???"
         }
     }
 }

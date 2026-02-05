@@ -39,6 +39,12 @@ struct SpliceMarker {
     }
 };
 
+/// Recording mode for ReelBuffer
+enum class RecordMode : int {
+    OneShot = 0,  // Record linearly until stopped or buffer full
+    LiveLoop = 1  // Record head loops, feedback controls overdub
+};
+
 /// ReelBuffer - holds audio data and splice markers
 /// Capacity: 2.5 minutes @ 48kHz stereo = 7,200,000 samples per channel
 class ReelBuffer {
@@ -47,6 +53,7 @@ public:
     static constexpr size_t kMaxDurationSeconds = 150;  // 2.5 minutes
     static constexpr size_t kDefaultSampleRate = 48000;
     static constexpr size_t kMaxSamples = kMaxDurationSeconds * kDefaultSampleRate;  // 7.2M samples
+    static constexpr size_t kMaxRecordSamples = 120 * kDefaultSampleRate;  // 2 minutes recording limit
     static constexpr size_t kMaxSplices = 300;
     static constexpr size_t kNumChannels = 2;  // Stereo
 
@@ -56,6 +63,9 @@ public:
         , num_splices_(0)
         , is_recording_(false)
         , record_position_(0)
+        , record_mode_(static_cast<int>(RecordMode::OneShot))
+        , feedback_(0.0f)
+        , loop_length_(0)
     {
         // Allocate audio buffers
         buffer_left_ = new float[kMaxSamples];
@@ -242,26 +252,107 @@ public:
 
     bool IsRecording() const { return is_recording_; }
 
-    void StartRecording() {
-        is_recording_ = true;
+    RecordMode GetRecordMode() const {
+        return static_cast<RecordMode>(record_mode_.load(std::memory_order_relaxed));
+    }
+
+    void SetRecordMode(RecordMode mode) {
+        record_mode_.store(static_cast<int>(mode), std::memory_order_relaxed);
+    }
+
+    float GetFeedback() const { return feedback_.load(std::memory_order_relaxed); }
+    void SetFeedback(float fb) { feedback_.store(fb, std::memory_order_relaxed); }
+
+    size_t GetLoopLength() const { return loop_length_; }
+    void SetLoopLength(size_t samples) {
+        loop_length_ = std::min(samples, kMaxRecordSamples);
+    }
+
+    /// Start recording in the specified mode
+    void StartRecording(RecordMode mode) {
+        record_mode_.store(static_cast<int>(mode), std::memory_order_relaxed);
+        // Always reset record position when starting a fresh recording.
+        // This prevents issues when switching modes (e.g. OneShot leaves
+        // record_position_ at the end of the buffer, which would cause
+        // LiveLoop to immediately wrap or fail).
         record_position_ = 0;
+        is_recording_ = true;
+    }
+
+    /// Legacy overload — defaults to OneShot
+    void StartRecording() {
+        StartRecording(RecordMode::OneShot);
     }
 
     void StopRecording() {
         is_recording_ = false;
-        SetLength(record_position_);
+        RecordMode mode = GetRecordMode();
+        if (mode == RecordMode::OneShot) {
+            SetLength(record_position_);
+        }
+        // LiveLoop: length stays as loop_length_, don't change it
     }
 
-    /// Record a stereo sample pair
+    /// Record a stereo sample pair (OneShot mode — no feedback)
     void RecordSample(float left, float right) {
-        if (!is_recording_ || record_position_ >= kMaxSamples) return;
+        if (!is_recording_ || record_position_ >= kMaxRecordSamples) {
+            if (is_recording_ && record_position_ >= kMaxRecordSamples) {
+                StopRecording();  // Auto-stop at limit
+            }
+            return;
+        }
 
         buffer_left_[record_position_] = left;
         buffer_right_[record_position_] = right;
         record_position_++;
     }
 
+    /// Record a stereo sample pair with feedback (for both modes)
+    /// In OneShot mode: destructive write, stops at kMaxRecordSamples
+    /// In LiveLoop mode: blends with existing buffer using feedback, wraps at loop_length_
+    void RecordSampleWithFeedback(float left, float right) {
+        if (!is_recording_) return;
+
+        RecordMode mode = GetRecordMode();
+
+        if (mode == RecordMode::OneShot) {
+            if (record_position_ >= kMaxRecordSamples) {
+                StopRecording();
+                return;
+            }
+            buffer_left_[record_position_] = left;
+            buffer_right_[record_position_] = right;
+            record_position_++;
+            // Update length as we record so playback can see new content
+            if (record_position_ > length_) {
+                length_ = record_position_;
+            }
+        } else {
+            // LiveLoop mode
+            if (loop_length_ == 0) return;
+            if (record_position_ >= loop_length_) {
+                record_position_ = 0;
+            }
+            float fb = feedback_.load(std::memory_order_relaxed);
+            buffer_left_[record_position_] = buffer_left_[record_position_] * fb + left;
+            buffer_right_[record_position_] = buffer_right_[record_position_] * fb + right;
+            record_position_++;
+            if (record_position_ >= loop_length_) {
+                record_position_ = 0;
+            }
+        }
+    }
+
     size_t GetRecordPosition() const { return record_position_; }
+
+    /// Get normalized record position (0-1) for UI display
+    float GetNormalizedRecordPosition() const {
+        RecordMode mode = GetRecordMode();
+        if (mode == RecordMode::LiveLoop) {
+            return loop_length_ > 0 ? static_cast<float>(record_position_) / static_cast<float>(loop_length_) : 0.0f;
+        }
+        return kMaxRecordSamples > 0 ? static_cast<float>(record_position_) / static_cast<float>(kMaxRecordSamples) : 0.0f;
+    }
 
     // ========== Waveform Overview (for UI) ==========
 
@@ -307,6 +398,9 @@ private:
 
     std::atomic<bool> is_recording_;
     size_t record_position_;
+    std::atomic<int> record_mode_;       // RecordMode enum (set from UI, read from audio thread)
+    std::atomic<float> feedback_;        // 0-1 feedback for LiveLoop (set from UI, read from audio thread)
+    size_t loop_length_;                 // Loop length in samples for LiveLoop mode
 
     // Prevent copying (large buffers)
     ReelBuffer(const ReelBuffer&) = delete;

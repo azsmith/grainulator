@@ -104,6 +104,17 @@ void AudioEngine_RenderAndReadMultiChannel(AudioEngineHandle handle, int channel
 // Bus mapping: 0=dry mix, 1=send A, 2=send B.
 void AudioEngine_RenderAndReadLegacyBus(AudioEngineHandle handle, int busIndex, int64_t sampleTime, float* left, float* right, int numFrames);
 
+// Recording control
+// mode: 0=OneShot, 1=LiveLoop
+// sourceType: 0=external (mic/line), 1=internal voice
+// sourceChannel: mixer channel index (0=Plaits,1=Rings,2=Gran1,3=Loop1,4=Loop2,5=Gran4)
+void AudioEngine_StartRecording(AudioEngineHandle handle, int reelIndex, int mode, int sourceType, int sourceChannel);
+void AudioEngine_StopRecording(AudioEngineHandle handle, int reelIndex);
+void AudioEngine_SetRecordingFeedback(AudioEngineHandle handle, int reelIndex, float feedback);
+bool AudioEngine_IsRecording(AudioEngineHandle handle, int reelIndex);
+float AudioEngine_GetRecordingPosition(AudioEngineHandle handle, int reelIndex);
+void AudioEngine_WriteExternalInput(AudioEngineHandle handle, const float* left, const float* right, int numFrames);
+
 #ifdef __cplusplus
 }
 #endif
