@@ -2,7 +2,7 @@
 //  SequencerEngine.swift
 //  Grainulator
 //
-//  Metropolix-inspired dual-track sequencer for Plaits playback.
+//  Step sequencer — dual-track for Plaits playback.
 //
 
 import Foundation
@@ -100,6 +100,7 @@ enum SequencerTrackOutput: String, CaseIterable, Identifiable {
     case plaits = "PLAITS"
     case rings = "RINGS"
     case both = "BOTH"
+    case daisyDrum = "DRUMS"
 
     var id: String { rawValue }
 }
@@ -175,7 +176,7 @@ struct SequencerTrack: Identifiable {
 }
 
 @MainActor
-final class MetropolixSequencer: ObservableObject {
+final class StepSequencer: ObservableObject {
     @Published var isPlaying: Bool = false
     @Published var tempoBPM: Double = 120.0
     @Published var rootNote: Int = 0 // 0=C ... 11=B
@@ -236,6 +237,7 @@ final class MetropolixSequencer: ObservableObject {
 
     private weak var audioEngine: AudioEngineWrapper?
     private weak var masterClock: MasterClock?
+    private weak var drumSequencer: DrumSequencer?
     private var clockTimer: DispatchSourceTimer?
     private let clockQueue = DispatchQueue(label: "com.grainulator.sequencer.clock", qos: .userInteractive)
 
@@ -310,6 +312,10 @@ final class MetropolixSequencer: ObservableObject {
         self.masterClock = masterClock
     }
 
+    func connectDrumSequencer(_ drumSeq: DrumSequencer) {
+        self.drumSequencer = drumSeq
+    }
+
     func togglePlayback() {
         isPlaying ? stop() : start()
     }
@@ -326,6 +332,29 @@ final class MetropolixSequencer: ObservableObject {
         // Sync the master clock to the same start sample for phase alignment
         masterClock?.startSynced(startSample: startSample)
         scheduleTimer()
+
+        // Start drum sequencer with the same startSample for beat alignment
+        if drumSequencer?.syncToTransport == true {
+            drumSequencer?.startSynced(startSample: startSample)
+        }
+    }
+
+    /// Start synced to an external start sample (e.g. for unified transport)
+    func startSynced(startSample: UInt64) {
+        guard !isPlaying else { return }
+        isPlaying = true
+        transportToken &+= 1
+        audioEngine?.clearScheduledNotes()
+        audioEngine?.allNotesOff()
+        resetRuntimeState(startSample: startSample)
+        playheadUpdateCounter = 0
+        masterClock?.startSynced(startSample: startSample)
+        scheduleTimer()
+
+        // Start drum sequencer with the same startSample for beat alignment
+        if drumSequencer?.syncToTransport == true {
+            drumSequencer?.startSynced(startSample: startSample)
+        }
     }
 
     func stop() {
@@ -343,6 +372,11 @@ final class MetropolixSequencer: ObservableObject {
         pullPlayheadUpdates()
         // Stop the master clock too
         masterClock?.stop()
+
+        // Stop drum sequencer in sync
+        if drumSequencer?.syncToTransport == true {
+            drumSequencer?.stop()
+        }
     }
 
     func reset() {
@@ -873,6 +907,8 @@ final class MetropolixSequencer: ObservableObject {
         case .plaits: offsetMs = snapshot.plaitsTriggerOffsetMs
         case .rings: offsetMs = snapshot.ringsTriggerOffsetMs
         case .both: offsetMs = 0.0
+        case .daisyDrum: offsetMs = 0.0
+        case .drumLane0, .drumLane1, .drumLane2, .drumLane3: offsetMs = 0.0
         }
         let offsetSamples = Int64((offsetMs * snapshot.sampleRate / 1000.0).rounded())
         let shifted = Int64(base) + offsetSamples
@@ -913,6 +949,12 @@ final class MetropolixSequencer: ObservableObject {
                 emitNoteOnDirect(note: note, velocity: velocity, sampleTime: ps, target: .plaits, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys)
                 emitNoteOnDirect(note: note, velocity: velocity, sampleTime: rs, target: .rings, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys)
             }
+        case .daisyDrum:
+            emitNoteOnDirect(note: note, velocity: velocity,
+                             sampleTime: sampleTime,
+                             target: .daisyDrum, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys)
+        case .drumLane0, .drumLane1, .drumLane2, .drumLane3:
+            break  // Drum seq lanes are driven by DrumSequencer, not StepSequencer
         }
     }
 
@@ -951,6 +993,11 @@ final class MetropolixSequencer: ObservableObject {
                 AudioEngine_ScheduleNoteOffTarget(handle, Int32(note), ps, AudioEngineWrapper.NoteTargetMask.plaits.rawValue)
                 AudioEngine_ScheduleNoteOffTarget(handle, Int32(note), rs, AudioEngineWrapper.NoteTargetMask.rings.rawValue)
             }
+        case .daisyDrum:
+            AudioEngine_ScheduleNoteOffTarget(handle, Int32(note),
+                sampleTime, AudioEngineWrapper.NoteTargetMask.daisyDrum.rawValue)
+        case .drumLane0, .drumLane1, .drumLane2, .drumLane3:
+            break  // Drum seq lanes are driven by DrumSequencer, not StepSequencer
         }
     }
 
@@ -980,6 +1027,8 @@ final class MetropolixSequencer: ObservableObject {
         case .plaits: return .plaits
         case .rings: return .rings
         case .both: return .both
+        case .daisyDrum: return .daisyDrum
+        case .drumLane0, .drumLane1, .drumLane2, .drumLane3: return .daisyDrum  // Fallback; not used for drum seq lanes
         }
     }
 
@@ -1108,6 +1157,8 @@ final class MetropolixSequencer: ObservableObject {
             return .rings
         case .both:
             return .both
+        case .daisyDrum:
+            return .daisyDrum
         }
     }
 

@@ -2,14 +2,14 @@
 //  SequencerView.swift
 //  Grainulator
 //
-//  Metropolix-inspired sequencer interface.
+//  Step sequencer interface.
 //  Compact layout with context panel for step editing.
 //
 
 import SwiftUI
 
 struct SequencerView: View {
-    @EnvironmentObject var sequencer: MetropolixSequencer
+    @EnvironmentObject var sequencer: StepSequencer
 
     var body: some View {
         ConsoleModuleView(

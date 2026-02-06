@@ -81,6 +81,22 @@ void AudioEngine_TriggerPlaits(AudioEngineHandle handle, bool state) {
     }
 }
 
+void AudioEngine_TriggerDaisyDrum(AudioEngineHandle handle, bool state) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->triggerDaisyDrum(state);
+    }
+}
+
+void AudioEngine_SetDaisyDrumEngine(AudioEngineHandle handle, int engine) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setParameter(
+            AudioEngine::ParameterID::DaisyDrumEngine,
+            0,
+            static_cast<float>(engine) / 4.0f
+        );
+    }
+}
+
 void AudioEngine_NoteOn(AudioEngineHandle handle, int note, int velocity) {
     if (handle) {
         static_cast<AudioEngine*>(handle)->noteOn(note, velocity);
@@ -382,6 +398,38 @@ float AudioEngine_GetRecordingPosition(AudioEngineHandle handle, int reelIndex) 
 void AudioEngine_WriteExternalInput(AudioEngineHandle handle, const float* left, const float* right, int numFrames) {
     if (handle) {
         static_cast<AudioEngine*>(handle)->writeExternalInput(left, right, numFrames);
+    }
+}
+
+// ========== Drum Sequencer Lane Control ==========
+
+void AudioEngine_TriggerDrumSeqLane(AudioEngineHandle handle, int lane, bool state) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->triggerDrumSeqLane(lane, state);
+    }
+}
+
+void AudioEngine_SetDrumSeqLaneLevel(AudioEngineHandle handle, int lane, float level) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setDrumSeqLaneLevel(lane, level);
+    }
+}
+
+void AudioEngine_SetDrumSeqLaneHarmonics(AudioEngineHandle handle, int lane, float value) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setDrumSeqLaneHarmonics(lane, value);
+    }
+}
+
+void AudioEngine_SetDrumSeqLaneTimbre(AudioEngineHandle handle, int lane, float value) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setDrumSeqLaneTimbre(lane, value);
+    }
+}
+
+void AudioEngine_SetDrumSeqLaneMorph(AudioEngineHandle handle, int lane, float value) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setDrumSeqLaneMorph(lane, value);
     }
 }
 

@@ -119,6 +119,13 @@ struct PlaitsView: View {
             harmonicsMod = audioEngine.getModulationValue(destination: .plaitsHarmonics)
             timbreMod = audioEngine.getModulationValue(destination: .plaitsTimbre)
             morphMod = audioEngine.getModulationValue(destination: .plaitsMorph)
+
+            // Sync engine mode (may be changed externally via API)
+            let rawModel = audioEngine.getParameter(id: .plaitsModel)
+            let engineIndex = Int(round(rawModel * Float(engineNames.count - 1)))
+            if engineIndex != selectedEngine && engineIndex >= 0 && engineIndex < engineNames.count {
+                selectedEngine = engineIndex
+            }
         }
     }
 

@@ -23,8 +23,10 @@ struct ProjectSnapshot: Codable {
     var auPlugins: AUPluginsSnapshot
     var audioFiles: AudioFilesSnapshot
     var uiPreferences: UIPreferencesSnapshot
+    var drumSequencer: DrumSequencerSnapshot?  // Added in version 2
+    var daisyDrum: DaisyDrumVoiceSnapshot?     // Added in version 2
 
-    static let currentVersion = 1
+    static let currentVersion = 2
 }
 
 // MARK: - Engine Parameters Snapshot
@@ -238,6 +240,41 @@ struct AudioFilesSnapshot: Codable {
 struct AudioReelReference: Codable {
     var reelIndex: Int
     var filePath: String  // Relative or absolute path
+}
+
+// MARK: - Drum Sequencer Snapshot
+
+struct DrumSequencerSnapshot: Codable {
+    var lanes: [DrumLaneSnapshot]
+    var stepDivision: String        // SequencerClockDivision raw value
+    var syncToTransport: Bool
+}
+
+struct DrumLaneSnapshot: Codable {
+    var laneIndex: Int
+    var steps: [DrumStepSnapshot]
+    var isMuted: Bool
+    var level: Float
+    var harmonics: Float
+    var timbre: Float
+    var morph: Float
+    var note: Int                   // MIDI note number (24-96)
+}
+
+struct DrumStepSnapshot: Codable {
+    var index: Int
+    var isActive: Bool
+    var velocity: Float
+}
+
+// MARK: - DaisyDrum Voice Snapshot (manual/synth tab single voice)
+
+struct DaisyDrumVoiceSnapshot: Codable {
+    var engine: Float               // Normalized 0-1 (maps to 5 drum engines)
+    var harmonics: Float
+    var timbre: Float
+    var morph: Float
+    var level: Float
 }
 
 // MARK: - UI Preferences Snapshot

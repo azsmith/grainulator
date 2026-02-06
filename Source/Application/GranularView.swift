@@ -98,6 +98,13 @@ struct GranularView: View {
                             Button("Granular 4") { recordSourceType = .internalVoice; recordSourceChannel = 5 }
                         }
                     }
+                    Section("Drums") {
+                        Button("Drums (All)") { recordSourceType = .internalVoice; recordSourceChannel = 6 }
+                        Button("Kick") { recordSourceType = .internalVoice; recordSourceChannel = 7 }
+                        Button("Synth Kick") { recordSourceType = .internalVoice; recordSourceChannel = 8 }
+                        Button("Snare") { recordSourceType = .internalVoice; recordSourceChannel = 9 }
+                        Button("Hi-Hat") { recordSourceType = .internalVoice; recordSourceChannel = 10 }
+                    }
                     Section("Mode") {
                         Button(action: { recordMode = .oneShot }) {
                             Label("One Shot", systemImage: recordMode == .oneShot ? "checkmark" : "")
@@ -219,12 +226,11 @@ struct GranularView: View {
             // Core parameters row
             HStack(spacing: 16) {
                 // SPEED: 0-1 normalized → -2.0 to +2.0 speed → -200% to +200%
-                // 100% = normal speed (1.0x), detents at 0%, ±50%, ±100%
+                // 100% = normal speed (1.0x)
                 GranularSlider(
                     label: "SPEED",
                     value: $speed,
                     color: voiceColor,
-                    detents: [0.25, 0.375, 0.5, 0.625, 0.75],
                     formatter: { value in
                         // speed = (value - 0.5) * 4.0, percentage = speed * 100
                         let speed = (Double(value) - 0.5) * 4.0  // -2 to +2
@@ -580,6 +586,11 @@ struct GranularView: View {
         case 3: return "LP1"
         case 4: return "LP2"
         case 5: return "GR4"
+        case 6: return "DRM"
+        case 7: return "KCK"
+        case 8: return "SK"
+        case 9: return "SNR"
+        case 10: return "HH"
         default: return "???"
         }
     }

@@ -12,7 +12,7 @@ import SwiftUI
 enum WorkspaceTab: String, CaseIterable, Identifiable {
     case synths = "SYNTHS"
     case granular = "GRANULAR"
-    case performance = "PERFORM"
+    case drums = "DRUMS"
 
     var id: String { rawValue }
 
@@ -20,7 +20,7 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
         switch self {
         case .synths: return "waveform"
         case .granular: return "waveform.path"
-        case .performance: return "slider.horizontal.3"
+        case .drums: return "drum.fill"
         }
     }
 
@@ -28,7 +28,7 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
         switch self {
         case .synths: return "SYN"
         case .granular: return "GRN"
-        case .performance: return "PRF"
+        case .drums: return "DRM"
         }
     }
 
@@ -36,7 +36,7 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
         switch self {
         case .synths: return ColorPalette.accentPlaits
         case .granular: return ColorPalette.accentGranular1
-        case .performance: return ColorPalette.accentMaster
+        case .drums: return ColorPalette.accentDaisyDrum
         }
     }
 }

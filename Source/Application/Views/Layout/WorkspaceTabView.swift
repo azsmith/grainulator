@@ -24,9 +24,9 @@ struct WorkspaceTabView: View {
                 .opacity(layoutState.currentTab == .granular ? 1 : 0)
                 .allowsHitTesting(layoutState.currentTab == .granular)
 
-            PerformanceTabView()
-                .opacity(layoutState.currentTab == .performance ? 1 : 0)
-                .allowsHitTesting(layoutState.currentTab == .performance)
+            DrumsTabView()
+                .opacity(layoutState.currentTab == .drums ? 1 : 0)
+                .allowsHitTesting(layoutState.currentTab == .drums)
         }
         .animation(.easeInOut(duration: 0.2), value: layoutState.currentTab)
     }
@@ -43,6 +43,9 @@ struct SynthsTabView: View {
 
                 // Rings resonator
                 RingsView()
+
+                // DaisyDrum percussion
+                DaisyDrumView()
             }
             .padding(20)
         }
@@ -162,71 +165,11 @@ struct GranularVoiceTabButton: View {
     }
 }
 
-// MARK: - Performance Tab View
+// MARK: - Drums Tab View
 
-struct PerformanceTabView: View {
+struct DrumsTabView: View {
     var body: some View {
-        GeometryReader { geometry in
-            HStack(spacing: 20) {
-                // Left: Performance info
-                VStack(spacing: 16) {
-                    performanceSection(title: "PERFORMANCE MODE", color: ColorPalette.accentMaster) {
-                        Text("Streamlined controls for live use")
-                            .font(Typography.parameterLabel)
-                            .foregroundColor(ColorPalette.textMuted)
-
-                        Text("Use the existing synth and effect views for full parameter control, or switch to this tab for a minimal performance-focused interface.")
-                            .font(Typography.parameterLabel)
-                            .foregroundColor(ColorPalette.textDimmed)
-                            .multilineTextAlignment(.center)
-                            .padding()
-                    }
-                }
-                .frame(maxWidth: .infinity)
-
-                // Right: XY Pad area (placeholder)
-                VStack {
-                    Text("XY PAD")
-                        .font(Typography.sectionHeader)
-                        .foregroundColor(ColorPalette.textDimmed)
-
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(ColorPalette.backgroundSecondary)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(ColorPalette.divider, lineWidth: 1)
-                        )
-                        .overlay(
-                            Text("Coming Soon")
-                                .font(Typography.parameterLabel)
-                                .foregroundColor(ColorPalette.textDimmed)
-                        )
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .padding(20)
-        }
-    }
-
-    @ViewBuilder
-    private func performanceSection(
-        title: String,
-        color: Color,
-        @ViewBuilder content: () -> some View
-    ) -> some View {
-        VStack(alignment: .center, spacing: 8) {
-            Text(title)
-                .font(Typography.panelTitle)
-                .foregroundColor(color)
-
-            content()
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(ColorPalette.backgroundSecondary)
-        )
+        DrumSequencerView()
     }
 }
 

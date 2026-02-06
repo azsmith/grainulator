@@ -45,6 +45,12 @@ func AudioEngine_GetCPULoad(_ handle: OpaquePointer) -> Float
 @_silgen_name("AudioEngine_TriggerPlaits")
 func AudioEngine_TriggerPlaits(_ handle: OpaquePointer, _ state: Bool)
 
+@_silgen_name("AudioEngine_TriggerDaisyDrum")
+func AudioEngine_TriggerDaisyDrum(_ handle: OpaquePointer, _ state: Bool)
+
+@_silgen_name("AudioEngine_SetDaisyDrumEngine")
+func AudioEngine_SetDaisyDrumEngine(_ handle: OpaquePointer, _ engine: Int32)
+
 @_silgen_name("AudioEngine_NoteOn")
 func AudioEngine_NoteOn(_ handle: OpaquePointer, _ note: Int32, _ velocity: Int32)
 
@@ -195,6 +201,22 @@ func AudioEngine_GetRecordingPosition(_ handle: OpaquePointer, _ reelIndex: Int3
 @_silgen_name("AudioEngine_WriteExternalInput")
 func AudioEngine_WriteExternalInput(_ handle: OpaquePointer, _ left: UnsafePointer<Float>?, _ right: UnsafePointer<Float>?, _ numFrames: Int32)
 
+// Drum sequencer lane control
+@_silgen_name("AudioEngine_TriggerDrumSeqLane")
+func AudioEngine_TriggerDrumSeqLane(_ handle: OpaquePointer, _ lane: Int32, _ state: Bool)
+
+@_silgen_name("AudioEngine_SetDrumSeqLaneLevel")
+func AudioEngine_SetDrumSeqLaneLevel(_ handle: OpaquePointer, _ lane: Int32, _ level: Float)
+
+@_silgen_name("AudioEngine_SetDrumSeqLaneHarmonics")
+func AudioEngine_SetDrumSeqLaneHarmonics(_ handle: OpaquePointer, _ lane: Int32, _ value: Float)
+
+@_silgen_name("AudioEngine_SetDrumSeqLaneTimbre")
+func AudioEngine_SetDrumSeqLaneTimbre(_ handle: OpaquePointer, _ lane: Int32, _ value: Float)
+
+@_silgen_name("AudioEngine_SetDrumSeqLaneMorph")
+func AudioEngine_SetDrumSeqLaneMorph(_ handle: OpaquePointer, _ lane: Int32, _ value: Float)
+
 /// Main audio engine wrapper that manages CoreAudio and the synthesis engine
 @MainActor
 class AudioEngineWrapper: ObservableObject {
@@ -202,6 +224,11 @@ class AudioEngineWrapper: ObservableObject {
         case plaits = 1
         case rings = 2
         case both = 3
+        case daisyDrum = 4
+        case drumLane0 = 8    // 1 << 3: Analog Kick
+        case drumLane1 = 16   // 1 << 4: Synth Kick
+        case drumLane2 = 32   // 1 << 5: Analog Snare
+        case drumLane3 = 64   // 1 << 6: Hi-Hat
     }
 
     // MARK: - Published Properties
@@ -229,8 +256,8 @@ class AudioEngineWrapper: ObservableObject {
     // Playhead positions for granular voices (0-1, indexed by voice)
     @Published var granularPositions: [Int: Float] = [:]
 
-    // Level meters (0=Plaits, 1=Rings, 2-5=track voices)
-    @Published var channelLevels: [Float] = [0, 0, 0, 0, 0, 0]
+    // Level meters (0=Plaits, 1=Rings, 2-5=track voices, 6=DaisyDrum)
+    @Published var channelLevels: [Float] = [0, 0, 0, 0, 0, 0, 0]
     @Published var masterLevelL: Float = 0
     @Published var masterLevelR: Float = 0
 
@@ -250,7 +277,7 @@ class AudioEngineWrapper: ObservableObject {
         var isRecording: Bool = false
         var mode: RecordMode = .oneShot
         var sourceType: RecordSourceType = .external
-        var sourceChannel: Int = 0  // 0=Plaits,1=Rings,2=Gran1,3=Loop1,4=Loop2,5=Gran4
+        var sourceChannel: Int = 0  // 0=Plaits,1=Rings,2=Gran1,3=Loop1,4=Loop2,5=Gran4,6=Drums(all),7=Kick,8=SynthKick,9=Snare,10=HiHat
         var feedback: Float = 0.0
     }
 
@@ -303,6 +330,7 @@ class AudioEngineWrapper: ObservableObject {
     private var multiChannelHasResolvedHostTime = false
     private let liveEventLeadSamples: UInt64 = 64
     private let manualPlaitsGateNote: UInt8 = 60
+    private let manualDaisyDrumNote: UInt8 = 60
 
     // MARK: - Multi-Channel Graph (AU Plugin Mode)
 
@@ -792,7 +820,7 @@ class AudioEngineWrapper: ObservableObject {
             return
         }
 
-        let numChannels = 6
+        let numChannels = 7
         resetMultiChannelRenderTimeline()
 
         // Route channel strips directly to mainMixerNode in AU mode.
@@ -1332,9 +1360,9 @@ class AudioEngineWrapper: ObservableObject {
         let newCpuLoad = ProcessInfo.processInfo.systemUptime.truncatingRemainder(dividingBy: 100.0) / 4.0
         let newLatency = (Double(bufferSize) / sampleRate) * 1000.0
 
-        // Channel levels (6 channels)
-        var newChannelLevels: [Float] = [0, 0, 0, 0, 0, 0]
-        for i in 0..<6 {
+        // Channel levels (7 channels)
+        var newChannelLevels: [Float] = [0, 0, 0, 0, 0, 0, 0]
+        for i in 0..<7 {
             newChannelLevels[i] = AudioEngine_GetChannelLevel(handle, Int32(i))
         }
 
@@ -1468,6 +1496,13 @@ class AudioEngineWrapper: ObservableObject {
 
         // Mixer timing alignment (60)
         case .voiceMicroDelay: return 60
+
+        // DaisyDrum parameters (64-68)
+        case .daisyDrumEngine: return 64
+        case .daisyDrumHarmonics: return 65
+        case .daisyDrumTimbre: return 66
+        case .daisyDrumMorph: return 67
+        case .daisyDrumLevel: return 68
         }
     }
 
@@ -1706,6 +1741,42 @@ class AudioEngineWrapper: ObservableObject {
         } else {
             scheduleNoteOff(note: manualPlaitsGateNote, sampleTime: eventSample, target: .plaits)
         }
+    }
+
+    func triggerDaisyDrum(_ state: Bool) {
+        let eventSample = currentSampleTime() + liveEventLeadSamples
+        if state {
+            scheduleNoteOn(note: manualDaisyDrumNote, velocity: 110, sampleTime: eventSample, target: .daisyDrum)
+        } else {
+            scheduleNoteOff(note: manualDaisyDrumNote, sampleTime: eventSample, target: .daisyDrum)
+        }
+    }
+
+    // MARK: - Drum Sequencer Lane Control
+
+    func triggerDrumSeqLane(_ lane: Int, state: Bool) {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_TriggerDrumSeqLane(handle, Int32(lane), state)
+    }
+
+    func setDrumSeqLaneLevel(_ lane: Int, value: Float) {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_SetDrumSeqLaneLevel(handle, Int32(lane), value)
+    }
+
+    func setDrumSeqLaneHarmonics(_ lane: Int, value: Float) {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_SetDrumSeqLaneHarmonics(handle, Int32(lane), value)
+    }
+
+    func setDrumSeqLaneTimbre(_ lane: Int, value: Float) {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_SetDrumSeqLaneTimbre(handle, Int32(lane), value)
+    }
+
+    func setDrumSeqLaneMorph(_ lane: Int, value: Float) {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_SetDrumSeqLaneMorph(handle, Int32(lane), value)
     }
 
     /// Polyphonic note on - allocates a voice and triggers it
@@ -2030,6 +2101,13 @@ enum ParameterID {
     case looperLoopStart
     case looperLoopEnd
     case looperCut
+
+    // DaisyDrum parameters
+    case daisyDrumEngine
+    case daisyDrumHarmonics
+    case daisyDrumTimbre
+    case daisyDrumMorph
+    case daisyDrumLevel
 }
 
 // MARK: - Insert Slot Data (Value Type)

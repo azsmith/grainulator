@@ -11,6 +11,7 @@
 #include "Granular/ReelBuffer.h"
 #include "Rings/RingsVoice.h"
 #include "Looper/LooperVoice.h"
+#include "DaisyDrums/DaisyDrumVoice.h"
 // Moog ladder filter models for master filter
 #include "Granular/MoogLadders/LadderFilterBase.h"
 #include "Granular/MoogLadders/SimplifiedModel.h"
@@ -53,6 +54,15 @@ AudioEngine::AudioEngine()
     , m_lpgDecay(0.5f)
     , m_lpgAttack(0.0f)
     , m_lpgBypass(false)
+    , m_currentDaisyDrumEngine(0)
+    , m_daisyDrumHarmonics(0.5f)
+    , m_daisyDrumTimbre(0.5f)
+    , m_daisyDrumMorph(0.5f)
+    , m_daisyDrumLevel(0.8f)
+    , m_drumSeqLevel{0.8f, 0.8f, 0.8f, 0.8f}
+    , m_drumSeqHarmonics{0.5f, 0.5f, 0.5f, 0.5f}
+    , m_drumSeqTimbre{0.5f, 0.5f, 0.5f, 0.5f}
+    , m_drumSeqMorph{0.5f, 0.5f, 0.5f, 0.5f}
     , m_activeGranularVoice(0)
     // Mangl-style granular parameters
     , m_granularSpeed(1.0f)
@@ -232,6 +242,29 @@ bool AudioEngine::initialize(int sampleRate, int bufferSize) {
     m_ringsVoice = std::make_unique<RingsVoice>();
     m_ringsVoice->Init(static_cast<float>(sampleRate));
 
+    // Initialize DaisyDrum voice (manual control from synth tab)
+    m_daisyDrumVoice = std::make_unique<DaisyDrumVoice>();
+    m_daisyDrumVoice->Init(static_cast<float>(sampleRate));
+
+    // Initialize drum sequencer voices (4 dedicated lanes)
+    {
+        const int drumSeqEngines[kNumDrumSeqLanes] = {
+            DaisyDrumVoice::AnalogKick,      // Lane 0
+            DaisyDrumVoice::SyntheticKick,    // Lane 1
+            DaisyDrumVoice::AnalogSnare,      // Lane 2
+            DaisyDrumVoice::HiHat             // Lane 3
+        };
+        for (int i = 0; i < kNumDrumSeqLanes; ++i) {
+            m_drumSeqVoices[i] = std::make_unique<DaisyDrumVoice>();
+            m_drumSeqVoices[i]->Init(static_cast<float>(sampleRate));
+            m_drumSeqVoices[i]->SetEngine(drumSeqEngines[i]);
+            m_drumSeqVoices[i]->SetLevel(m_drumSeqLevel[i]);
+            m_drumSeqVoices[i]->SetHarmonics(m_drumSeqHarmonics[i]);
+            m_drumSeqVoices[i]->SetTimbre(m_drumSeqTimbre[i]);
+            m_drumSeqVoices[i]->SetMorph(m_drumSeqMorph[i]);
+        }
+    }
+
     // Initialize granular voices
     for (int i = 0; i < kNumGranularVoices; ++i) {
         m_granularVoices[i] = std::make_unique<GranularVoice>();
@@ -392,6 +425,29 @@ void AudioEngine::noteOnTarget(int note, int velocity, uint8_t targetMask) {
     if ((targetMask & static_cast<uint8_t>(NoteTarget::TargetRings)) != 0 && m_ringsVoice) {
         m_ringsVoice->NoteOn(note, velocity);
     }
+
+    if ((targetMask & static_cast<uint8_t>(NoteTarget::TargetDaisyDrum)) != 0 && m_daisyDrumVoice) {
+        m_daisyDrumVoice->SetNote(static_cast<float>(note));
+        m_daisyDrumVoice->SetLevel(static_cast<float>(velocity) / 127.0f);
+        m_daisyDrumVoice->SetEngine(m_currentDaisyDrumEngine);
+        m_daisyDrumVoice->SetHarmonics(m_daisyDrumHarmonics);
+        m_daisyDrumVoice->SetTimbre(m_daisyDrumTimbre);
+        m_daisyDrumVoice->SetMorph(m_daisyDrumMorph);
+        m_daisyDrumVoice->Trigger(true);
+    }
+
+    // Drum sequencer lanes (bits 3-6)
+    for (int lane = 0; lane < kNumDrumSeqLanes; ++lane) {
+        uint8_t laneBit = 1 << (3 + lane);
+        if ((targetMask & laneBit) != 0 && m_drumSeqVoices[lane]) {
+            m_drumSeqVoices[lane]->SetNote(static_cast<float>(note));
+            m_drumSeqVoices[lane]->SetLevel(static_cast<float>(velocity) / 127.0f);
+            m_drumSeqVoices[lane]->SetHarmonics(m_drumSeqHarmonics[lane]);
+            m_drumSeqVoices[lane]->SetTimbre(m_drumSeqTimbre[lane]);
+            m_drumSeqVoices[lane]->SetMorph(m_drumSeqMorph[lane]);
+            m_drumSeqVoices[lane]->Trigger(true);
+        }
+    }
 }
 
 void AudioEngine::noteOffTarget(int note, uint8_t targetMask) {
@@ -399,6 +455,18 @@ void AudioEngine::noteOffTarget(int note, uint8_t targetMask) {
 
     if ((targetMask & static_cast<uint8_t>(NoteTarget::TargetRings)) != 0 && m_ringsVoice) {
         m_ringsVoice->NoteOff(note);
+    }
+
+    if ((targetMask & static_cast<uint8_t>(NoteTarget::TargetDaisyDrum)) != 0 && m_daisyDrumVoice) {
+        m_daisyDrumVoice->Trigger(false);
+    }
+
+    // Drum sequencer lanes (bits 3-6)
+    for (int lane = 0; lane < kNumDrumSeqLanes; ++lane) {
+        uint8_t laneBit = 1 << (3 + lane);
+        if ((targetMask & laneBit) != 0 && m_drumSeqVoices[lane]) {
+            m_drumSeqVoices[lane]->Trigger(false);
+        }
     }
 
     if ((targetMask & static_cast<uint8_t>(NoteTarget::TargetPlaits)) == 0) {
@@ -787,6 +855,78 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
             }
         }
 
+        // ========== Channel 6: DaisyDrum ==========
+        {
+            int ch = 6;
+            bool shouldPlay = !m_channelMute[ch] && (!anySoloed || m_channelSolo[ch]);
+
+            std::memset(m_voiceBuffer[0], 0, frameCount * sizeof(float));
+            std::memset(m_voiceBuffer[1], 0, frameCount * sizeof(float));
+            if (m_daisyDrumVoice) {
+                m_daisyDrumVoice->Render(m_voiceBuffer[0], nullptr, frameCount);
+                // Mono → stereo (duplicate to both channels)
+                std::memcpy(m_voiceBuffer[1], m_voiceBuffer[0], frameCount * sizeof(float));
+            }
+
+            // Render drum sequencer voices and sum into the same buffer
+            {
+                float drumSeqTemp[kMaxBufferSize];
+                for (int lane = 0; lane < kNumDrumSeqLanes; ++lane) {
+                    if (m_drumSeqVoices[lane]) {
+                        std::memset(drumSeqTemp, 0, frameCount * sizeof(float));
+                        m_drumSeqVoices[lane]->Render(drumSeqTemp, nullptr, frameCount);
+                        // Record per-lane: channel 7=Kick, 8=SynthKick, 9=Snare, 10=HiHat
+                        processRecordingForChannel(7 + lane, drumSeqTemp, drumSeqTemp, frameCount);
+                        for (int i = 0; i < frameCount; ++i) {
+                            m_voiceBuffer[0][i] += drumSeqTemp[i];
+                            m_voiceBuffer[1][i] += drumSeqTemp[i];
+                        }
+                    }
+                }
+            }
+
+            // Record from DaisyDrum + all drum lanes mixed (channel 6) pre-mixer
+            processRecordingForChannel(6, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+
+            float gain = m_channelGain[ch];
+            float pan = m_channelPan[ch];
+            float sendA = m_channelSendA[ch];
+            float sendB = m_channelSendB[ch];
+            float panL = std::cos((pan + 1.0f) * 0.25f * 3.14159265f);
+            float panR = std::sin((pan + 1.0f) * 0.25f * 3.14159265f);
+
+            for (int i = 0; i < frameCount; ++i) {
+                float sampleL = m_voiceBuffer[0][i] * gain;
+                float sampleR = m_voiceBuffer[1][i] * gain;
+                float outL = sampleL * panL;
+                float outR = sampleR * panR;
+                float delayedL = 0.0f;
+                float delayedR = 0.0f;
+                applyChannelDelay(ch, outL, outR, delayedL, delayedR);
+
+                channelPeaks[ch] = std::max(channelPeaks[ch], std::max(std::abs(sampleL), std::abs(sampleR)));
+
+                if (shouldPlay) {
+                    m_processingBuffer[0][i] += delayedL;
+                    m_processingBuffer[1][i] += delayedR;
+                }
+
+                const int outputIndex = frameOffset + i;
+                const float sendAL = delayedL * sendA;
+                const float sendAR = delayedR * sendA;
+                const float sendBL = delayedL * sendB;
+                const float sendBR = delayedR * sendB;
+                m_sendBufferAL[i] += sendAL;
+                m_sendBufferAR[i] += sendAR;
+                m_sendBufferBL[i] += sendBL;
+                m_sendBufferBR[i] += sendBR;
+                m_lastSendBusAL[outputIndex] += sendAL;
+                m_lastSendBusAR[outputIndex] += sendAR;
+                m_lastSendBusBL[outputIndex] += sendBL;
+                m_lastSendBusBR[outputIndex] += sendBR;
+            }
+        }
+
         // ========== Process external input recording ==========
         processExternalInputRecording(frameCount);
 
@@ -1066,6 +1206,50 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
             for (int i = 0; i < frameCount; ++i) {
                 float peak = std::max(std::abs(m_voiceBuffer[0][i]), std::abs(m_voiceBuffer[1][i]));
                 channelPeaks[channelIndex] = std::max(channelPeaks[channelIndex], peak);
+            }
+        }
+
+        // ========== Channel 6: DaisyDrum (buffers 12, 13) ==========
+        {
+            std::memset(m_voiceBuffer[0], 0, frameCount * sizeof(float));
+            std::memset(m_voiceBuffer[1], 0, frameCount * sizeof(float));
+
+            if (m_daisyDrumVoice) {
+                m_daisyDrumVoice->Render(m_voiceBuffer[0], nullptr, frameCount);
+                // Mono → stereo
+                std::memcpy(m_voiceBuffer[1], m_voiceBuffer[0], frameCount * sizeof(float));
+            }
+
+            // Render drum sequencer voices and sum into the same buffer
+            {
+                float drumSeqTemp[kMaxBufferSize];
+                for (int lane = 0; lane < kNumDrumSeqLanes; ++lane) {
+                    if (m_drumSeqVoices[lane]) {
+                        std::memset(drumSeqTemp, 0, frameCount * sizeof(float));
+                        m_drumSeqVoices[lane]->Render(drumSeqTemp, nullptr, frameCount);
+                        // Record per-lane: channel 7=Kick, 8=SynthKick, 9=Snare, 10=HiHat
+                        processRecordingForChannel(7 + lane, drumSeqTemp, drumSeqTemp, frameCount);
+                        for (int i = 0; i < frameCount; ++i) {
+                            m_voiceBuffer[0][i] += drumSeqTemp[i];
+                            m_voiceBuffer[1][i] += drumSeqTemp[i];
+                        }
+                    }
+                }
+            }
+
+            // Record from DaisyDrum + all drum lanes mixed (channel 6) pre-output
+            processRecordingForChannel(6, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+
+            if (channelBuffers[12]) {
+                std::memcpy(channelBuffers[12] + frameOffset, m_voiceBuffer[0], frameCount * sizeof(float));
+            }
+            if (channelBuffers[13]) {
+                std::memcpy(channelBuffers[13] + frameOffset, m_voiceBuffer[1], frameCount * sizeof(float));
+            }
+
+            for (int i = 0; i < frameCount; ++i) {
+                float peak = std::max(std::abs(m_voiceBuffer[0][i]), std::abs(m_voiceBuffer[1][i]));
+                channelPeaks[6] = std::max(channelPeaks[6], peak);
             }
         }
 
@@ -1738,6 +1922,42 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
             initMasterFilter();  // Recreate filter instances
             break;
 
+        // ========== DaisyDrum Parameters ==========
+        case ParameterID::DaisyDrumEngine:
+            m_currentDaisyDrumEngine = static_cast<int>(value * 4.0f + 0.5f);
+            if (m_daisyDrumVoice) {
+                m_daisyDrumVoice->SetEngine(m_currentDaisyDrumEngine);
+            }
+            break;
+
+        case ParameterID::DaisyDrumHarmonics:
+            m_daisyDrumHarmonics = clampedValue;
+            if (m_daisyDrumVoice) {
+                m_daisyDrumVoice->SetHarmonics(clampedValue);
+            }
+            break;
+
+        case ParameterID::DaisyDrumTimbre:
+            m_daisyDrumTimbre = clampedValue;
+            if (m_daisyDrumVoice) {
+                m_daisyDrumVoice->SetTimbre(clampedValue);
+            }
+            break;
+
+        case ParameterID::DaisyDrumMorph:
+            m_daisyDrumMorph = clampedValue;
+            if (m_daisyDrumVoice) {
+                m_daisyDrumVoice->SetMorph(clampedValue);
+            }
+            break;
+
+        case ParameterID::DaisyDrumLevel:
+            m_daisyDrumLevel = clampedValue;
+            if (m_daisyDrumVoice) {
+                m_daisyDrumVoice->SetLevel(clampedValue);
+            }
+            break;
+
         default:
             break;
     }
@@ -1870,6 +2090,14 @@ float AudioEngine::getParameter(ParameterID id, int voiceIndex) const {
         case ParameterID::ReverbDamping: return clamp01(m_reverbDamping);
         case ParameterID::ReverbMix: return clamp01(m_reverbMix);
         case ParameterID::MasterGain: return clamp01(m_masterGain / 2.0f);
+
+        // DaisyDrum readbacks
+        case ParameterID::DaisyDrumEngine: return clamp01(static_cast<float>(m_currentDaisyDrumEngine) / 4.0f);
+        case ParameterID::DaisyDrumHarmonics: return clamp01(m_daisyDrumHarmonics);
+        case ParameterID::DaisyDrumTimbre: return clamp01(m_daisyDrumTimbre);
+        case ParameterID::DaisyDrumMorph: return clamp01(m_daisyDrumMorph);
+        case ParameterID::DaisyDrumLevel: return clamp01(m_daisyDrumLevel);
+
         default:
             return 0.0f;
     }
@@ -1880,6 +2108,52 @@ void AudioEngine::triggerPlaits(bool state) {
     if (m_plaitsVoices[0]) {
         m_plaitsVoices[0]->Trigger(state);
     }
+}
+
+void AudioEngine::triggerDaisyDrum(bool state) {
+    if (m_daisyDrumVoice) {
+        if (state) {
+            m_daisyDrumVoice->SetEngine(m_currentDaisyDrumEngine);
+            m_daisyDrumVoice->SetHarmonics(m_daisyDrumHarmonics);
+            m_daisyDrumVoice->SetTimbre(m_daisyDrumTimbre);
+            m_daisyDrumVoice->SetMorph(m_daisyDrumMorph);
+            m_daisyDrumVoice->SetLevel(m_daisyDrumLevel);
+        }
+        m_daisyDrumVoice->Trigger(state);
+    }
+}
+
+void AudioEngine::triggerDrumSeqLane(int laneIndex, bool state) {
+    if (laneIndex < 0 || laneIndex >= kNumDrumSeqLanes) return;
+    if (m_drumSeqVoices[laneIndex]) {
+        if (state) {
+            m_drumSeqVoices[laneIndex]->SetLevel(m_drumSeqLevel[laneIndex]);
+            m_drumSeqVoices[laneIndex]->SetHarmonics(m_drumSeqHarmonics[laneIndex]);
+            m_drumSeqVoices[laneIndex]->SetTimbre(m_drumSeqTimbre[laneIndex]);
+            m_drumSeqVoices[laneIndex]->SetMorph(m_drumSeqMorph[laneIndex]);
+        }
+        m_drumSeqVoices[laneIndex]->Trigger(state);
+    }
+}
+
+void AudioEngine::setDrumSeqLaneLevel(int laneIndex, float level) {
+    if (laneIndex < 0 || laneIndex >= kNumDrumSeqLanes) return;
+    m_drumSeqLevel[laneIndex] = level;
+}
+
+void AudioEngine::setDrumSeqLaneHarmonics(int laneIndex, float value) {
+    if (laneIndex < 0 || laneIndex >= kNumDrumSeqLanes) return;
+    m_drumSeqHarmonics[laneIndex] = value;
+}
+
+void AudioEngine::setDrumSeqLaneTimbre(int laneIndex, float value) {
+    if (laneIndex < 0 || laneIndex >= kNumDrumSeqLanes) return;
+    m_drumSeqTimbre[laneIndex] = value;
+}
+
+void AudioEngine::setDrumSeqLaneMorph(int laneIndex, float value) {
+    if (laneIndex < 0 || laneIndex >= kNumDrumSeqLanes) return;
+    m_drumSeqMorph[laneIndex] = value;
 }
 
 bool AudioEngine::loadAudioFile(const char* filePath, int reelIndex) {
@@ -2656,6 +2930,13 @@ void AudioEngine::applyModulation() {
         m_granularVoices[1]->SetSizeMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular2Size)]);
         m_granularVoices[1]->SetDensityMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular2Density)]);
         m_granularVoices[1]->SetFilterMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular2Filter)]);
+    }
+
+    // DaisyDrum modulation
+    if (m_daisyDrumVoice) {
+        m_daisyDrumVoice->SetHarmonicsMod(m_modulationValues[static_cast<int>(ModulationDestination::DaisyDrumHarmonics)]);
+        m_daisyDrumVoice->SetTimbreMod(m_modulationValues[static_cast<int>(ModulationDestination::DaisyDrumTimbre)]);
+        m_daisyDrumVoice->SetMorphMod(m_modulationValues[static_cast<int>(ModulationDestination::DaisyDrumMorph)]);
     }
 
     // Note: Delay modulation would be applied similarly

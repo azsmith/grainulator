@@ -84,6 +84,11 @@ enum ModulationDestination: String, CaseIterable, Identifiable {
     case granular2Density = "GR2:DENS"
     case granular2Filter = "GR2:FILT"
 
+    // DaisyDrum destinations
+    case daisyDrumHarmonics = "DRM:HARM"
+    case daisyDrumTimbre = "DRM:TMBR"
+    case daisyDrumMorph = "DRM:MRPH"
+
     var id: String { rawValue }
 
     var displayName: String {
@@ -111,6 +116,9 @@ enum ModulationDestination: String, CaseIterable, Identifiable {
         case .granular2Size: return "Granular 2 Size"
         case .granular2Density: return "Granular 2 Density"
         case .granular2Filter: return "Granular 2 Filter"
+        case .daisyDrumHarmonics: return "Drums Harmonics"
+        case .daisyDrumTimbre: return "Drums Timbre"
+        case .daisyDrumMorph: return "Drums Morph"
         }
     }
 
@@ -122,6 +130,7 @@ enum ModulationDestination: String, CaseIterable, Identifiable {
         case .delayTime, .delayFeedback, .delayWow, .delayFlutter: return "Delay"
         case .granular1Speed, .granular1Pitch, .granular1Size, .granular1Density, .granular1Filter: return "Granular 1"
         case .granular2Speed, .granular2Pitch, .granular2Size, .granular2Density, .granular2Filter: return "Granular 2"
+        case .daisyDrumHarmonics, .daisyDrumTimbre, .daisyDrumMorph: return "Drums"
         }
     }
 }
@@ -210,7 +219,7 @@ class MasterClock: ObservableObject {
     weak var audioEngine: AudioEngineWrapper?
 
     // Reference to sequencer for BPM sync
-    weak var sequencer: MetropolixSequencer?
+    weak var sequencer: StepSequencer?
 
     // Cancellables for output observation
     private var outputCancellables: [AnyCancellable] = []
@@ -233,7 +242,7 @@ class MasterClock: ObservableObject {
         syncAllOutputsToEngine()
     }
 
-    func connectSequencer(_ sequencer: MetropolixSequencer) {
+    func connectSequencer(_ sequencer: StepSequencer) {
         self.sequencer = sequencer
         // Sync initial BPM
         sequencer.setTempoBPM(_bpm)

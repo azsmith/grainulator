@@ -62,6 +62,13 @@ struct LooperView: View {
                         }
                         Button("Granular 4") { recordSourceType = .internalVoice; recordSourceChannel = 5 }
                     }
+                    Section("Drums") {
+                        Button("Drums (All)") { recordSourceType = .internalVoice; recordSourceChannel = 6 }
+                        Button("Kick") { recordSourceType = .internalVoice; recordSourceChannel = 7 }
+                        Button("Synth Kick") { recordSourceType = .internalVoice; recordSourceChannel = 8 }
+                        Button("Snare") { recordSourceType = .internalVoice; recordSourceChannel = 9 }
+                        Button("Hi-Hat") { recordSourceType = .internalVoice; recordSourceChannel = 10 }
+                    }
                     Section("Mode") {
                         Button(action: { recordMode = .oneShot }) {
                             Label("One Shot", systemImage: recordMode == .oneShot ? "checkmark" : "")
@@ -338,6 +345,11 @@ struct LooperView: View {
         case 3: return "LP1"
         case 4: return "LP2"
         case 5: return "GR4"
+        case 6: return "DRM"
+        case 7: return "KCK"
+        case 8: return "SK"
+        case 9: return "SNR"
+        case 10: return "HH"
         default: return "???"
         }
     }

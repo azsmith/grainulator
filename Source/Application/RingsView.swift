@@ -70,6 +70,13 @@ struct RingsView: View {
             brightnessMod = audioEngine.getModulationValue(destination: .ringsBrightness)
             dampingMod = audioEngine.getModulationValue(destination: .ringsDamping)
             positionMod = audioEngine.getModulationValue(destination: .ringsPosition)
+
+            // Sync engine mode (may be changed externally via API)
+            let rawModel = audioEngine.getParameter(id: .ringsModel)
+            let engineIndex = Int(round(rawModel * Float(max(modelNames.count - 1, 1))))
+            if engineIndex != modelIndex && engineIndex >= 0 && engineIndex < modelNames.count {
+                modelIndex = engineIndex
+            }
         }
         .onAppear {
             syncToEngine()

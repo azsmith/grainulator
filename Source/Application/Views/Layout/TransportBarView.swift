@@ -13,7 +13,8 @@ struct TransportBarView: View {
     @ObservedObject var transportState: TransportState
     @ObservedObject var layoutState: WorkspaceLayoutState
     @EnvironmentObject var masterClock: MasterClock
-    @EnvironmentObject var sequencer: MetropolixSequencer
+    @EnvironmentObject var sequencer: StepSequencer
+    @EnvironmentObject var drumSequencer: DrumSequencer
     @EnvironmentObject var appState: AppState
 
     @State private var tapTimestamps: [Date] = []
@@ -52,6 +53,7 @@ struct TransportBarView: View {
     private var transportSection: some View {
         let transportRef = transportState
         let sequencerRef = sequencer
+        let drumSeqRef = drumSequencer
         return HStack(spacing: 12) {
             // BPM display/edit
             bpmDisplay
@@ -61,6 +63,9 @@ struct TransportBarView: View {
                 TransportButton(type: .stop, isActive: !sequencer.isPlaying) {
                     transportRef.stop()
                     sequencerRef.stop()
+                    if drumSeqRef.syncToTransport {
+                        drumSeqRef.stop()
+                    }
                 }
 
                 TransportButton(type: .play, isActive: sequencer.isPlaying) {

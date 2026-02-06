@@ -17,6 +17,7 @@ enum ChannelType: Int, CaseIterable, Identifiable {
     case looper1 = 3
     case looper2 = 4
     case granular4 = 5
+    case daisyDrum = 6
 
     var id: Int { rawValue }
 
@@ -28,6 +29,7 @@ enum ChannelType: Int, CaseIterable, Identifiable {
         case .looper1: return "LOOP 1"
         case .looper2: return "LOOP 2"
         case .granular4: return "GRAN 4"
+        case .daisyDrum: return "DRUMS"
         }
     }
 
@@ -39,6 +41,7 @@ enum ChannelType: Int, CaseIterable, Identifiable {
         case .looper1: return "LP1"
         case .looper2: return "LP2"
         case .granular4: return "GR4"
+        case .daisyDrum: return "DRM"
         }
     }
 
@@ -55,6 +58,7 @@ enum ChannelType: Int, CaseIterable, Identifiable {
         case .looper1: return 1    // Looper voice 1
         case .looper2: return 2    // Looper voice 2
         case .granular4: return 3  // Granular voice 3
+        case .daisyDrum: return 0  // Single drum voice
         }
     }
 }

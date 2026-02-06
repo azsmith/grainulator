@@ -246,7 +246,8 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
 
     private weak var audioEngine: AudioEngineWrapper?
     private weak var masterClock: MasterClock?
-    private weak var sequencer: MetropolixSequencer?
+    private weak var sequencer: StepSequencer?
+    private weak var drumSequencer: DrumSequencer?
     /// Cached C++ engine handle for thread-safe reads (e.g. IsRecording atomic checks)
     private var cachedEngineHandle: OpaquePointer?
     private var cachedSampleRate: Double = 48000.0
@@ -271,10 +272,11 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
     ]
 
     @MainActor
-    func start(audioEngine: AudioEngineWrapper, masterClock: MasterClock, sequencer: MetropolixSequencer? = nil, port: UInt16 = 4850) {
+    func start(audioEngine: AudioEngineWrapper, masterClock: MasterClock, sequencer: StepSequencer? = nil, drumSequencer: DrumSequencer? = nil, port: UInt16 = 4850) {
         self.audioEngine = audioEngine
         self.masterClock = masterClock
         self.sequencer = sequencer
+        self.drumSequencer = drumSequencer
         self.listenPort = port
         self.cachedEngineHandle = audioEngine.cppEngineHandle
         self.cachedSampleRate = audioEngine.sampleRate
@@ -840,10 +842,14 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                     "granular.voiceB.sizeMs",
                     "granular.voiceB.pitchSemitones",
                     "granular.voiceB.envelope",
+                    "granular.<voiceId>.filterCutoff",
+                    "granular.<voiceId>.filterResonance",
+                    "granular.<voiceId>.morph",
                     "granular.<voiceId>.recording.active",
                     "granular.<voiceId>.recording.mode",
                     "granular.<voiceId>.recording.feedback",
                 ],
+                "recordingSources": recordingSourcesList(),
             ],
             [
                 "module": "loop",
@@ -855,6 +861,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                     "loop.<voiceId>.recording.mode",
                     "loop.<voiceId>.recording.feedback",
                 ],
+                "recordingSources": recordingSourcesList(),
             ],
             [
                 "module": "transport",
@@ -888,7 +895,41 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             [
                 "module": "synth",
                 "actions": ["set"],
-                "paths": ["synth.plaits.mode", "synth.rings.mode"],
+                "paths": [
+                    "synth.plaits.mode",
+                    "synth.rings.mode",
+                    "synth.daisydrum.mode",
+                    "synth.daisydrum.harmonics",
+                    "synth.daisydrum.timbre",
+                    "synth.daisydrum.morph",
+                ],
+            ],
+            [
+                "module": "drums",
+                "description": "4-lane x 16-step drum trigger sequencer (Analog Kick, Synth Kick, Analog Snare, Hi-Hat)",
+                "actions": ["set", "toggle"],
+                "paths": [
+                    "drums.playing",
+                    "drums.syncToTransport",
+                    "drums.clockDivision",
+                    "drums.lane<1-4>.enabled",
+                    "drums.lane<1-4>.level",
+                    "drums.lane<1-4>.harmonics",
+                    "drums.lane<1-4>.timbre",
+                    "drums.lane<1-4>.morph",
+                    "drums.lane<1-4>.note",
+                    "drums.lane<1-4>.step<1-16>.active",
+                    "drums.lane<1-4>.step<1-16>.velocity",
+                    "drums.lane<1-4>.pattern",
+                ],
+                "laneNames": ["analogKick", "synthKick", "analogSnare", "hiHat"],
+                "rhythmHints": [
+                    "Steps are 16th notes at x4 division (default). 16 steps = 1 bar at 4/4.",
+                    "Common kick patterns: steps 1,5,9,13 (four-on-the-floor), steps 1,9 (half-time).",
+                    "Common snare patterns: steps 5,13 (backbeat).",
+                    "Common hi-hat patterns: all 16 steps (straight 16ths), odd steps (8th notes).",
+                    "Use lane pattern 'fourOnTheFloor', 'backbeat', 'straight16ths', 'straight8ths', or 'offbeats' for presets.",
+                ],
             ],
         ]
     }
@@ -981,6 +1022,12 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             "synth": [
                 "plaits": ["mode": readSynthModeName(parameter: .plaitsModel)],
                 "rings": ["mode": readSynthModeName(parameter: .ringsModel)],
+                "daisydrum": [
+                    "mode": readSynthModeName(parameter: .daisyDrumEngine),
+                    "harmonics": readGlobalParameter(id: .daisyDrumHarmonics),
+                    "timbre": readGlobalParameter(id: .daisyDrumTimbre),
+                    "morph": readGlobalParameter(id: .daisyDrumMorph),
+                ] as [String: Any],
             ],
             "granular": [
                 "recording": granularRecording,
@@ -988,10 +1035,49 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             "loop": [
                 "recording": loopRecording,
             ],
+            "drums": canonicalDrumSequencerStatePayload(),
             "fx": [:],
             "files": [:],
             "scenes": [],
         ]
+    }
+
+    private func canonicalDrumSequencerStatePayload() -> [String: Any] {
+        return DispatchQueue.main.sync {
+            MainActor.assumeIsolated {
+                guard let drumSeq = self.drumSequencer else { return [:] as [String: Any] }
+                var lanesPayload: [[String: Any]] = []
+                for lane in drumSeq.lanes {
+                    var steps: [[String: Any]] = []
+                    for step in lane.steps {
+                        steps.append([
+                            "index": step.id + 1,
+                            "active": step.isActive,
+                            "velocity": step.velocity,
+                        ])
+                    }
+                    let lanePayload: [String: Any] = [
+                        "name": lane.lane.name,
+                        "shortName": lane.lane.shortName,
+                        "enabled": !lane.isMuted,
+                        "level": lane.level,
+                        "harmonics": lane.harmonics,
+                        "timbre": lane.timbre,
+                        "morph": lane.morph,
+                        "note": Int(lane.note),
+                        "steps": steps,
+                    ]
+                    lanesPayload.append(lanePayload)
+                }
+                return [
+                    "playing": drumSeq.isPlaying,
+                    "currentStep": drumSeq.currentStep + 1,
+                    "syncToTransport": drumSeq.syncToTransport,
+                    "clockDivision": drumSeq.stepDivision.rawValue,
+                    "lanes": lanesPayload,
+                ] as [String: Any]
+            }
+        }
     }
 
     private func canonicalTrackStatePayload(trackIndex: Int) -> [String: Any]? {
@@ -1730,6 +1816,21 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                     return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Unsupported granular envelope"))
                 }
                 return (true, nil)
+            case "filterCutoff":
+                guard let cutoff = feedbackValueFromAction(action), cutoff >= 0.0, cutoff <= 1.0 else {
+                    return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "granular filterCutoff must be within [0, 1]"))
+                }
+                return (true, nil)
+            case "filterResonance":
+                guard let resonance = feedbackValueFromAction(action), resonance >= 0.0, resonance <= 1.0 else {
+                    return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "granular filterResonance must be within [0, 1]"))
+                }
+                return (true, nil)
+            case "morph":
+                guard let morph = feedbackValueFromAction(action), morph >= 0.0, morph <= 1.0 else {
+                    return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "granular morph must be within [0, 1]"))
+                }
+                return (true, nil)
             default:
                 return (true, ActionFailure(actionId: action.actionId, code: .notFound, message: "Unsupported granular target"))
             }
@@ -1761,6 +1862,25 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                 return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Unsupported rings mode"))
             }
             return (true, nil)
+        }
+
+        if target == "synth.daisydrum.mode" {
+            guard let mode = modeTextFromAction(action), daisyDrumModelNormalized(modeText: mode) != nil else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Unsupported daisydrum mode"))
+            }
+            return (true, nil)
+        }
+
+        if target == "synth.daisydrum.harmonics" || target == "synth.daisydrum.timbre" || target == "synth.daisydrum.morph" {
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "DaisyDrum parameter must be within [0.0, 1.0]"))
+            }
+            return (true, nil)
+        }
+
+        // Drum sequencer targets
+        if let drumTarget = parseDrumSequencerTarget(target) {
+            return validateDrumSequencerAction(action, target: drumTarget)
         }
 
         guard let trackTarget = parseSequencerTrackTarget(target) else {
@@ -1948,6 +2068,63 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                     ]
                 )
                 return (true, nil)
+            case "filterCutoff":
+                guard let cutoff = feedbackValueFromAction(action), cutoff >= 0.0, cutoff <= 1.0 else {
+                    return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "granular filterCutoff must be within [0, 1]"))
+                }
+                writeGranularParameter(id: .granularFilterCutoff, value: Float(cutoff), voiceIndex: granular.voice.reelIndex)
+                recordMutation(
+                    changedPaths: ["\(granular.voice.id).filterCutoff"],
+                    additionalEvents: [
+                        (
+                            type: "granular.param_changed",
+                            payload: [
+                                "voiceId": granular.voice.id,
+                                "path": "\(granular.voice.id).filterCutoff",
+                                "value": cutoff,
+                            ]
+                        ),
+                    ]
+                )
+                return (true, nil)
+            case "filterResonance":
+                guard let resonance = feedbackValueFromAction(action), resonance >= 0.0, resonance <= 1.0 else {
+                    return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "granular filterResonance must be within [0, 1]"))
+                }
+                writeGranularParameter(id: .granularFilterResonance, value: Float(resonance), voiceIndex: granular.voice.reelIndex)
+                recordMutation(
+                    changedPaths: ["\(granular.voice.id).filterResonance"],
+                    additionalEvents: [
+                        (
+                            type: "granular.param_changed",
+                            payload: [
+                                "voiceId": granular.voice.id,
+                                "path": "\(granular.voice.id).filterResonance",
+                                "value": resonance,
+                            ]
+                        ),
+                    ]
+                )
+                return (true, nil)
+            case "morph":
+                guard let morph = feedbackValueFromAction(action), morph >= 0.0, morph <= 1.0 else {
+                    return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "granular morph must be within [0, 1]"))
+                }
+                writeGranularParameter(id: .granularMorph, value: Float(morph), voiceIndex: granular.voice.reelIndex)
+                recordMutation(
+                    changedPaths: ["\(granular.voice.id).morph"],
+                    additionalEvents: [
+                        (
+                            type: "granular.param_changed",
+                            payload: [
+                                "voiceId": granular.voice.id,
+                                "path": "\(granular.voice.id).morph",
+                                "value": morph,
+                            ]
+                        ),
+                    ]
+                )
+                return (true, nil)
             default:
                 return (true, ActionFailure(actionId: action.actionId, code: .notFound, message: "Unsupported granular target"))
             }
@@ -2031,6 +2208,74 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                 ]
             )
             return (true, nil)
+        }
+
+        if target == "synth.daisydrum.mode" {
+            guard let mode = modeTextFromAction(action),
+                  let normalized = daisyDrumModelNormalized(modeText: mode) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Unsupported daisydrum mode"))
+            }
+            writeSynthMode(parameter: .daisyDrumEngine, normalizedValue: normalized)
+            recordMutation(
+                changedPaths: ["synth.daisydrum.mode"],
+                additionalEvents: [
+                    (
+                        type: "synth.mode_changed",
+                        payload: [
+                            "synth": "daisydrum",
+                            "mode": mode,
+                        ]
+                    ),
+                ]
+            )
+            return (true, nil)
+        }
+
+        if target == "synth.daisydrum.harmonics" {
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "DaisyDrum harmonics must be within [0.0, 1.0]"))
+            }
+            writeSynthMode(parameter: .daisyDrumHarmonics, normalizedValue: Float(value))
+            recordMutation(
+                changedPaths: ["synth.daisydrum.harmonics"],
+                additionalEvents: [
+                    (type: "synth.param_changed", payload: ["synth": "daisydrum", "param": "harmonics", "value": value]),
+                ]
+            )
+            return (true, nil)
+        }
+
+        if target == "synth.daisydrum.timbre" {
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "DaisyDrum timbre must be within [0.0, 1.0]"))
+            }
+            writeSynthMode(parameter: .daisyDrumTimbre, normalizedValue: Float(value))
+            recordMutation(
+                changedPaths: ["synth.daisydrum.timbre"],
+                additionalEvents: [
+                    (type: "synth.param_changed", payload: ["synth": "daisydrum", "param": "timbre", "value": value]),
+                ]
+            )
+            return (true, nil)
+        }
+
+        if target == "synth.daisydrum.morph" {
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "DaisyDrum morph must be within [0.0, 1.0]"))
+            }
+            writeSynthMode(parameter: .daisyDrumMorph, normalizedValue: Float(value))
+            recordMutation(
+                changedPaths: ["synth.daisydrum.morph"],
+                additionalEvents: [
+                    (type: "synth.param_changed", payload: ["synth": "daisydrum", "param": "morph", "value": value]),
+                ]
+            )
+            return (true, nil)
+        }
+
+        // Drum sequencer apply
+        if let drumTarget = parseDrumSequencerTarget(target) {
+            return applyDrumSequencerAction(action, target: drumTarget)
         }
 
         guard let trackTarget = parseSequencerTrackTarget(target) else {
@@ -2492,6 +2737,8 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return .rings
         case "both":
             return .both
+        case "drums", "daisydrum", "drum":
+            return .daisyDrum
         default:
             return nil
         }
@@ -2547,6 +2794,41 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
         }
         if normalized.contains("string") {
             return Float(11) / 15.0
+        }
+        return nil
+    }
+
+    private func daisyDrumModeName(fromNormalized normalized: Float) -> String {
+        let names = [
+            "analog kick",
+            "synthetic kick",
+            "analog snare",
+            "synthetic snare",
+            "hi hat",
+        ]
+        let clamped = clamp01(Double(normalized))
+        let index = min(max(Int((clamped * 4.0).rounded()), 0), names.count - 1)
+        return names[index]
+    }
+
+    private func daisyDrumModelNormalized(modeText: String) -> Float? {
+        let normalized = modeText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().replacingOccurrences(of: "_", with: " ")
+        let names: [(String, Int)] = [
+            ("analog kick", 0), ("synth kick", 1), ("synthetic kick", 1),
+            ("analog snare", 2), ("synth snare", 3), ("synthetic snare", 3),
+            ("hi hat", 4), ("hihat", 4),
+        ]
+        if let exact = names.first(where: { $0.0 == normalized }) {
+            return Float(exact.1) / 4.0
+        }
+        if normalized.contains("kick") {
+            return 0.0
+        }
+        if normalized.contains("snare") {
+            return 2.0 / 4.0
+        }
+        if normalized.contains("hat") {
+            return 4.0 / 4.0
         }
         return nil
     }
@@ -2942,6 +3224,8 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return plaitsModeName(fromNormalized: normalized)
         case .ringsModel:
             return ringsModeName(fromNormalized: normalized)
+        case .daisyDrumEngine:
+            return daisyDrumModeName(fromNormalized: normalized)
         default:
             return "unknown"
         }
@@ -3289,7 +3573,27 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return readSynthModeName(parameter: .plaitsModel)
         case "synth.rings.mode":
             return readSynthModeName(parameter: .ringsModel)
+        case "synth.daisydrum.mode":
+            return readSynthModeName(parameter: .daisyDrumEngine)
+        case "synth.daisydrum.harmonics":
+            return readGlobalParameter(id: .daisyDrumHarmonics)
+        case "synth.daisydrum.timbre":
+            return readGlobalParameter(id: .daisyDrumTimbre)
+        case "synth.daisydrum.morph":
+            return readGlobalParameter(id: .daisyDrumMorph)
+        case "drums.playing":
+            return readDrumSequencerProperty { $0.isPlaying }
+        case "drums.syncToTransport":
+            return readDrumSequencerProperty { $0.syncToTransport }
+        case "drums.clockDivision":
+            return readDrumSequencerProperty { $0.stepDivision.rawValue }
+        case "drums.currentStep":
+            return readDrumSequencerProperty { $0.currentStep + 1 }
         default:
+            // Drum sequencer lane/step paths
+            if let drumTarget = parseDrumSequencerTarget(path) {
+                return readDrumSequencerValue(drumTarget)
+            }
             if let trackTarget = parseSequencerTrackTarget(path) {
                 let trackIndex = trackTarget.trackIndex
                 guard let track = readTrack(trackIndex: trackIndex) else {
@@ -3396,12 +3700,13 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return errorResponse(statusCode: 422, reason: "Unprocessable Entity", code: .recordingModeUnsupported, message: "Unsupported recording mode")
         }
 
-        guard let sourceType = mapRecordSourceType(apiSourceType: payload.sourceType) else {
+        let resolvedSource = resolveRecordingSource(sourceType: payload.sourceType, sourceChannel: payload.sourceChannel)
+        guard let sourceType = resolvedSource.sourceType else {
             return errorResponse(statusCode: 422, reason: "Unprocessable Entity", code: .badRequest, message: "Unsupported recording sourceType")
         }
-        let sourceChannel = payload.sourceChannel ?? 0
-        if sourceChannel < 0 || sourceChannel > 5 {
-            return errorResponse(statusCode: 422, reason: "Unprocessable Entity", code: .actionOutOfRange, message: "sourceChannel must be within [0, 5]")
+        let sourceChannel = resolvedSource.sourceChannel
+        if sourceChannel < 0 || sourceChannel > 10 {
+            return errorResponse(statusCode: 422, reason: "Unprocessable Entity", code: .actionOutOfRange, message: "sourceChannel must be within [0, 10]")
         }
 
         let active = readIsReelRecording(voice.reelIndex)
@@ -3665,6 +3970,50 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
         default:
             return nil
         }
+    }
+
+    /// Resolves a recording source from named drum sources or falls back to standard sourceType/sourceChannel.
+    /// Named drum sources (e.g. "drums", "kick", "snare") automatically set the correct sourceChannel.
+    private func resolveRecordingSource(sourceType: String?, sourceChannel: Int?) -> (sourceType: AudioEngineWrapper.RecordSourceType?, sourceChannel: Int) {
+        if let sourceType {
+            let key = sourceType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            switch key {
+            // Named drum sources — auto-resolve to internalVoice with correct channel
+            case "drums", "drum", "drum_bus", "drumbus":
+                return (.internalVoice, 6)
+            case "kick", "analog_kick", "analogkick":
+                return (.internalVoice, 7)
+            case "synth_kick", "synthkick", "synth_kick_drum":
+                return (.internalVoice, 8)
+            case "snare", "analog_snare", "analogsnare":
+                return (.internalVoice, 9)
+            case "hihat", "hi_hat", "hi-hat", "hat":
+                return (.internalVoice, 10)
+            default:
+                // Fall through to standard resolution
+                break
+            }
+        }
+        // Standard resolution: use mapRecordSourceType + explicit sourceChannel
+        let resolved = mapRecordSourceType(apiSourceType: sourceType)
+        return (resolved, sourceChannel ?? 0)
+    }
+
+    private func recordingSourcesList() -> [[String: Any]] {
+        [
+            ["name": "external", "aliases": ["mic", "line"], "sourceType": "external"],
+            ["name": "plaits", "channel": 0, "sourceType": "internal"],
+            ["name": "rings", "channel": 1, "sourceType": "internal"],
+            ["name": "granular1", "channel": 2, "sourceType": "internal"],
+            ["name": "looper1", "channel": 3, "sourceType": "internal"],
+            ["name": "looper2", "channel": 4, "sourceType": "internal"],
+            ["name": "granular4", "channel": 5, "sourceType": "internal"],
+            ["name": "drums", "aliases": ["drum", "drum_bus"], "channel": 6, "sourceType": "internal", "description": "All drum lanes mixed"],
+            ["name": "kick", "aliases": ["analog_kick"], "channel": 7, "sourceType": "internal", "description": "Analog Kick lane only"],
+            ["name": "synth_kick", "channel": 8, "sourceType": "internal", "description": "Synth Kick lane only"],
+            ["name": "snare", "aliases": ["analog_snare"], "channel": 9, "sourceType": "internal", "description": "Analog Snare lane only"],
+            ["name": "hihat", "aliases": ["hi_hat", "hi-hat"], "channel": 10, "sourceType": "internal", "description": "Hi-Hat lane only"],
+        ]
     }
 
     private func apiMode(from mode: AudioEngineWrapper.RecordMode) -> String {
@@ -3948,6 +4297,435 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                 var state = self?.audioEngine?.recordingStates[reelIndex] ?? AudioEngineWrapper.RecordingUIState()
                 state.mode = mode
                 self?.audioEngine?.recordingStates[reelIndex] = state
+            }
+        }
+    }
+
+    // MARK: - Drum Sequencer Target Parsing
+
+    /// Parsed drum sequencer target: "drums.lane1.step3.active" → lane=0, step=2, property="active"
+    private struct DrumSequencerTarget {
+        let property: String       // Top-level: "playing", "syncToTransport", "clockDivision"
+        let laneIndex: Int?        // 0-3 (nil for top-level targets)
+        let stepIndex: Int?        // 0-15 (nil for lane-level targets)
+        let stepField: String?     // "active", "velocity" (nil for non-step targets)
+    }
+
+    private func parseDrumSequencerTarget(_ target: String) -> DrumSequencerTarget? {
+        guard target.hasPrefix("drums.") else { return nil }
+        let remainder = String(target.dropFirst(6)) // Drop "drums."
+
+        // Top-level targets
+        switch remainder {
+        case "playing":
+            return DrumSequencerTarget(property: "playing", laneIndex: nil, stepIndex: nil, stepField: nil)
+        case "syncToTransport":
+            return DrumSequencerTarget(property: "syncToTransport", laneIndex: nil, stepIndex: nil, stepField: nil)
+        case "clockDivision":
+            return DrumSequencerTarget(property: "clockDivision", laneIndex: nil, stepIndex: nil, stepField: nil)
+        case "currentStep":
+            return DrumSequencerTarget(property: "currentStep", laneIndex: nil, stepIndex: nil, stepField: nil)
+        default:
+            break
+        }
+
+        // Lane targets: "lane1.enabled", "lane2.step3.active"
+        guard remainder.hasPrefix("lane") else { return nil }
+        let laneRemainder = String(remainder.dropFirst(4)) // Drop "lane"
+
+        // Parse lane number
+        guard let dotIndex = laneRemainder.firstIndex(of: ".") else { return nil }
+        let laneNumStr = String(laneRemainder[laneRemainder.startIndex..<dotIndex])
+        guard let laneNum = Int(laneNumStr), (1...4).contains(laneNum) else { return nil }
+        let laneIndex = laneNum - 1
+        let laneProp = String(laneRemainder[laneRemainder.index(after: dotIndex)...])
+
+        // Lane-level properties
+        switch laneProp {
+        case "enabled", "level", "harmonics", "timbre", "morph", "note", "pattern":
+            return DrumSequencerTarget(property: laneProp, laneIndex: laneIndex, stepIndex: nil, stepField: nil)
+        default:
+            break
+        }
+
+        // Step-level: "step3.active"
+        guard laneProp.hasPrefix("step") else { return nil }
+        let stepRemainder = String(laneProp.dropFirst(4)) // Drop "step"
+        guard let stepDot = stepRemainder.firstIndex(of: ".") else { return nil }
+        let stepNumStr = String(stepRemainder[stepRemainder.startIndex..<stepDot])
+        guard let stepNum = Int(stepNumStr), (1...16).contains(stepNum) else { return nil }
+        let stepIndex = stepNum - 1
+        let stepField = String(stepRemainder[stepRemainder.index(after: stepDot)...])
+
+        guard stepField == "active" || stepField == "velocity" else { return nil }
+        return DrumSequencerTarget(property: "step", laneIndex: laneIndex, stepIndex: stepIndex, stepField: stepField)
+    }
+
+    // MARK: - Drum Sequencer Validation
+
+    private func validateDrumSequencerAction(_ action: ActionRequest, target: DrumSequencerTarget) -> (handled: Bool, failure: ActionFailure?) {
+        switch target.property {
+        case "playing", "syncToTransport":
+            if action.type == "toggle" || boolValueFromAction(action) != nil {
+                return (true, nil)
+            }
+            return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "drums.\(target.property) requires a boolean value"))
+
+        case "clockDivision":
+            guard let text = modeTextFromAction(action), divisionFromText(text) != nil else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Unsupported drums clockDivision"))
+            }
+            return (true, nil)
+
+        case "enabled":
+            guard target.laneIndex != nil else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Lane index required"))
+            }
+            if action.type == "toggle" || boolValueFromAction(action) != nil {
+                return (true, nil)
+            }
+            return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "drums lane enabled requires boolean value"))
+
+        case "level", "harmonics", "timbre", "morph":
+            guard target.laneIndex != nil else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Lane index required"))
+            }
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "drums lane \(target.property) must be within [0.0, 1.0]"))
+            }
+            return (true, nil)
+
+        case "note":
+            guard target.laneIndex != nil else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Lane index required"))
+            }
+            guard let noteVal = feedbackValueFromAction(action), noteVal >= 24.0, noteVal <= 96.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "drums lane note must be MIDI note 24-96"))
+            }
+            return (true, nil)
+
+        case "pattern":
+            guard target.laneIndex != nil else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Lane index required"))
+            }
+            guard let text = modeTextFromAction(action), drumLanePatternSteps(text) != nil else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Unsupported drum pattern. Use: fourOnTheFloor, backbeat, straight16ths, straight8ths, offbeats, clear"))
+            }
+            return (true, nil)
+
+        case "step":
+            guard target.laneIndex != nil, let stepField = target.stepField else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Step target requires lane and step index"))
+            }
+            switch stepField {
+            case "active":
+                if action.type == "toggle" || boolValueFromAction(action) != nil {
+                    return (true, nil)
+                }
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "drums step active requires boolean value"))
+            case "velocity":
+                guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                    return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "drums step velocity must be within [0.0, 1.0]"))
+                }
+                return (true, nil)
+            default:
+                return (true, ActionFailure(actionId: action.actionId, code: .notFound, message: "Unsupported drum step field"))
+            }
+
+        default:
+            return (true, ActionFailure(actionId: action.actionId, code: .notFound, message: "Unsupported drum sequencer target"))
+        }
+    }
+
+    // MARK: - Drum Sequencer Apply
+
+    private func applyDrumSequencerAction(_ action: ActionRequest, target: DrumSequencerTarget) -> (handled: Bool, failure: ActionFailure?) {
+        switch target.property {
+        case "playing":
+            let current = readDrumSequencerProperty { $0.isPlaying } ?? false
+            guard let desired = desiredBoolValue(for: action, current: current) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "drums.playing requires boolean value"))
+            }
+            writeDrumSequencer { drumSeq in
+                if desired { drumSeq.start() } else { drumSeq.stop() }
+            }
+            recordMutation(
+                changedPaths: ["drums.playing"],
+                additionalEvents: [(type: "drums.playing_changed", payload: ["playing": desired])]
+            )
+            return (true, nil)
+
+        case "syncToTransport":
+            let current = readDrumSequencerProperty { $0.syncToTransport } ?? false
+            guard let desired = desiredBoolValue(for: action, current: current) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "drums.syncToTransport requires boolean value"))
+            }
+            writeDrumSequencer { drumSeq in drumSeq.syncToTransport = desired }
+            recordMutation(
+                changedPaths: ["drums.syncToTransport"],
+                additionalEvents: [(type: "drums.param_changed", payload: ["param": "syncToTransport", "value": desired])]
+            )
+            return (true, nil)
+
+        case "clockDivision":
+            guard let text = modeTextFromAction(action), let division = divisionFromText(text) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Unsupported drums clockDivision"))
+            }
+            writeDrumSequencer { drumSeq in drumSeq.stepDivision = division }
+            recordMutation(
+                changedPaths: ["drums.clockDivision"],
+                additionalEvents: [(type: "drums.param_changed", payload: ["param": "clockDivision", "value": division.rawValue])]
+            )
+            return (true, nil)
+
+        case "enabled":
+            guard let laneIndex = target.laneIndex else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Lane index required"))
+            }
+            let current = readDrumSequencerProperty { !$0.lanes[laneIndex].isMuted } ?? false
+            guard let desired = desiredBoolValue(for: action, current: current) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "drums lane enabled requires boolean value"))
+            }
+            writeDrumSequencer { drumSeq in drumSeq.setLaneMuted(laneIndex, muted: !desired) }
+            let path = "drums.lane\(laneIndex + 1).enabled"
+            recordMutation(
+                changedPaths: [path],
+                additionalEvents: [(type: "drums.lane_changed", payload: ["lane": laneIndex + 1, "param": "enabled", "value": desired])]
+            )
+            return (true, nil)
+
+        case "level":
+            guard let laneIndex = target.laneIndex else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Lane index required"))
+            }
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "drums lane level must be within [0.0, 1.0]"))
+            }
+            writeDrumSequencer { drumSeq in drumSeq.setLaneLevel(laneIndex, value: Float(value)) }
+            let path = "drums.lane\(laneIndex + 1).level"
+            recordMutation(
+                changedPaths: [path],
+                additionalEvents: [(type: "drums.lane_changed", payload: ["lane": laneIndex + 1, "param": "level", "value": value])]
+            )
+            return (true, nil)
+
+        case "harmonics":
+            guard let laneIndex = target.laneIndex else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Lane index required"))
+            }
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "drums lane harmonics must be within [0.0, 1.0]"))
+            }
+            writeDrumSequencer { drumSeq in drumSeq.setLaneHarmonics(laneIndex, value: Float(value)) }
+            let path = "drums.lane\(laneIndex + 1).harmonics"
+            recordMutation(
+                changedPaths: [path],
+                additionalEvents: [(type: "drums.lane_changed", payload: ["lane": laneIndex + 1, "param": "harmonics", "value": value])]
+            )
+            return (true, nil)
+
+        case "timbre":
+            guard let laneIndex = target.laneIndex else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Lane index required"))
+            }
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "drums lane timbre must be within [0.0, 1.0]"))
+            }
+            writeDrumSequencer { drumSeq in drumSeq.setLaneTimbre(laneIndex, value: Float(value)) }
+            let path = "drums.lane\(laneIndex + 1).timbre"
+            recordMutation(
+                changedPaths: [path],
+                additionalEvents: [(type: "drums.lane_changed", payload: ["lane": laneIndex + 1, "param": "timbre", "value": value])]
+            )
+            return (true, nil)
+
+        case "morph":
+            guard let laneIndex = target.laneIndex else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Lane index required"))
+            }
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "drums lane morph must be within [0.0, 1.0]"))
+            }
+            writeDrumSequencer { drumSeq in drumSeq.setLaneMorph(laneIndex, value: Float(value)) }
+            let path = "drums.lane\(laneIndex + 1).morph"
+            recordMutation(
+                changedPaths: [path],
+                additionalEvents: [(type: "drums.lane_changed", payload: ["lane": laneIndex + 1, "param": "morph", "value": value])]
+            )
+            return (true, nil)
+
+        case "note":
+            guard let laneIndex = target.laneIndex else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Lane index required"))
+            }
+            guard let noteVal = feedbackValueFromAction(action) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "drums lane note requires numeric MIDI note"))
+            }
+            let midiNote = UInt8(min(max(Int(noteVal.rounded()), 24), 96))
+            writeDrumSequencer { drumSeq in drumSeq.setLaneNote(laneIndex, note: midiNote) }
+            let path = "drums.lane\(laneIndex + 1).note"
+            recordMutation(
+                changedPaths: [path],
+                additionalEvents: [(type: "drums.lane_changed", payload: ["lane": laneIndex + 1, "param": "note", "value": Int(midiNote)])]
+            )
+            return (true, nil)
+
+        case "pattern":
+            guard let laneIndex = target.laneIndex else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Lane index required"))
+            }
+            guard let text = modeTextFromAction(action), let activeSteps = drumLanePatternSteps(text) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Unsupported drum pattern"))
+            }
+            writeDrumSequencer { drumSeq in
+                drumSeq.clearLane(laneIndex)
+                for stepIndex in activeSteps {
+                    drumSeq.setStepActive(lane: laneIndex, step: stepIndex, active: true)
+                }
+            }
+            let path = "drums.lane\(laneIndex + 1).pattern"
+            recordMutation(
+                changedPaths: [path],
+                additionalEvents: [(type: "drums.pattern_changed", payload: ["lane": laneIndex + 1, "pattern": text.lowercased()])]
+            )
+            return (true, nil)
+
+        case "step":
+            guard let laneIndex = target.laneIndex,
+                  let stepIndex = target.stepIndex,
+                  let stepField = target.stepField else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Step target requires lane and step index"))
+            }
+            switch stepField {
+            case "active":
+                let current = readDrumSequencerProperty { $0.lanes[laneIndex].steps[stepIndex].isActive } ?? false
+                guard let desired = desiredBoolValue(for: action, current: current) else {
+                    return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "drums step active requires boolean value"))
+                }
+                writeDrumSequencer { drumSeq in drumSeq.setStepActive(lane: laneIndex, step: stepIndex, active: desired) }
+                let path = "drums.lane\(laneIndex + 1).step\(stepIndex + 1).active"
+                recordMutation(
+                    changedPaths: [path],
+                    additionalEvents: [(type: "drums.step_changed", payload: ["lane": laneIndex + 1, "step": stepIndex + 1, "field": "active", "value": desired])]
+                )
+                return (true, nil)
+            case "velocity":
+                guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                    return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "drums step velocity must be within [0.0, 1.0]"))
+                }
+                writeDrumSequencer { drumSeq in
+                    drumSeq.setStepVelocity(lane: laneIndex, step: stepIndex, velocity: Float(value))
+                }
+                let path = "drums.lane\(laneIndex + 1).step\(stepIndex + 1).velocity"
+                recordMutation(
+                    changedPaths: [path],
+                    additionalEvents: [(type: "drums.step_changed", payload: ["lane": laneIndex + 1, "step": stepIndex + 1, "field": "velocity", "value": value])]
+                )
+                return (true, nil)
+            default:
+                return (true, ActionFailure(actionId: action.actionId, code: .notFound, message: "Unsupported drum step field"))
+            }
+
+        default:
+            return (true, ActionFailure(actionId: action.actionId, code: .notFound, message: "Unsupported drum sequencer target"))
+        }
+    }
+
+    // MARK: - Drum Pattern Presets
+
+    /// Returns the set of active step indices (0-based) for a named drum pattern.
+    private func drumLanePatternSteps(_ patternName: String) -> [Int]? {
+        switch patternName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "fouronthefloor", "four on the floor", "4otf":
+            return [0, 4, 8, 12]  // Steps 1,5,9,13
+        case "backbeat", "back beat":
+            return [4, 12]  // Steps 5,13
+        case "straight16ths", "straight 16ths", "16ths", "sixteenths":
+            return Array(0..<16)
+        case "straight8ths", "straight 8ths", "8ths", "eighths":
+            return [0, 2, 4, 6, 8, 10, 12, 14]
+        case "offbeats", "off beats", "offbeat":
+            return [2, 6, 10, 14]  // Steps 3,7,11,15
+        case "halftime", "half time":
+            return [0, 8]  // Steps 1,9
+        case "clear", "empty", "none":
+            return []
+        default:
+            return nil
+        }
+    }
+
+    // MARK: - Drum Sequencer Read Helpers
+
+    /// Unified read helper that runs a closure on the main actor to safely access DrumSequencer properties.
+    private func readDrumSequencerProperty<T>(_ accessor: @escaping @MainActor (DrumSequencer) -> T) -> T? {
+        if Thread.isMainThread {
+            return MainActor.assumeIsolated { [weak self] in
+                guard let drumSeq = self?.drumSequencer else { return nil }
+                return accessor(drumSeq)
+            }
+        }
+        return DispatchQueue.main.sync {
+            MainActor.assumeIsolated { [weak self] in
+                guard let drumSeq = self?.drumSequencer else { return nil as T? }
+                return accessor(drumSeq)
+            }
+        }
+    }
+
+    private func readDrumSequencerValue(_ target: DrumSequencerTarget) -> Any? {
+        return DispatchQueue.main.sync {
+            MainActor.assumeIsolated { [weak self] in
+                guard let drumSeq = self?.drumSequencer else { return nil as Any? }
+
+                // Lane-level read
+                if let laneIndex = target.laneIndex {
+                    guard laneIndex < drumSeq.lanes.count else { return nil as Any? }
+                    let lane = drumSeq.lanes[laneIndex]
+
+                    // Step-level read
+                    if let stepIndex = target.stepIndex, let stepField = target.stepField {
+                        guard stepIndex < DrumSequencer.numSteps else { return nil as Any? }
+                        let step = lane.steps[stepIndex]
+                        switch stepField {
+                        case "active": return step.isActive as Any?
+                        case "velocity": return step.velocity as Any?
+                        default: return nil as Any?
+                        }
+                    }
+
+                    switch target.property {
+                    case "enabled": return !lane.isMuted as Any?
+                    case "level": return lane.level as Any?
+                    case "harmonics": return lane.harmonics as Any?
+                    case "timbre": return lane.timbre as Any?
+                    case "morph": return lane.morph as Any?
+                    case "note": return Int(lane.note) as Any?
+                    default: return nil as Any?
+                    }
+                }
+
+                // Top-level reads handled in value(forStatePath:) switch
+                return nil as Any?
+            }
+        }
+    }
+
+    // MARK: - Drum Sequencer Write Helper
+
+    private func writeDrumSequencer(_ block: @escaping @MainActor (DrumSequencer) -> Void) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { [weak self] in
+                guard let drumSeq = self?.drumSequencer else { return }
+                block(drumSeq)
+            }
+            return
+        }
+
+        DispatchQueue.main.sync {
+            MainActor.assumeIsolated { [weak self] in
+                guard let drumSeq = self?.drumSequencer else { return }
+                block(drumSeq)
             }
         }
     }

@@ -88,7 +88,7 @@ struct DraggableBPMView: View {
 
 struct MasterClockView: View {
     @EnvironmentObject var masterClock: MasterClock
-    @EnvironmentObject var sequencer: MetropolixSequencer
+    @EnvironmentObject var sequencer: StepSequencer
 
     var body: some View {
         ConsoleModuleView(

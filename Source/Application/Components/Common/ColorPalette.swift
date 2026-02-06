@@ -170,6 +170,9 @@ struct ColorPalette {
     /// Granular 4 - teal
     static let accentGranular4 = Color(hex: "#1ABC9C")
 
+    /// DaisyDrum - yellow
+    static let accentDaisyDrum = Color(hex: "#F1C40F")
+
     /// Master - gold
     static let accentMaster = Color(hex: "#FFD700")
 
@@ -235,7 +238,8 @@ struct ColorPalette {
         accentGranular1,   // 2: Granular 1
         accentLooper1,     // 3: Looper 1
         accentLooper2,     // 4: Looper 2
-        accentGranular4    // 5: Granular 4
+        accentGranular4,   // 5: Granular 4
+        accentDaisyDrum    // 6: DaisyDrum
     ]
 
     /// Get channel color by index

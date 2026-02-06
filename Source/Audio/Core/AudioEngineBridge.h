@@ -37,6 +37,8 @@ float AudioEngine_GetCPULoad(AudioEngineHandle handle);
 
 // Trigger control
 void AudioEngine_TriggerPlaits(AudioEngineHandle handle, bool state);
+void AudioEngine_TriggerDaisyDrum(AudioEngineHandle handle, bool state);
+void AudioEngine_SetDaisyDrumEngine(AudioEngineHandle handle, int engine);
 
 // Polyphonic note control
 void AudioEngine_NoteOn(AudioEngineHandle handle, int note, int velocity);
@@ -70,6 +72,13 @@ void AudioEngine_SetRecordingFeedback(AudioEngineHandle handle, int reelIndex, f
 bool AudioEngine_IsRecording(AudioEngineHandle handle, int reelIndex);
 float AudioEngine_GetRecordingPosition(AudioEngineHandle handle, int reelIndex);
 void AudioEngine_WriteExternalInput(AudioEngineHandle handle, const float* left, const float* right, int numFrames);
+
+// Drum sequencer lane control
+void AudioEngine_TriggerDrumSeqLane(AudioEngineHandle handle, int lane, bool state);
+void AudioEngine_SetDrumSeqLaneLevel(AudioEngineHandle handle, int lane, float level);
+void AudioEngine_SetDrumSeqLaneHarmonics(AudioEngineHandle handle, int lane, float value);
+void AudioEngine_SetDrumSeqLaneTimbre(AudioEngineHandle handle, int lane, float value);
+void AudioEngine_SetDrumSeqLaneMorph(AudioEngineHandle handle, int lane, float value);
 
 #ifdef __cplusplus
 }

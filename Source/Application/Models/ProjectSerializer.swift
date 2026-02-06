@@ -17,9 +17,10 @@ struct ProjectSerializer {
         name: String,
         audioEngine: AudioEngineWrapper,
         mixerState: MixerState,
-        sequencer: MetropolixSequencer,
+        sequencer: StepSequencer,
         masterClock: MasterClock,
-        appState: AppState
+        appState: AppState,
+        drumSequencer: DrumSequencer? = nil
     ) -> ProjectSnapshot {
         let now = Date()
         return ProjectSnapshot(
@@ -33,7 +34,9 @@ struct ProjectSerializer {
             masterClock: captureMasterClock(masterClock),
             auPlugins: captureAUPlugins(audioEngine),
             audioFiles: captureAudioFiles(audioEngine),
-            uiPreferences: captureUIPreferences(appState)
+            uiPreferences: captureUIPreferences(appState),
+            drumSequencer: drumSequencer.map { captureDrumSequencer($0) },
+            daisyDrum: captureDaisyDrum(audioEngine)
         )
     }
 
@@ -185,7 +188,7 @@ struct ProjectSerializer {
 
     // MARK: - Sequencer
 
-    private static func captureSequencer(_ sequencer: MetropolixSequencer) -> SequencerSnapshot {
+    private static func captureSequencer(_ sequencer: StepSequencer) -> SequencerSnapshot {
         let tracks = sequencer.tracks.map { track in
             SequencerTrackSnapshot(
                 id: track.id,
@@ -304,16 +307,57 @@ struct ProjectSerializer {
         )
     }
 
+    // MARK: - Drum Sequencer
+
+    private static func captureDrumSequencer(_ drumSeq: DrumSequencer) -> DrumSequencerSnapshot {
+        let lanes = drumSeq.lanes.map { lane in
+            DrumLaneSnapshot(
+                laneIndex: lane.id,
+                steps: lane.steps.map { step in
+                    DrumStepSnapshot(
+                        index: step.id,
+                        isActive: step.isActive,
+                        velocity: step.velocity
+                    )
+                },
+                isMuted: lane.isMuted,
+                level: lane.level,
+                harmonics: lane.harmonics,
+                timbre: lane.timbre,
+                morph: lane.morph,
+                note: Int(lane.note)
+            )
+        }
+        return DrumSequencerSnapshot(
+            lanes: lanes,
+            stepDivision: drumSeq.stepDivision.rawValue,
+            syncToTransport: drumSeq.syncToTransport
+        )
+    }
+
+    // MARK: - DaisyDrum Voice (manual/synth tab)
+
+    private static func captureDaisyDrum(_ engine: AudioEngineWrapper) -> DaisyDrumVoiceSnapshot {
+        return DaisyDrumVoiceSnapshot(
+            engine: engine.getParameter(id: .daisyDrumEngine),
+            harmonics: engine.getParameter(id: .daisyDrumHarmonics),
+            timbre: engine.getParameter(id: .daisyDrumTimbre),
+            morph: engine.getParameter(id: .daisyDrumMorph),
+            level: engine.getParameter(id: .daisyDrumLevel)
+        )
+    }
+
     // MARK: - Restore State
 
     static func restoreSnapshot(
         _ snapshot: ProjectSnapshot,
         audioEngine: AudioEngineWrapper,
         mixerState: MixerState,
-        sequencer: MetropolixSequencer,
+        sequencer: StepSequencer,
         masterClock: MasterClock,
         appState: AppState,
-        pluginManager: AUPluginManager
+        pluginManager: AUPluginManager,
+        drumSequencer: DrumSequencer? = nil
     ) async {
         // 1. Stop playback
         if sequencer.isPlaying {
@@ -321,6 +365,9 @@ struct ProjectSerializer {
         }
         if masterClock.isRunning {
             masterClock.stop()
+        }
+        if let drumSeq = drumSequencer, drumSeq.isPlaying {
+            drumSeq.stop()
         }
 
         // 2. Restore UI preferences
@@ -338,16 +385,31 @@ struct ProjectSerializer {
         // 6. Push all C++ engine parameters
         restoreEngineParameters(snapshot.engineParameters, engine: audioEngine)
 
-        // 7. Sync mixer to C++ engine
+        // 7. Restore drum sequencer state (if present in project)
+        if let drumSeq = drumSequencer {
+            if let drumSnapshot = snapshot.drumSequencer {
+                restoreDrumSequencer(drumSnapshot, drumSequencer: drumSeq, audioEngine: audioEngine)
+            } else {
+                // Version 1 project — reset drum sequencer to defaults
+                resetDrumSequencerToDefaults(drumSeq, audioEngine: audioEngine)
+            }
+        }
+
+        // 8. Restore DaisyDrum voice parameters (if present in project)
+        if let daisyDrumSnapshot = snapshot.daisyDrum {
+            restoreDaisyDrum(daisyDrumSnapshot, engine: audioEngine)
+        }
+
+        // 9. Sync mixer to C++ engine
         mixerState.syncToAudioEngine(audioEngine)
 
-        // 8. Sync clock outputs to engine
+        // 10. Sync clock outputs to engine
         masterClock.syncAllOutputsToEngine()
 
-        // 9. Restore AU plugins (async)
+        // 11. Restore AU plugins (async)
         await restoreAUPlugins(snapshot.auPlugins, engine: audioEngine, pluginManager: pluginManager)
 
-        // 10. Reload audio files
+        // 12. Reload audio files
         restoreAudioFiles(snapshot.audioFiles, engine: audioEngine)
     }
 
@@ -407,7 +469,7 @@ struct ProjectSerializer {
         insert.parameters = params
     }
 
-    private static func restoreSequencer(_ snapshot: SequencerSnapshot, sequencer: MetropolixSequencer) {
+    private static func restoreSequencer(_ snapshot: SequencerSnapshot, sequencer: StepSequencer) {
         sequencer.tempoBPM = snapshot.tempoBPM
         sequencer.rootNote = snapshot.rootNote
         sequencer.sequenceOctave = snapshot.sequenceOctave
@@ -588,5 +650,68 @@ struct ProjectSerializer {
                 print("[ProjectSerializer] Audio file not found: \(reel.filePath)")
             }
         }
+    }
+
+    // MARK: - Restore Drum Sequencer
+
+    private static func restoreDrumSequencer(_ snapshot: DrumSequencerSnapshot, drumSequencer: DrumSequencer, audioEngine: AudioEngineWrapper) {
+        drumSequencer.stepDivision = SequencerClockDivision(rawValue: snapshot.stepDivision) ?? .x4
+        drumSequencer.syncToTransport = snapshot.syncToTransport
+
+        for laneSnap in snapshot.lanes {
+            let laneIndex = laneSnap.laneIndex
+            guard laneIndex < drumSequencer.lanes.count else { continue }
+
+            drumSequencer.lanes[laneIndex].isMuted = laneSnap.isMuted
+            drumSequencer.lanes[laneIndex].level = laneSnap.level
+            drumSequencer.lanes[laneIndex].harmonics = laneSnap.harmonics
+            drumSequencer.lanes[laneIndex].timbre = laneSnap.timbre
+            drumSequencer.lanes[laneIndex].morph = laneSnap.morph
+            drumSequencer.lanes[laneIndex].note = UInt8(min(max(laneSnap.note, 24), 96))
+
+            // Restore steps
+            for stepSnap in laneSnap.steps {
+                let stepIndex = stepSnap.index
+                guard stepIndex < DrumSequencer.numSteps else { continue }
+                drumSequencer.lanes[laneIndex].steps[stepIndex].isActive = stepSnap.isActive
+                drumSequencer.lanes[laneIndex].steps[stepIndex].velocity = stepSnap.velocity
+            }
+
+            // Sync lane parameters to C++ engine
+            audioEngine.setDrumSeqLaneLevel(laneIndex, value: laneSnap.level)
+            audioEngine.setDrumSeqLaneHarmonics(laneIndex, value: laneSnap.harmonics)
+            audioEngine.setDrumSeqLaneTimbre(laneIndex, value: laneSnap.timbre)
+            audioEngine.setDrumSeqLaneMorph(laneIndex, value: laneSnap.morph)
+        }
+    }
+
+    private static func resetDrumSequencerToDefaults(_ drumSequencer: DrumSequencer, audioEngine: AudioEngineWrapper) {
+        drumSequencer.stepDivision = .x4
+        drumSequencer.syncToTransport = true
+        drumSequencer.clearAll()
+
+        for i in 0..<drumSequencer.lanes.count {
+            drumSequencer.lanes[i].isMuted = false
+            drumSequencer.lanes[i].level = 0.8
+            drumSequencer.lanes[i].harmonics = 0.5
+            drumSequencer.lanes[i].timbre = 0.5
+            drumSequencer.lanes[i].morph = 0.5
+            drumSequencer.lanes[i].note = 60
+
+            audioEngine.setDrumSeqLaneLevel(i, value: 0.8)
+            audioEngine.setDrumSeqLaneHarmonics(i, value: 0.5)
+            audioEngine.setDrumSeqLaneTimbre(i, value: 0.5)
+            audioEngine.setDrumSeqLaneMorph(i, value: 0.5)
+        }
+    }
+
+    // MARK: - Restore DaisyDrum Voice
+
+    private static func restoreDaisyDrum(_ snapshot: DaisyDrumVoiceSnapshot, engine: AudioEngineWrapper) {
+        engine.setParameter(id: .daisyDrumEngine, value: snapshot.engine)
+        engine.setParameter(id: .daisyDrumHarmonics, value: snapshot.harmonics)
+        engine.setParameter(id: .daisyDrumTimbre, value: snapshot.timbre)
+        engine.setParameter(id: .daisyDrumMorph, value: snapshot.morph)
+        engine.setParameter(id: .daisyDrumLevel, value: snapshot.level)
     }
 }

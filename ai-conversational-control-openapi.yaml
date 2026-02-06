@@ -661,6 +661,12 @@ components:
         synth:
           type: object
           additionalProperties: true
+          description: |
+            Synthesizer state. Contains sub-objects for each synth module:
+            - plaits: { mode: string }
+            - rings: { mode: string }
+            - daisydrum: { mode: string, harmonics: number(0-1), timbre: number(0-1), morph: number(0-1) }
+            DaisyDrum modes: analog kick, synthetic kick, analog snare, synthetic snare, hi hat
         granular:
           type: object
           additionalProperties: true

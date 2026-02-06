@@ -13,7 +13,7 @@ struct TabBasedLayoutView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var audioEngine: AudioEngineWrapper
     @EnvironmentObject var masterClock: MasterClock
-    @EnvironmentObject var sequencer: MetropolixSequencer
+    @EnvironmentObject var sequencer: StepSequencer
     @EnvironmentObject var mixerState: MixerState
 
     @StateObject private var layoutState = WorkspaceLayoutState()

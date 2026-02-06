@@ -22,10 +22,11 @@ namespace Grainulator {
 
 // Forward declarations
 class PlaitsVoice;
+class DaisyDrumVoice;
 
 // Multi-channel ring buffer constants
 constexpr int kMultiChannelRingBufferSize = 4096;  // ~85ms @ 48kHz
-constexpr int kNumMixerChannelsForRing = 6;
+constexpr int kNumMixerChannelsForRing = 7;
 constexpr int kRingBufferProcessFrames = 256;      // Chunk size for background processing
 
 /// Lock-free ring buffer for multi-channel audio
@@ -86,9 +87,16 @@ typedef void (*AudioCallback)(float** outputBuffers, int numChannels, int numFra
 class AudioEngine {
 public:
     enum NoteTarget : uint8_t {
-        TargetPlaits = 1 << 0,
-        TargetRings = 1 << 1,
-        TargetBoth = TargetPlaits | TargetRings
+        TargetPlaits    = 1 << 0,
+        TargetRings     = 1 << 1,
+        TargetDaisyDrum = 1 << 2,
+        // Drum sequencer lanes (4 dedicated voices)
+        TargetDrumLane0 = 1 << 3,  // Analog Kick
+        TargetDrumLane1 = 1 << 4,  // Synth Kick
+        TargetDrumLane2 = 1 << 5,  // Analog Snare
+        TargetDrumLane3 = 1 << 6,  // Hi-Hat
+        TargetBoth      = TargetPlaits | TargetRings,
+        TargetAll       = TargetPlaits | TargetRings | TargetDaisyDrum
     };
 
     AudioEngine();
@@ -102,9 +110,9 @@ public:
     void process(float** inputBuffers, float** outputBuffers, int numChannels, int numFrames);
 
     // Multi-channel output for AU plugin hosting
-    // Outputs 6 separate stereo channels (12 buffers total) without mixing or effects
-    // Buffer layout: [ch0_L, ch0_R, ch1_L, ch1_R, ch2_L, ch2_R, ch3_L, ch3_R, ch4_L, ch4_R, ch5_L, ch5_R]
-    // Channel mapping: 0=Plaits, 1=Rings, 2=Granular1, 3=Looper1, 4=Looper2, 5=Granular4
+    // Outputs 7 separate stereo channels (14 buffers total) without mixing or effects
+    // Buffer layout: [ch0_L, ch0_R, ch1_L, ch1_R, ..., ch6_L, ch6_R]
+    // Channel mapping: 0=Plaits, 1=Rings, 2=Granular1, 3=Looper1, 4=Looper2, 5=Granular4, 6=DaisyDrum
     void processMultiChannel(float** channelBuffers, int numFrames);
     void renderAndReadMultiChannel(int channelIndex, int64_t sampleTime, float* left, float* right, int numFrames);
     void renderAndReadLegacyBus(int busIndex, int64_t sampleTime, float* left, float* right, int numFrames);
@@ -195,7 +203,14 @@ public:
         // Master clock parameters
         ClockBPM,           // Master BPM (10-330)
         ClockSwing,         // Global swing amount (0-1)
-        ClockRunning        // Clock running state (0 or 1)
+        ClockRunning,       // Clock running state (0 or 1)
+
+        // DaisyDrum parameters
+        DaisyDrumEngine,       // 0–4 engine select
+        DaisyDrumHarmonics,    // 0–1
+        DaisyDrumTimbre,       // 0–1
+        DaisyDrumMorph,        // 0–1
+        DaisyDrumLevel         // 0–1
     };
 
     // Clock output waveform types
@@ -241,6 +256,10 @@ public:
         Granular2Size,
         Granular2Density,
         Granular2Filter,
+        // DaisyDrum
+        DaisyDrumHarmonics,
+        DaisyDrumTimbre,
+        DaisyDrumMorph,
         NumDestinations
     };
 
@@ -254,6 +273,15 @@ public:
 
     // Trigger control (legacy - uses voice 0)
     void triggerPlaits(bool state);
+    void triggerDaisyDrum(bool state);
+
+    // Drum sequencer lane control (4 dedicated voices)
+    static constexpr int kNumDrumSeqLanes = 4;
+    void triggerDrumSeqLane(int laneIndex, bool state);
+    void setDrumSeqLaneLevel(int laneIndex, float level);
+    void setDrumSeqLaneHarmonics(int laneIndex, float value);
+    void setDrumSeqLaneTimbre(int laneIndex, float value);
+    void setDrumSeqLaneMorph(int laneIndex, float value);
 
     // Polyphonic note control
     void noteOn(int note, int velocity);
@@ -280,7 +308,7 @@ public:
     // Recording control
     // mode: 0=OneShot, 1=LiveLoop
     // sourceType: 0=external (mic/line), 1=internal voice
-    // sourceChannel: mixer channel index (0=Plaits,1=Rings,2=Gran1,3=Loop1,4=Loop2,5=Gran4)
+    // sourceChannel: mixer channel index (0=Plaits,1=Rings,2=Gran1,3=Loop1,4=Loop2,5=Gran4,6=Drums(all),7=Kick,8=SynthKick,9=Snare,10=HiHat)
     void startRecording(int reelIndex, int mode, int sourceType, int sourceChannel);
     void stopRecording(int reelIndex);
     void setRecordingFeedback(int reelIndex, float feedback);
@@ -358,6 +386,13 @@ private:
     // Polyphonic Plaits voices
     std::unique_ptr<PlaitsVoice> m_plaitsVoices[kNumPlaitsVoices];
     std::unique_ptr<RingsVoice> m_ringsVoice;
+    std::unique_ptr<DaisyDrumVoice> m_daisyDrumVoice;
+    // Drum sequencer: 4 dedicated voices (AnalogKick, SynthKick, AnalogSnare, HiHat)
+    std::unique_ptr<DaisyDrumVoice> m_drumSeqVoices[kNumDrumSeqLanes];
+    float m_drumSeqLevel[kNumDrumSeqLanes];
+    float m_drumSeqHarmonics[kNumDrumSeqLanes];
+    float m_drumSeqTimbre[kNumDrumSeqLanes];
+    float m_drumSeqMorph[kNumDrumSeqLanes];
     int m_voiceNote[kNumPlaitsVoices];      // MIDI note for each voice (-1 = free)
     uint32_t m_voiceAge[kNumPlaitsVoices];  // For voice stealing (older = lower priority)
     uint32_t m_voiceCounter;                 // Increments on each note-on
@@ -397,6 +432,13 @@ private:
     float m_lpgDecay;
     float m_lpgAttack;
     bool m_lpgBypass;
+
+    // DaisyDrum shared parameters
+    int m_currentDaisyDrumEngine;
+    float m_daisyDrumHarmonics;
+    float m_daisyDrumTimbre;
+    float m_daisyDrumMorph;
+    float m_daisyDrumLevel;
 
     // Granular parameters (Mangl-style, for currently selected voice)
     float m_granularSpeed;
@@ -468,8 +510,8 @@ private:
     float m_lastSendBusBL[kMaxBufferSize]{};
     float m_lastSendBusBR[kMaxBufferSize]{};
 
-    // Per-channel mixer state (0=Plaits, 1=Rings, 2-5=Track voices)
-    static constexpr int kNumMixerChannels = 6;
+    // Per-channel mixer state (0=Plaits, 1=Rings, 2-5=Track voices, 6=DaisyDrum)
+    static constexpr int kNumMixerChannels = 7;
     static constexpr int kMaxChannelDelaySamples = 2400; // 50ms @ 48kHz
     float m_channelGain[kNumMixerChannels];
     float m_channelPan[kNumMixerChannels];

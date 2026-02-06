@@ -20,19 +20,21 @@ class ProjectManager: ObservableObject {
     // References to subsystems (set during app startup)
     weak var audioEngine: AudioEngineWrapper?
     weak var mixerState: MixerState?
-    weak var sequencer: MetropolixSequencer?
+    weak var sequencer: StepSequencer?
     weak var masterClock: MasterClock?
     weak var appState: AppState?
     weak var pluginManager: AUPluginManager?
+    weak var drumSequencer: DrumSequencer?
 
     /// Connect all subsystems (call from GrainulatorApp.onAppear)
     func connect(
         audioEngine: AudioEngineWrapper,
         mixerState: MixerState,
-        sequencer: MetropolixSequencer,
+        sequencer: StepSequencer,
         masterClock: MasterClock,
         appState: AppState,
-        pluginManager: AUPluginManager
+        pluginManager: AUPluginManager,
+        drumSequencer: DrumSequencer? = nil
     ) {
         self.audioEngine = audioEngine
         self.mixerState = mixerState
@@ -40,6 +42,7 @@ class ProjectManager: ObservableObject {
         self.masterClock = masterClock
         self.appState = appState
         self.pluginManager = pluginManager
+        self.drumSequencer = drumSequencer
     }
 
     // MARK: - File Type
@@ -60,6 +63,26 @@ class ProjectManager: ObservableObject {
         sequencer.rootNote = 0
         sequencer.sequenceOctave = 0
         sequencer.scaleIndex = 0
+
+        // Reset drum sequencer
+        if let drumSeq = drumSequencer {
+            drumSeq.stop()
+            drumSeq.clearAll()
+            drumSeq.stepDivision = .x4
+            drumSeq.syncToTransport = true
+            for i in 0..<drumSeq.lanes.count {
+                drumSeq.lanes[i].isMuted = false
+                drumSeq.lanes[i].level = 0.8
+                drumSeq.lanes[i].harmonics = 0.5
+                drumSeq.lanes[i].timbre = 0.5
+                drumSeq.lanes[i].morph = 0.5
+                drumSeq.lanes[i].note = 60
+                audioEngine.setDrumSeqLaneLevel(i, value: 0.8)
+                audioEngine.setDrumSeqLaneHarmonics(i, value: 0.5)
+                audioEngine.setDrumSeqLaneTimbre(i, value: 0.5)
+                audioEngine.setDrumSeqLaneMorph(i, value: 0.5)
+            }
+        }
 
         // Reset master clock
         masterClock.stop()
@@ -122,7 +145,8 @@ class ProjectManager: ObservableObject {
             mixerState: mixerState,
             sequencer: sequencer,
             masterClock: masterClock,
-            appState: appState
+            appState: appState,
+            drumSequencer: drumSequencer
         )
 
         // Update timestamps if overwriting
@@ -195,7 +219,8 @@ class ProjectManager: ObservableObject {
                 sequencer: sequencer,
                 masterClock: masterClock,
                 appState: appState,
-                pluginManager: pluginManager
+                pluginManager: pluginManager,
+                drumSequencer: drumSequencer
             )
 
             currentProjectURL = url

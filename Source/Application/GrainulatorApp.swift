@@ -12,12 +12,13 @@ struct GrainulatorApp: App {
     @StateObject private var appState = AppState()
     @StateObject private var audioEngine = AudioEngineWrapper()
     @StateObject private var midiManager = MIDIManager()
-    @StateObject private var sequencer = MetropolixSequencer()
+    @StateObject private var sequencer = StepSequencer()
     @StateObject private var masterClock = MasterClock()
     @StateObject private var mixerState = MixerState()  // New modular mixer state
     @StateObject private var pluginManager = AUPluginManager()  // AU plugin browser
     @StateObject private var projectManager = ProjectManager()  // Project save/load
     @StateObject private var conversationalBridge = ConversationalControlBridge()
+    @StateObject private var drumSequencer = DrumSequencer()
 
     var body: some Scene {
         WindowGroup {
@@ -30,6 +31,7 @@ struct GrainulatorApp: App {
                 .environmentObject(mixerState)
                 .environmentObject(pluginManager)
                 .environmentObject(projectManager)
+                .environmentObject(drumSequencer)
                 .frame(minWidth: 1200, minHeight: 600)
                 .onAppear {
                     // Ensure we get a proper menu bar when launched from terminal
@@ -40,6 +42,9 @@ struct GrainulatorApp: App {
                     sequencer.connectMasterClock(masterClock)
                     masterClock.connect(audioEngine: audioEngine)
                     masterClock.connectSequencer(sequencer)
+                    drumSequencer.connect(audioEngine: audioEngine)
+                    drumSequencer.connectMasterClock(masterClock)
+                    sequencer.connectDrumSequencer(drumSequencer)
                     mixerState.syncToAudioEngine(audioEngine)  // Push default mixer/send levels to C++ engine
                     pluginManager.refreshPluginList()  // Scan for AU plugins on launch
                     projectManager.connect(
@@ -48,9 +53,10 @@ struct GrainulatorApp: App {
                         sequencer: sequencer,
                         masterClock: masterClock,
                         appState: appState,
-                        pluginManager: pluginManager
+                        pluginManager: pluginManager,
+                        drumSequencer: drumSequencer
                     )
-                    conversationalBridge.start(audioEngine: audioEngine, masterClock: masterClock, sequencer: sequencer)
+                    conversationalBridge.start(audioEngine: audioEngine, masterClock: masterClock, sequencer: sequencer, drumSequencer: drumSequencer)
                     setupMIDICallbacks()
                 }
         }
