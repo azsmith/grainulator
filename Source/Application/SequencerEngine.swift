@@ -138,7 +138,7 @@ struct SequencerTrack: Identifiable {
     var output: SequencerTrackOutput
     var stages: [SequencerStage]
 
-    static func makeDefault(id: Int, name: String, noteSlots: [Int], division: SequencerClockDivision) -> SequencerTrack {
+    static func makeDefault(id: Int, name: String, noteSlots: [Int], division: SequencerClockDivision, output: SequencerTrackOutput = .both, stepType: SequencerStepType = .play) -> SequencerTrack {
         let stageCount = 8
         var stages: [SequencerStage] = []
         stages.reserveCapacity(stageCount)
@@ -153,7 +153,7 @@ struct SequencerTrack: Identifiable {
                     probability: 1.0,
                     noteSlot: min(max(noteSlot, 0), 8),
                     octave: 0,
-                    stepType: .play,
+                    stepType: stepType,
                     slide: false
                 )
             )
@@ -170,7 +170,7 @@ struct SequencerTrack: Identifiable {
             transpose: 0,
             baseOctave: 4,
             velocity: 100,
-            output: .both,
+            output: output,
             stages: stages
         )
     }
@@ -184,8 +184,8 @@ final class StepSequencer: ObservableObject {
     @Published var sequenceOctave: Int = 0
     @Published var scaleIndex: Int = 0
     @Published var tracks: [SequencerTrack] = [
-        SequencerTrack.makeDefault(id: 0, name: "TRACK 1", noteSlots: [0, 0, 0, 0, 0, 0, 0, 0], division: .x1),
-        SequencerTrack.makeDefault(id: 1, name: "TRACK 2", noteSlots: [0, 0, 0, 0, 0, 0, 0, 0], division: .x1)
+        SequencerTrack.makeDefault(id: 0, name: "TRACK 1", noteSlots: [0, 0, 0, 0, 0, 0, 0, 0], division: .x1, output: .plaits),
+        SequencerTrack.makeDefault(id: 1, name: "TRACK 2", noteSlots: [0, 0, 0, 0, 0, 0, 0, 0], division: .x1, output: .rings)
     ]
     @Published var selectedStagePerTrack: [Int] = [0, 0]
     @Published var playheadStagePerTrack: [Int] = [0, 0]

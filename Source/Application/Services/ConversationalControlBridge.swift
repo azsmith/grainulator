@@ -897,7 +897,20 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                 "actions": ["set"],
                 "paths": [
                     "synth.plaits.mode",
+                    "synth.plaits.harmonics",
+                    "synth.plaits.timbre",
+                    "synth.plaits.morph",
+                    "synth.plaits.level",
+                    "synth.plaits.lpgColor",
+                    "synth.plaits.lpgDecay",
+                    "synth.plaits.lpgAttack",
+                    "synth.plaits.lpgBypass",
                     "synth.rings.mode",
+                    "synth.rings.structure",
+                    "synth.rings.brightness",
+                    "synth.rings.damping",
+                    "synth.rings.position",
+                    "synth.rings.level",
                     "synth.daisydrum.mode",
                     "synth.daisydrum.harmonics",
                     "synth.daisydrum.timbre",
@@ -1030,8 +1043,25 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                 "track2": canonicalTrackStatePayload(trackIndex: 1) ?? [:],
             ],
             "synth": [
-                "plaits": ["mode": readSynthModeName(parameter: .plaitsModel)],
-                "rings": ["mode": readSynthModeName(parameter: .ringsModel)],
+                "plaits": [
+                    "mode": readSynthModeName(parameter: .plaitsModel),
+                    "harmonics": readGlobalParameter(id: .plaitsHarmonics),
+                    "timbre": readGlobalParameter(id: .plaitsTimbre),
+                    "morph": readGlobalParameter(id: .plaitsMorph),
+                    "level": readGlobalParameter(id: .plaitsLevel),
+                    "lpgColor": readGlobalParameter(id: .plaitsLPGColor),
+                    "lpgDecay": readGlobalParameter(id: .plaitsLPGDecay),
+                    "lpgAttack": readGlobalParameter(id: .plaitsLPGAttack),
+                    "lpgBypass": readGlobalParameter(id: .plaitsLPGBypass),
+                ] as [String: Any],
+                "rings": [
+                    "mode": readSynthModeName(parameter: .ringsModel),
+                    "structure": readGlobalParameter(id: .ringsStructure),
+                    "brightness": readGlobalParameter(id: .ringsBrightness),
+                    "damping": readGlobalParameter(id: .ringsDamping),
+                    "position": readGlobalParameter(id: .ringsPosition),
+                    "level": readGlobalParameter(id: .ringsLevel),
+                ] as [String: Any],
                 "daisydrum": [
                     "mode": readSynthModeName(parameter: .daisyDrumEngine),
                     "harmonics": readGlobalParameter(id: .daisyDrumHarmonics),
@@ -2289,6 +2319,31 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return (true, nil)
         }
 
+        // Plaits continuous parameters
+        let plaitsParamMap: [String: ParameterID] = [
+            "synth.plaits.harmonics": .plaitsHarmonics,
+            "synth.plaits.timbre": .plaitsTimbre,
+            "synth.plaits.morph": .plaitsMorph,
+            "synth.plaits.level": .plaitsLevel,
+            "synth.plaits.lpgColor": .plaitsLPGColor,
+            "synth.plaits.lpgDecay": .plaitsLPGDecay,
+            "synth.plaits.lpgAttack": .plaitsLPGAttack,
+            "synth.plaits.lpgBypass": .plaitsLPGBypass,
+        ]
+        if let paramId = plaitsParamMap[target] {
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Plaits \(target.split(separator: ".").last ?? "") must be within [0.0, 1.0]"))
+            }
+            writeSynthMode(parameter: paramId, normalizedValue: Float(value))
+            recordMutation(
+                changedPaths: [target],
+                additionalEvents: [
+                    (type: "synth.param_changed", payload: ["synth": "plaits", "param": String(target.split(separator: ".").last ?? ""), "value": value]),
+                ]
+            )
+            return (true, nil)
+        }
+
         if target == "synth.rings.mode" {
             guard let mode = modeTextFromAction(action),
                   let normalized = ringsModelNormalized(modeText: mode) else {
@@ -2305,6 +2360,28 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                             "mode": mode,
                         ]
                     ),
+                ]
+            )
+            return (true, nil)
+        }
+
+        // Rings continuous parameters
+        let ringsParamMap: [String: ParameterID] = [
+            "synth.rings.structure": .ringsStructure,
+            "synth.rings.brightness": .ringsBrightness,
+            "synth.rings.damping": .ringsDamping,
+            "synth.rings.position": .ringsPosition,
+            "synth.rings.level": .ringsLevel,
+        ]
+        if let paramId = ringsParamMap[target] {
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Rings \(target.split(separator: ".").last ?? "") must be within [0.0, 1.0]"))
+            }
+            writeSynthMode(parameter: paramId, normalizedValue: Float(value))
+            recordMutation(
+                changedPaths: [target],
+                additionalEvents: [
+                    (type: "synth.param_changed", payload: ["synth": "rings", "param": String(target.split(separator: ".").last ?? ""), "value": value]),
                 ]
             )
             return (true, nil)
@@ -3721,8 +3798,34 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return readSessionKeyText()
         case "synth.plaits.mode":
             return readSynthModeName(parameter: .plaitsModel)
+        case "synth.plaits.harmonics":
+            return readGlobalParameter(id: .plaitsHarmonics)
+        case "synth.plaits.timbre":
+            return readGlobalParameter(id: .plaitsTimbre)
+        case "synth.plaits.morph":
+            return readGlobalParameter(id: .plaitsMorph)
+        case "synth.plaits.level":
+            return readGlobalParameter(id: .plaitsLevel)
+        case "synth.plaits.lpgColor":
+            return readGlobalParameter(id: .plaitsLPGColor)
+        case "synth.plaits.lpgDecay":
+            return readGlobalParameter(id: .plaitsLPGDecay)
+        case "synth.plaits.lpgAttack":
+            return readGlobalParameter(id: .plaitsLPGAttack)
+        case "synth.plaits.lpgBypass":
+            return readGlobalParameter(id: .plaitsLPGBypass)
         case "synth.rings.mode":
             return readSynthModeName(parameter: .ringsModel)
+        case "synth.rings.structure":
+            return readGlobalParameter(id: .ringsStructure)
+        case "synth.rings.brightness":
+            return readGlobalParameter(id: .ringsBrightness)
+        case "synth.rings.damping":
+            return readGlobalParameter(id: .ringsDamping)
+        case "synth.rings.position":
+            return readGlobalParameter(id: .ringsPosition)
+        case "synth.rings.level":
+            return readGlobalParameter(id: .ringsLevel)
         case "synth.daisydrum.mode":
             return readSynthModeName(parameter: .daisyDrumEngine)
         case "synth.daisydrum.harmonics":

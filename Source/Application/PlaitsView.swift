@@ -12,17 +12,17 @@ struct PlaitsView: View {
     @EnvironmentObject var audioEngine: AudioEngineWrapper
     @EnvironmentObject var midiManager: MIDIManager
 
-    @State private var selectedEngine: Int = 0
-    @State private var harmonics: Float = 0.5
-    @State private var timbre: Float = 0.5
-    @State private var morph: Float = 0.5
+    @State private var selectedEngine: Int = 3  // Granular Formant
+    @State private var harmonics: Float = 0.35
+    @State private var timbre: Float = 0.31
+    @State private var morph: Float = 0.51
     @State private var level: Float = 0.8
     @State private var isTriggered: Bool = false
 
     // LPG parameters
-    @State private var lpgColor: Float = 0.5
+    @State private var lpgColor: Float = 0.52
     @State private var lpgAttack: Float = 0.0
-    @State private var lpgDecay: Float = 0.5
+    @State private var lpgDecay: Float = 0.18
     @State private var lpgBypass: Bool = false
 
     // Modulation amounts (updated via timer)
@@ -108,6 +108,9 @@ struct PlaitsView: View {
                     .padding(.top, 4)
                     .padding(.bottom, 8)
             }
+        }
+        .onAppear {
+            syncToEngine()
         }
         .onReceive(modulationTimer) { _ in
             // Poll modulation values from audio engine
@@ -337,6 +340,18 @@ struct PlaitsView: View {
         let octave = (midiNote / 12) - 1
         let noteName = noteNames[midiNote % 12]
         return "\(noteName)\(octave)"
+    }
+
+    private func syncToEngine() {
+        audioEngine.setParameter(id: .plaitsModel, value: Float(selectedEngine) / Float(engineNames.count - 1))
+        audioEngine.setParameter(id: .plaitsHarmonics, value: harmonics)
+        audioEngine.setParameter(id: .plaitsTimbre, value: timbre)
+        audioEngine.setParameter(id: .plaitsMorph, value: morph)
+        audioEngine.setParameter(id: .plaitsLevel, value: level)
+        audioEngine.setParameter(id: .plaitsLPGAttack, value: lpgAttack)
+        audioEngine.setParameter(id: .plaitsLPGDecay, value: lpgDecay)
+        audioEngine.setParameter(id: .plaitsLPGColor, value: lpgColor)
+        audioEngine.setParameter(id: .plaitsLPGBypass, value: lpgBypass ? 1.0 : 0.0)
     }
 }
 

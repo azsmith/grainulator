@@ -140,19 +140,9 @@ struct ProKnobView: View {
 
     // Constants
     private let rotationRange: Double = 270  // Total rotation in degrees
-    private let standardStartAngle: Double = 135  // Start angle for standard knobs (7 o'clock)
-
-    // For pan/bipolar centered controls, we want center (0.5) at top (12 o'clock)
-    // Standard: startAngle=135, so value=0.5 -> 135+135=270° (9 o'clock) - WRONG
-    // Pan: startAngle=225, so value=0.5 -> 225+135=360°=0° (12 o'clock) - CORRECT
-    private var effectiveStartAngle: Double {
-        // Use 225° start for bipolar controls with center default (like pan)
-        // This makes center value point to top
-        if isBipolar && abs(defaultValue - (minValue + maxValue) / 2) < 0.01 {
-            return 225
-        }
-        return standardStartAngle
-    }
+    // Start angle: 225° puts 0% at ~7:30 (lower-left) and 100% at ~4:30 (lower-right)
+    // This ensures 50% is always at 12 o'clock (straight up)
+    private let startAngle: Double = 225
 
     init(
         value: Binding<Float>,
@@ -188,7 +178,7 @@ struct ProKnobView: View {
 
     // Rotation angle for the knob pointer
     private var rotationAngle: Double {
-        effectiveStartAngle + Double(normalizedValue) * rotationRange
+        startAngle + Double(normalizedValue) * rotationRange
     }
 
     // Normalized modulation value (if present)
@@ -253,7 +243,7 @@ struct ProKnobView: View {
     private var positionMarkers: some View {
         let markerCount = 11
         let markerAngles = (0..<markerCount).map { i in
-            effectiveStartAngle + Double(i) / Double(markerCount - 1) * rotationRange
+            startAngle + Double(i) / Double(markerCount - 1) * rotationRange
         }
 
         return ForEach(Array(markerAngles.enumerated()), id: \.offset) { index, angle in
@@ -270,25 +260,31 @@ struct ProKnobView: View {
 
     // MARK: - Indicator Arc
 
+    // Arc rotation offset: rotates the Circle trim so that fraction 0.0 aligns
+    // with the knob's start position (225° = ~7:30). This keeps all trim fractions
+    // in the [0, 0.75] range, avoiding wrap-around issues at the 1.0 boundary.
+    private var arcRotationOffset: Double {
+        startAngle - 90  // -90 converts from trim coords (0°=3 o'clock) to screen
+    }
+
     private var indicatorArc: some View {
-        let arcStart = effectiveStartAngle / 360.0
-        let arcEnd = (effectiveStartAngle + Double(normalizedValue) * rotationRange) / 360.0
+        let arcEnd = Double(normalizedValue) * rotationRange / 360.0
 
         return Circle()
-            .trim(from: arcStart, to: arcEnd)
+            .trim(from: 0, to: arcEnd)
             .stroke(
                 accentColor,
                 style: StrokeStyle(lineWidth: size.indicatorWidth, lineCap: .round)
             )
             .frame(width: size.diameter + 4, height: size.diameter + 4)
-            .rotationEffect(.degrees(-90))
+            .rotationEffect(.degrees(arcRotationOffset))
     }
 
     // MARK: - Modulation Arc
 
     private func modulationArc(_ modNorm: Float) -> some View {
-        let baseEnd = (effectiveStartAngle + Double(normalizedValue) * rotationRange) / 360.0
-        let modEnd = (effectiveStartAngle + Double(modNorm) * rotationRange) / 360.0
+        let baseEnd = Double(normalizedValue) * rotationRange / 360.0
+        let modEnd = Double(modNorm) * rotationRange / 360.0
 
         return Circle()
             .trim(from: min(baseEnd, modEnd), to: max(baseEnd, modEnd))
@@ -297,7 +293,7 @@ struct ProKnobView: View {
                 style: StrokeStyle(lineWidth: size.indicatorWidth, lineCap: .round)
             )
             .frame(width: size.diameter + 4, height: size.diameter + 4)
-            .rotationEffect(.degrees(-90))
+            .rotationEffect(.degrees(arcRotationOffset))
     }
 
     // MARK: - Knob Body

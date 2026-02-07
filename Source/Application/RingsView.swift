@@ -12,10 +12,10 @@ struct RingsView: View {
     @EnvironmentObject var audioEngine: AudioEngineWrapper
 
     @State private var modelIndex: Int = 0
-    @State private var structure: Float = 0.4
-    @State private var brightness: Float = 0.7
-    @State private var damping: Float = 0.8
-    @State private var position: Float = 0.3
+    @State private var structure: Float = 0.30
+    @State private var brightness: Float = 0.40
+    @State private var damping: Float = 0.39
+    @State private var position: Float = 0.97
     @State private var level: Float = 0.8
 
     // Modulation amounts (polled from audio engine)

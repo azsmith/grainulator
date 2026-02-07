@@ -44,7 +44,10 @@ struct GrainulatorApp: App {
                             window.titlebarAppearsTransparent = true
                             window.titleVisibility = .hidden
                             window.styleMask.insert(.fullSizeContentView)
-                            window.isMovableByWindowBackground = true
+                            // Note: isMovableByWindowBackground is intentionally NOT set —
+                            // it conflicts with knob drag gestures, causing the window to
+                            // move when dragging knobs. The title bar area still allows
+                            // window dragging via the transparent title bar.
                         }
                     }
 
@@ -55,6 +58,7 @@ struct GrainulatorApp: App {
                     drumSequencer.connect(audioEngine: audioEngine)
                     drumSequencer.connectMasterClock(masterClock)
                     sequencer.connectDrumSequencer(drumSequencer)
+                    mixerState.connectAudioEngine(audioEngine)  // Wire up Combine → engine sync
                     mixerState.syncToAudioEngine(audioEngine)  // Push default mixer/send levels to C++ engine
                     pluginManager.refreshPluginList()  // Scan for AU plugins on launch
                     projectManager.connect(

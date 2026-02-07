@@ -263,6 +263,10 @@ class MixerState: ObservableObject {
     // Solo state tracking
     @Published var anySolo: Bool = false
 
+    // Weak reference to audio engine for direct sync from Combine subscriptions.
+    // Set via connectAudioEngine(_:) after init.
+    private weak var audioEngine: AudioEngineWrapper?
+
     private var cancellables = Set<AnyCancellable>()
 
     init() {
@@ -270,14 +274,80 @@ class MixerState: ObservableObject {
         self.channels = ChannelType.allCases.map { MixerChannelState(channelType: $0) }
         self.master = MasterChannelState()
 
-        // Subscribe to solo changes
+        // Subscribe to channel property changes.
+        // MixerChannelState is a nested ObservableObject, so its @Published
+        // changes don't propagate to MixerState.objectWillChange automatically.
+        //
+        // IMPORTANT: @Published fires on willSet (before the value is stored).
+        // We use .receive(on: DispatchQueue.main) to defer the sync callback
+        // to after the property has been updated, so syncToAudioEngine reads
+        // the correct current values.
         for channel in channels {
             channel.$isSolo
+                .dropFirst()  // Skip initial value emitted on subscribe
+                .receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in
                     self?.updateSoloState()
+                    self?.syncAllChannelsIfConnected()
+                }
+                .store(in: &cancellables)
+
+            channel.$isMuted
+                .dropFirst()
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    self?.syncAllChannelsIfConnected()
+                }
+                .store(in: &cancellables)
+
+            channel.$gain
+                .dropFirst()
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    guard let self, let engine = self.audioEngine else { return }
+                    self.syncChannelToEngine(channel, audioEngine: engine)
+                }
+                .store(in: &cancellables)
+
+            channel.$pan
+                .dropFirst()
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    guard let self, let engine = self.audioEngine else { return }
+                    self.syncChannelToEngine(channel, audioEngine: engine)
+                }
+                .store(in: &cancellables)
+
+            channel.$sendA
+                .dropFirst()
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    guard let self, let engine = self.audioEngine else { return }
+                    self.syncChannelToEngine(channel, audioEngine: engine)
+                }
+                .store(in: &cancellables)
+
+            channel.$sendB
+                .dropFirst()
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    guard let self, let engine = self.audioEngine else { return }
+                    self.syncChannelToEngine(channel, audioEngine: engine)
                 }
                 .store(in: &cancellables)
         }
+    }
+
+    /// Connect the audio engine for automatic sync on property changes.
+    /// Call this once after init (e.g. in GrainulatorApp.onAppear).
+    func connectAudioEngine(_ engine: AudioEngineWrapper) {
+        self.audioEngine = engine
+    }
+
+    /// Sync all channels to engine (used for solo/mute which affect multiple channels)
+    private func syncAllChannelsIfConnected() {
+        guard let engine = audioEngine else { return }
+        syncToAudioEngine(engine)
     }
 
     private func updateSoloState() {

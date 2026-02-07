@@ -65,10 +65,15 @@ struct DrumLaneState: Identifiable {
     var morph: Float = 0.5
     var note: UInt8 = 60       // MIDI note (controls drum pitch)
 
-    init(lane: DrumLane) {
+    init(lane: DrumLane, harmonics: Float = 0.5, timbre: Float = 0.5, morph: Float = 0.5, level: Float = 0.8, note: UInt8 = 60) {
         self.id = lane.rawValue
         self.lane = lane
         self.steps = (0..<16).map { DrumStep(id: $0) }
+        self.harmonics = harmonics
+        self.timbre = timbre
+        self.morph = morph
+        self.level = level
+        self.note = note
     }
 }
 
@@ -130,7 +135,12 @@ class DrumSequencer: ObservableObject {
     // MARK: - Init
 
     init() {
-        self.lanes = DrumLane.allCases.map { DrumLaneState(lane: $0) }
+        self.lanes = [
+            DrumLaneState(lane: .analogKick,  harmonics: 0.55, timbre: 0.27, morph: 0.50, level: 0.70, note: 36),
+            DrumLaneState(lane: .synthKick,   harmonics: 0.50, timbre: 0.50, morph: 0.50, level: 0.71, note: 36),
+            DrumLaneState(lane: .analogSnare, harmonics: 0.26, timbre: 0.48, morph: 0.35, level: 0.71, note: 52),
+            DrumLaneState(lane: .hiHat,       harmonics: 0.63, timbre: 0.45, morph: 0.69, level: 0.71, note: 69),
+        ]
     }
 
     // MARK: - Connection

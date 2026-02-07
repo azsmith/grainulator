@@ -95,29 +95,14 @@ struct NewMixerView: View {
             .background(ColorPalette.backgroundPrimary)
         }
         .onAppear {
+            // Channel-level sync (gain, pan, sends, mute, solo) is now handled
+            // automatically by Combine subscriptions inside MixerState.
+            // We still do an initial full sync and handle master-level changes here.
             mixerState.syncToAudioEngine(audioEngine)
             startMeterUpdates()
         }
         .onDisappear {
             stopMeterUpdates()
-        }
-        .onChange(of: mixerState.channels.map { $0.gain }) { _ in
-            mixerState.syncToAudioEngine(audioEngine)
-        }
-        .onChange(of: mixerState.channels.map { $0.pan }) { _ in
-            mixerState.syncToAudioEngine(audioEngine)
-        }
-        .onChange(of: mixerState.channels.map { $0.sendA.level }) { _ in
-            mixerState.syncToAudioEngine(audioEngine)
-        }
-        .onChange(of: mixerState.channels.map { $0.sendB.level }) { _ in
-            mixerState.syncToAudioEngine(audioEngine)
-        }
-        .onChange(of: mixerState.channels.map { $0.isMuted }) { _ in
-            mixerState.syncToAudioEngine(audioEngine)
-        }
-        .onChange(of: mixerState.channels.map { $0.isSolo }) { _ in
-            mixerState.syncToAudioEngine(audioEngine)
         }
         .onChange(of: mixerState.master.gain) { _ in
             mixerState.syncMasterToEngine(audioEngine)
