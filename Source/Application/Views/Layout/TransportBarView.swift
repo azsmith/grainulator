@@ -22,29 +22,39 @@ struct TransportBarView: View {
     @State private var bpmText: String = "120"
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Left section: Transport controls
-            transportSection
-                .frame(width: 240)
+        VStack(spacing: 0) {
+            // Reserve space for macOS title bar / traffic light buttons
+            Color.clear
+                .frame(height: 28)
 
-            // Divider
-            Rectangle()
-                .fill(ColorPalette.divider)
-                .frame(width: 1)
+            HStack(spacing: 0) {
+                // Space for macOS traffic light buttons (hidden title bar)
+                Color.clear
+                    .frame(width: 78)
 
-            // Center section: Tab navigation
-            tabNavigationSection
+                // Left section: Transport controls
+                transportSection
+                    .frame(width: 240)
 
-            // Divider
-            Rectangle()
-                .fill(ColorPalette.divider)
-                .frame(width: 1)
+                // Divider
+                Rectangle()
+                    .fill(ColorPalette.divider)
+                    .frame(width: 1)
 
-            // Right section: Status and mixer toggle
-            statusSection
-                .frame(width: 200)
+                // Center section: Tab navigation
+                tabNavigationSection
+
+                // Divider
+                Rectangle()
+                    .fill(ColorPalette.divider)
+                    .frame(width: 1)
+
+                // Right section: Status and mixer toggle
+                statusSection
+                    .frame(width: 200)
+            }
+            .frame(height: 56)
         }
-        .frame(height: 56)
         .background(ColorPalette.backgroundSecondary)
     }
 

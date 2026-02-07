@@ -154,103 +154,168 @@ struct MasterClockView: View {
         }
     }
 
-    // MARK: - Output Grid (4x2)
+    // MARK: - Output Grid (8x1 row, matching drum step layout)
 
     private var outputGrid: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
-            ForEach(0..<8) { index in
-                CompactClockOutputCell(output: masterClock.outputs[index], index: index)
+        HStack(spacing: 3) {
+            ForEach(0..<4, id: \.self) { groupIndex in
+                HStack(spacing: 3) {
+                    ForEach(0..<2, id: \.self) { inGroupIndex in
+                        let outputIndex = groupIndex * 2 + inGroupIndex
+                        ClockOutputPad(output: masterClock.outputs[outputIndex], index: outputIndex)
+                            .frame(height: 80)
+                    }
+                }
+
+                // Divider between groups (except after last)
+                if groupIndex < 3 {
+                    Rectangle()
+                        .fill(ColorPalette.divider)
+                        .frame(width: 1)
+                        .padding(.vertical, 4)
+                }
             }
         }
     }
 }
 
-// MARK: - Compact Clock Output Cell (Square)
+// MARK: - Clock Output Group Colors (matching drum sequencer step palette)
 
-struct CompactClockOutputCell: View {
+private struct ClockOutputColors {
+    /// Group colors for outputs 1-2, 3-4, 5-6, 7-8
+    static let groupColors: [Color] = [
+        Color(red: 0.85, green: 0.20, blue: 0.20),  // Red
+        Color(red: 0.90, green: 0.55, blue: 0.15),  // Orange
+        Color(red: 0.90, green: 0.80, blue: 0.20),  // Yellow
+        Color(red: 0.90, green: 0.87, blue: 0.80),  // Off-white/cream
+    ]
+
+    /// Dim version of group colors (inactive/muted state)
+    static let groupColorsDim: [Color] = [
+        Color(red: 0.25, green: 0.08, blue: 0.08),  // Dim red
+        Color(red: 0.28, green: 0.16, blue: 0.06),  // Dim orange
+        Color(red: 0.28, green: 0.24, blue: 0.06),  // Dim yellow
+        Color(red: 0.25, green: 0.24, blue: 0.22),  // Dim off-white
+    ]
+
+    /// Dark text color for light group pads (cream/yellow)
+    static let darkText = Color(red: 0.15, green: 0.14, blue: 0.13)
+
+    static func color(for index: Int, active: Bool) -> Color {
+        let groupIndex = index / 2
+        let clamped = min(groupIndex, 3)
+        return active ? groupColors[clamped] : groupColorsDim[clamped]
+    }
+
+    static func brightColor(for index: Int) -> Color {
+        let groupIndex = index / 2
+        return groupColors[min(groupIndex, 3)]
+    }
+
+    /// Whether this output's group color needs dark text for contrast
+    static func needsDarkText(for index: Int) -> Bool {
+        let groupIndex = index / 2
+        return groupIndex >= 2  // Yellow and cream groups need dark text
+    }
+}
+
+// MARK: - Clock Output Pad (Drum Step Style)
+
+struct ClockOutputPad: View {
     @ObservedObject var output: ClockOutput
     let index: Int
 
     @State private var showingConfig = false
+    @State private var isHovering = false
 
-    private var levelColor: Color {
+    /// Whether the output is currently pulsing (activity above threshold)
+    private var isActive: Bool {
+        !output.muted && abs(output.currentValue) > 0.3
+    }
+
+    /// The pad's fill color based on state
+    private var padColor: Color {
         if output.muted {
-            return ColorPalette.borderHighlight
+            return ClockOutputColors.groupColorsDim[min(index / 2, 3)].opacity(0.4)
         }
-        let value = abs(output.currentValue)
-        if value > 0.8 {
-            return ColorPalette.ledRed
-        } else if value > 0.5 {
-            return ColorPalette.ledAmber
-        } else if value > 0.1 {
-            return ColorPalette.ledGreen
+        return ClockOutputColors.color(for: index, active: isActive)
+    }
+
+    /// Text color — dark on bright yellow/cream pads, light on dim/dark pads
+    private var textColor: Color {
+        if output.muted { return ColorPalette.textDimmed }
+        if isActive && ClockOutputColors.needsDarkText(for: index) {
+            return ClockOutputColors.darkText
         }
-        return ColorPalette.ledGreen
+        return isActive ? .white : ColorPalette.textMuted
+    }
+
+    /// Secondary text color for mode label
+    private var secondaryTextColor: Color {
+        if output.muted { return ColorPalette.textDimmed.opacity(0.5) }
+        if isActive && ClockOutputColors.needsDarkText(for: index) {
+            return ClockOutputColors.darkText.opacity(0.6)
+        }
+        return isActive ? .white.opacity(0.6) : ColorPalette.textDimmed
     }
 
     var body: some View {
-        VStack(spacing: 3) {
-            // Top row: Index + Activity indicator
-            HStack(spacing: 4) {
-                // Index badge
+        Button(action: { showingConfig = true }) {
+            VStack(spacing: 2) {
+                // Output index
                 Text("\(index + 1)")
                     .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundColor(ColorPalette.textMuted)
-                    .frame(width: 14, height: 14)
-                    .background(ColorPalette.backgroundTertiary)
-                    .cornerRadius(3)
+                    .foregroundColor(secondaryTextColor)
 
-                // Activity indicator
-                ZStack {
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(ColorPalette.backgroundSecondary)
-                        .frame(width: 32, height: 32)
-
-                    GeometryReader { geo in
-                        let normalizedValue = (output.currentValue + 1) / 2
-                        Rectangle()
-                            .fill(levelColor)
-                            .frame(height: geo.size.height * CGFloat(normalizedValue))
-                            .frame(maxHeight: .infinity, alignment: .bottom)
-                    }
-                    .frame(width: 28, height: 28)
-                    .clipShape(RoundedRectangle(cornerRadius: 2))
-
-                    // Mode overlay
-                    Text(output.mode == .clock ? "CLK" : "LFO")
-                        .font(.system(size: 7, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.6))
-                }
-                .frame(width: 32, height: 32)
-            }
-
-            // Bottom row: Division + Mute
-            HStack(spacing: 3) {
-                // Division/Waveform
+                // Division or waveform (primary label)
                 Text(output.mode == .clock ? output.division.rawValue : output.waveform.rawValue)
-                    .font(.system(size: 8, weight: .medium, design: .monospaced))
-                    .foregroundColor(ColorPalette.textPanelLabel)
+                    .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                    .foregroundColor(textColor)
                     .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .minimumScaleFactor(0.7)
 
-                // Mute button
-                Button(action: { output.muted.toggle() }) {
-                    Text("M")
+                // Mode label
+                Text(output.mode == .clock ? "CLK" : "LFO")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundColor(secondaryTextColor)
+
+                // Mute indicator
+                if output.muted {
+                    Text("MUTE")
                         .font(.system(size: 7, weight: .bold, design: .monospaced))
-                        .foregroundColor(output.muted ? ColorPalette.ledRed : ColorPalette.textDimmed)
-                        .frame(width: 16, height: 14)
-                        .background(output.muted ? ColorPalette.ledRed.opacity(0.2) : Color.clear)
-                        .cornerRadius(2)
+                        .foregroundColor(ColorPalette.ledRed)
+                } else {
+                    Color.clear.frame(height: 9)
                 }
-                .buttonStyle(.plain)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(padColor)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(
+                        isActive ? ClockOutputColors.brightColor(for: index).opacity(0.6) : Color.clear,
+                        lineWidth: isActive ? 1.5 : 0
+                    )
+            )
+            .shadow(
+                color: isActive ? ClockOutputColors.brightColor(for: index).opacity(0.4) : .clear,
+                radius: isActive ? 4 : 0
+            )
+            .scaleEffect(isHovering ? 1.03 : 1.0)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.1)) {
+                isHovering = hovering
             }
         }
-        .padding(6)
-        .frame(minWidth: 60, minHeight: 60)
-        .background(ColorPalette.backgroundSecondary)
-        .cornerRadius(6)
-        .onTapGesture {
-            showingConfig = true
+        .contextMenu {
+            Button(output.muted ? "Unmute" : "Mute") {
+                output.muted.toggle()
+            }
         }
         .popover(isPresented: $showingConfig) {
             ClockOutputConfigView(output: output, index: index)

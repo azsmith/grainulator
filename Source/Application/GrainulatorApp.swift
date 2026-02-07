@@ -38,6 +38,16 @@ struct GrainulatorApp: App {
                     NSApp.setActivationPolicy(.regular)
                     NSApp.activate(ignoringOtherApps: true)
 
+                    // Configure window for full-content layout (like Logic Pro / Ableton)
+                    DispatchQueue.main.async {
+                        if let window = NSApp.windows.first(where: { $0.contentView != nil && $0.className.contains("NSWindow") || $0.isKeyWindow }) {
+                            window.titlebarAppearsTransparent = true
+                            window.titleVisibility = .hidden
+                            window.styleMask.insert(.fullSizeContentView)
+                            window.isMovableByWindowBackground = true
+                        }
+                    }
+
                     sequencer.connect(audioEngine: audioEngine)
                     sequencer.connectMasterClock(masterClock)
                     masterClock.connect(audioEngine: audioEngine)
