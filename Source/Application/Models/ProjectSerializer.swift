@@ -20,7 +20,8 @@ struct ProjectSerializer {
         sequencer: StepSequencer,
         masterClock: MasterClock,
         appState: AppState,
-        drumSequencer: DrumSequencer? = nil
+        drumSequencer: DrumSequencer? = nil,
+        chordSequencer: ChordSequencer? = nil
     ) -> ProjectSnapshot {
         let now = Date()
         return ProjectSnapshot(
@@ -37,7 +38,8 @@ struct ProjectSerializer {
             uiPreferences: captureUIPreferences(appState),
             drumSequencer: drumSequencer.map { captureDrumSequencer($0) },
             daisyDrum: captureDaisyDrum(audioEngine),
-            sampler: captureSampler(audioEngine)
+            sampler: captureSampler(audioEngine),
+            chordSequencer: chordSequencer.map { captureChordSequencer($0) }
         )
     }
 
@@ -336,6 +338,24 @@ struct ProjectSerializer {
         )
     }
 
+    // MARK: - Chord Sequencer
+
+    private static func captureChordSequencer(_ chordSeq: ChordSequencer) -> ChordSequencerSnapshot {
+        let steps = chordSeq.steps.map { step in
+            ChordStepSnapshot(
+                index: step.id,
+                degreeId: step.degreeId,
+                qualityId: step.qualityId,
+                active: step.active
+            )
+        }
+        return ChordSequencerSnapshot(
+            steps: steps,
+            division: chordSeq.division.rawValue,
+            isEnabled: chordSeq.isEnabled
+        )
+    }
+
     // MARK: - DaisyDrum Voice (manual/synth tab)
 
     private static func captureDaisyDrum(_ engine: AudioEngineWrapper) -> DaisyDrumVoiceSnapshot {
@@ -383,7 +403,8 @@ struct ProjectSerializer {
         masterClock: MasterClock,
         appState: AppState,
         pluginManager: AUPluginManager,
-        drumSequencer: DrumSequencer? = nil
+        drumSequencer: DrumSequencer? = nil,
+        chordSequencer: ChordSequencer? = nil
     ) async {
         // 1. Stop playback
         if sequencer.isPlaying {
@@ -418,6 +439,18 @@ struct ProjectSerializer {
             } else {
                 // Version 1 project — reset drum sequencer to defaults
                 resetDrumSequencerToDefaults(drumSeq, audioEngine: audioEngine)
+            }
+        }
+
+        // 7b. Restore chord sequencer state (if present in project)
+        if let chordSeq = chordSequencer {
+            if let chordSnapshot = snapshot.chordSequencer {
+                restoreChordSequencer(chordSnapshot, chordSequencer: chordSeq)
+            } else {
+                // Older project — reset chord sequencer to defaults
+                chordSeq.clearAll()
+                chordSeq.division = .div4
+                chordSeq.isEnabled = true
             }
         }
 
@@ -733,6 +766,21 @@ struct ProjectSerializer {
             audioEngine.setDrumSeqLaneHarmonics(i, value: 0.5)
             audioEngine.setDrumSeqLaneTimbre(i, value: 0.5)
             audioEngine.setDrumSeqLaneMorph(i, value: 0.5)
+        }
+    }
+
+    // MARK: - Restore Chord Sequencer
+
+    private static func restoreChordSequencer(_ snapshot: ChordSequencerSnapshot, chordSequencer: ChordSequencer) {
+        chordSequencer.division = SequencerClockDivision(rawValue: snapshot.division) ?? .div4
+        chordSequencer.isEnabled = snapshot.isEnabled
+
+        for stepSnap in snapshot.steps {
+            let stepIndex = stepSnap.index
+            guard stepIndex < chordSequencer.steps.count else { continue }
+            chordSequencer.steps[stepIndex].degreeId = stepSnap.degreeId
+            chordSequencer.steps[stepIndex].qualityId = stepSnap.qualityId
+            chordSequencer.steps[stepIndex].active = stepSnap.active
         }
     }
 

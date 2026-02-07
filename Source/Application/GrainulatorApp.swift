@@ -19,6 +19,7 @@ struct GrainulatorApp: App {
     @StateObject private var projectManager = ProjectManager()  // Project save/load
     @StateObject private var conversationalBridge = ConversationalControlBridge()
     @StateObject private var drumSequencer = DrumSequencer()
+    @StateObject private var chordSequencer = ChordSequencer()
 
     var body: some Scene {
         WindowGroup {
@@ -32,6 +33,7 @@ struct GrainulatorApp: App {
                 .environmentObject(pluginManager)
                 .environmentObject(projectManager)
                 .environmentObject(drumSequencer)
+                .environmentObject(chordSequencer)
                 .frame(minWidth: 1200, minHeight: 600)
                 .onAppear {
                     // Ensure we get a proper menu bar when launched from terminal
@@ -58,6 +60,7 @@ struct GrainulatorApp: App {
                     drumSequencer.connect(audioEngine: audioEngine)
                     drumSequencer.connectMasterClock(masterClock)
                     sequencer.connectDrumSequencer(drumSequencer)
+                    sequencer.connectChordSequencer(chordSequencer)
                     mixerState.connectAudioEngine(audioEngine)  // Wire up Combine → engine sync
                     mixerState.syncToAudioEngine(audioEngine)  // Push default mixer/send levels to C++ engine
                     pluginManager.refreshPluginList()  // Scan for AU plugins on launch
@@ -68,9 +71,10 @@ struct GrainulatorApp: App {
                         masterClock: masterClock,
                         appState: appState,
                         pluginManager: pluginManager,
-                        drumSequencer: drumSequencer
+                        drumSequencer: drumSequencer,
+                        chordSequencer: chordSequencer
                     )
-                    conversationalBridge.start(audioEngine: audioEngine, masterClock: masterClock, sequencer: sequencer, drumSequencer: drumSequencer)
+                    conversationalBridge.start(audioEngine: audioEngine, masterClock: masterClock, sequencer: sequencer, drumSequencer: drumSequencer, chordSequencer: chordSequencer)
                     setupMIDICallbacks()
                 }
         }

@@ -25,6 +25,7 @@ class ProjectManager: ObservableObject {
     weak var appState: AppState?
     weak var pluginManager: AUPluginManager?
     weak var drumSequencer: DrumSequencer?
+    weak var chordSequencer: ChordSequencer?
 
     /// Connect all subsystems (call from GrainulatorApp.onAppear)
     func connect(
@@ -34,7 +35,8 @@ class ProjectManager: ObservableObject {
         masterClock: MasterClock,
         appState: AppState,
         pluginManager: AUPluginManager,
-        drumSequencer: DrumSequencer? = nil
+        drumSequencer: DrumSequencer? = nil,
+        chordSequencer: ChordSequencer? = nil
     ) {
         self.audioEngine = audioEngine
         self.mixerState = mixerState
@@ -43,6 +45,7 @@ class ProjectManager: ObservableObject {
         self.appState = appState
         self.pluginManager = pluginManager
         self.drumSequencer = drumSequencer
+        self.chordSequencer = chordSequencer
     }
 
     // MARK: - File Type
@@ -82,6 +85,13 @@ class ProjectManager: ObservableObject {
                 audioEngine.setDrumSeqLaneTimbre(i, value: 0.5)
                 audioEngine.setDrumSeqLaneMorph(i, value: 0.5)
             }
+        }
+
+        // Reset chord sequencer
+        if let chordSeq = chordSequencer {
+            chordSeq.clearAll()
+            chordSeq.division = .div4
+            chordSeq.isEnabled = true
         }
 
         // Reset master clock
@@ -146,7 +156,8 @@ class ProjectManager: ObservableObject {
             sequencer: sequencer,
             masterClock: masterClock,
             appState: appState,
-            drumSequencer: drumSequencer
+            drumSequencer: drumSequencer,
+            chordSequencer: chordSequencer
         )
 
         // Update timestamps if overwriting
@@ -220,7 +231,8 @@ class ProjectManager: ObservableObject {
                 masterClock: masterClock,
                 appState: appState,
                 pluginManager: pluginManager,
-                drumSequencer: drumSequencer
+                drumSequencer: drumSequencer,
+                chordSequencer: chordSequencer
             )
 
             currentProjectURL = url

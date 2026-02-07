@@ -3,13 +3,14 @@
 //  Grainulator
 //
 //  Step sequencer interface.
-//  Compact layout with context panel for step editing.
+//  Step pads with popover editors (matching ClockOutputPad pattern).
 //
 
 import SwiftUI
 
 struct SequencerView: View {
     @EnvironmentObject var sequencer: StepSequencer
+    @EnvironmentObject var chordSequencer: ChordSequencer
 
     var body: some View {
         ConsoleModuleView(
@@ -22,6 +23,9 @@ struct SequencerView: View {
                 ForEach(Array(sequencer.tracks.indices), id: \.self) { trackIndex in
                     trackSection(trackIndex: trackIndex)
                 }
+
+                // Chord sequencer track
+                ChordSequencerView(chordSequencer: chordSequencer)
             }
             .padding(12)
         }
@@ -168,41 +172,22 @@ struct SequencerView: View {
     @ViewBuilder
     private func trackSection(trackIndex: Int) -> some View {
         let track = sequencer.tracks[trackIndex]
-        let selectedStage = min(
-            max(sequencer.selectedStagePerTrack[trackIndex], 0),
-            track.stages.count - 1
-        )
-        let stage = track.stages[selectedStage]
         let trackColor = trackIndex == 0 ? ColorPalette.accentGranular1 : ColorPalette.accentLooper1
 
         VStack(spacing: 8) {
             // Track header (compact single line)
             trackHeaderRow(trackIndex: trackIndex, track: track, trackColor: trackColor)
 
-            // Main content: Steps + Context Panel
-            HStack(spacing: 8) {
-                // Step sliders and buttons (scrollable)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 5) {
-                        ForEach(track.stages.indices, id: \.self) { stageIndex in
-                            stepColumn(
-                                trackIndex: trackIndex,
-                                stageIndex: stageIndex,
-                                track: track,
-                                selectedStage: selectedStage,
-                                trackColor: trackColor
-                            )
-                        }
-                    }
+            // Step grid (click any step to open popover editor)
+            HStack(spacing: 5) {
+                ForEach(track.stages.indices, id: \.self) { stageIndex in
+                    SequencerStepColumn(
+                        sequencer: sequencer,
+                        trackIndex: trackIndex,
+                        stageIndex: stageIndex,
+                        trackColor: trackColor
+                    )
                 }
-
-                // Context panel for selected step
-                stepContextPanel(
-                    trackIndex: trackIndex,
-                    selectedStage: selectedStage,
-                    stage: stage,
-                    trackColor: trackColor
-                )
             }
         }
         .padding(10)
@@ -301,171 +286,7 @@ struct SequencerView: View {
         }
     }
 
-    // MARK: - Step Column (Slider + Button)
-
-    @ViewBuilder
-    private func stepColumn(
-        trackIndex: Int,
-        stageIndex: Int,
-        track: SequencerTrack,
-        selectedStage: Int,
-        trackColor: Color
-    ) -> some View {
-        let stageData = track.stages[stageIndex]
-        let isSelected = selectedStage == stageIndex
-        let isPlayhead = sequencer.playheadStagePerTrack[trackIndex] == stageIndex && sequencer.isPlaying
-
-        VStack(spacing: 3) {
-            // Taller step slider
-            StepVerticalSlider(
-                value: Binding(
-                    get: { Double(sequencer.tracks[trackIndex].stages[stageIndex].noteSlot) },
-                    set: { sequencer.setStageNoteSlot(track: trackIndex, stage: stageIndex, value: Int($0.rounded())) }
-                ),
-                range: 0...8,
-                color: trackColor
-            )
-            .frame(width: 14, height: 100)  // Taller slider
-
-            // Step button
-            Button(action: { sequencer.selectStage(trackIndex, stageIndex) }) {
-                VStack(spacing: 2) {
-                    Text("\(stageIndex + 1)")
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
-                    Text(sequencer.stageNoteText(track: trackIndex, stage: stageIndex))
-                        .font(.system(size: 8, weight: .medium, design: .monospaced))
-                    Text(stageData.stepType.shortLabel)
-                        .font(.system(size: 7, weight: .medium, design: .monospaced))
-                }
-                .foregroundColor(stageTextColor(for: stageData))
-                .frame(width: 42, height: 40)
-                .background(
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(isPlayhead ? ColorPalette.ledAmber : stageFillColor(for: stageData, isSelected: isSelected))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(isSelected ? trackColor : Color.clear, lineWidth: 2)
-                        )
-                )
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    // MARK: - Step Context Panel
-
-    @ViewBuilder
-    private func stepContextPanel(
-        trackIndex: Int,
-        selectedStage: Int,
-        stage: SequencerStage,
-        trackColor: Color
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Header
-            HStack {
-                Text("STEP \(selectedStage + 1)")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(trackColor)
-                Text(sequencer.stageNoteText(track: trackIndex, stage: selectedStage))
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundColor(ColorPalette.textPanelLabel)
-            }
-
-            Divider()
-                .background(ColorPalette.divider)
-
-            // Step parameters in a compact grid
-            VStack(spacing: 4) {
-                // Row 1: Pulses + Ratchets
-                HStack(spacing: 8) {
-                    contextStepper(label: "PLS", value: stage.pulses, range: 1...8) {
-                        sequencer.setStagePulses(track: trackIndex, stage: selectedStage, value: $0)
-                    }
-                    contextStepper(label: "RCH", value: stage.ratchets, range: 1...8) {
-                        sequencer.setStageRatchets(track: trackIndex, stage: selectedStage, value: $0)
-                    }
-                }
-
-                // Row 2: Gate + Step Type
-                HStack(spacing: 8) {
-                    contextDropdown(label: "GATE", value: stage.gateMode.rawValue, width: 50) {
-                        ForEach(SequencerGateMode.allCases) { mode in
-                            Button(mode.rawValue) {
-                                sequencer.setStageGateMode(track: trackIndex, stage: selectedStage, value: mode)
-                            }
-                        }
-                    }
-                    contextDropdown(label: "TYPE", value: stage.stepType.rawValue, width: 50) {
-                        ForEach(SequencerStepType.allCases) { stepType in
-                            Button(stepType.rawValue) {
-                                sequencer.setStageStepType(track: trackIndex, stage: selectedStage, value: stepType)
-                            }
-                        }
-                    }
-                }
-
-                // Row 3: Octave + Probability
-                HStack(spacing: 8) {
-                    contextStepper(
-                        label: "OCT",
-                        value: stage.octave,
-                        range: -2...2,
-                        signed: true
-                    ) {
-                        sequencer.setStageOctave(track: trackIndex, stage: selectedStage, value: $0)
-                    }
-
-                    // Probability mini-slider
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("PROB")
-                            .font(.system(size: 7, weight: .medium, design: .monospaced))
-                            .foregroundColor(ColorPalette.textDimmed)
-                        HStack(spacing: 2) {
-                            Slider(
-                                value: Binding(
-                                    get: { stage.probability },
-                                    set: { sequencer.setStageProbability(track: trackIndex, stage: selectedStage, value: $0) }
-                                ),
-                                in: 0...1
-                            )
-                            .tint(ColorPalette.ledAmber)
-                            .frame(width: 40)
-                            Text("\(Int(stage.probability * 100))%")
-                                .font(.system(size: 8, weight: .medium, design: .monospaced))
-                                .foregroundColor(ColorPalette.textMuted)
-                                .frame(width: 28, alignment: .trailing)
-                        }
-                    }
-                }
-
-                // Row 4: Slide toggle
-                HStack {
-                    Text("SLIDE")
-                        .font(.system(size: 8, weight: .medium, design: .monospaced))
-                        .foregroundColor(ColorPalette.textDimmed)
-                    Spacer()
-                    Toggle("", isOn: Binding(
-                        get: { stage.slide },
-                        set: { sequencer.setStageSlide(track: trackIndex, stage: selectedStage, value: $0) }
-                    ))
-                    .toggleStyle(.switch)
-                    .scaleEffect(0.6)
-                    .frame(width: 40)
-                }
-            }
-        }
-        .padding(8)
-        .frame(width: 140)
-        .background(
-            RoundedRectangle(cornerRadius: 4)
-                .fill(ColorPalette.backgroundSecondary)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(trackColor.opacity(0.3), lineWidth: 1)
-                )
-        )
-    }
+    // (Step column and context panel moved to SequencerStepColumn / SequencerStepConfigView structs below)
 
     // MARK: - Helper Views
 
@@ -537,84 +358,74 @@ struct SequencerView: View {
         .cornerRadius(3)
     }
 
-    @ViewBuilder
-    private func contextStepper(
-        label: String,
-        value: Int,
-        range: ClosedRange<Int>,
-        signed: Bool = false,
-        onChange: @escaping (Int) -> Void
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(label)
-                .font(.system(size: 7, weight: .medium, design: .monospaced))
-                .foregroundColor(ColorPalette.textDimmed)
-            HStack(spacing: 2) {
-                Button(action: { if value > range.lowerBound { onChange(value - 1) } }) {
-                    Image(systemName: "minus")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(ColorPalette.textMuted)
-                        .frame(width: 16, height: 16)
-                        .background(ColorPalette.backgroundTertiary)
-                        .cornerRadius(2)
-                }
-                .buttonStyle(.plain)
+    // (contextStepper and contextDropdown moved to SequencerStepConfigView)
 
-                Text(signed ? "\(value >= 0 ? "+" : "")\(value)" : "\(value)")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(ColorPalette.textSecondary)
-                    .frame(width: 24)
+}
 
-                Button(action: { if value < range.upperBound { onChange(value + 1) } }) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(ColorPalette.textMuted)
-                        .frame(width: 16, height: 16)
-                        .background(ColorPalette.backgroundTertiary)
-                        .cornerRadius(2)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
+// MARK: - Sequencer Step Column (with Popover)
 
-    @ViewBuilder
-    private func contextDropdown<Content: View>(
-        label: String,
-        value: String,
-        width: CGFloat,
-        @ViewBuilder content: @escaping () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(label)
-                .font(.system(size: 7, weight: .medium, design: .monospaced))
-                .foregroundColor(ColorPalette.textDimmed)
-            Menu(content: content) {
-                HStack(spacing: 2) {
-                    Text(value)
+struct SequencerStepColumn: View {
+    @ObservedObject var sequencer: StepSequencer
+    let trackIndex: Int
+    let stageIndex: Int
+    let trackColor: Color
+
+    @State private var showingConfig = false
+
+    private var track: SequencerTrack { sequencer.tracks[trackIndex] }
+    private var stageData: SequencerStage { track.stages[stageIndex] }
+    private var isPlayhead: Bool { sequencer.playheadStagePerTrack[trackIndex] == stageIndex && sequencer.isPlaying }
+
+    var body: some View {
+        VStack(spacing: 3) {
+            // Vertical note slider
+            StepVerticalSlider(
+                value: Binding(
+                    get: { Double(sequencer.tracks[trackIndex].stages[stageIndex].noteSlot) },
+                    set: { sequencer.setStageNoteSlot(track: trackIndex, stage: stageIndex, value: Int($0.rounded())) }
+                ),
+                range: 0...8,
+                color: trackColor
+            )
+            .frame(width: 14, height: 100)
+
+            // Step button — opens config popover
+            Button(action: { showingConfig = true }) {
+                VStack(spacing: 2) {
+                    Text("\(stageIndex + 1)")
                         .font(.system(size: 8, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 6))
-                        .foregroundColor(ColorPalette.textDimmed)
+                    Text(sequencer.stageNoteText(track: trackIndex, stage: stageIndex))
+                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                    Text(stageData.stepType.shortLabel)
+                        .font(.system(size: 7, weight: .medium, design: .monospaced))
                 }
-                .frame(width: width, height: 18)
-                .background(ColorPalette.backgroundTertiary)
-                .cornerRadius(3)
+                .foregroundColor(stageTextColor)
+                .frame(width: 42, height: 40)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(isPlayhead ? ColorPalette.ledAmber : fillColor)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(showingConfig ? trackColor : Color.clear, lineWidth: 2)
+                        )
+                )
             }
             .buttonStyle(.plain)
+            .popover(isPresented: $showingConfig) {
+                SequencerStepConfigView(
+                    sequencer: sequencer,
+                    trackIndex: trackIndex,
+                    stageIndex: stageIndex,
+                    trackColor: trackColor
+                )
+            }
         }
     }
 
-    // MARK: - Style Helpers
+    // MARK: - Colors
 
-    private func stageFillColor(for stage: SequencerStage, isSelected: Bool) -> Color {
-        if isSelected {
-            return ColorPalette.backgroundTertiary
-        }
-
-        switch stage.stepType {
+    private var fillColor: Color {
+        switch stageData.stepType {
         case .play:
             return ColorPalette.backgroundTertiary
         case .tie:
@@ -628,8 +439,8 @@ struct SequencerView: View {
         }
     }
 
-    private func stageTextColor(for stage: SequencerStage) -> Color {
-        switch stage.stepType {
+    private var stageTextColor: Color {
+        switch stageData.stepType {
         case .rest, .skip:
             return ColorPalette.textPanelLabel
         case .elide:
@@ -638,6 +449,192 @@ struct SequencerView: View {
             return Color(hex: "#D0B8FF")
         case .play:
             return .white
+        }
+    }
+}
+
+// MARK: - Step Config Popover
+
+struct SequencerStepConfigView: View {
+    @ObservedObject var sequencer: StepSequencer
+    let trackIndex: Int
+    let stageIndex: Int
+    let trackColor: Color
+
+    private var stage: SequencerStage { sequencer.tracks[trackIndex].stages[stageIndex] }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Header
+            HStack {
+                Text("STEP \(stageIndex + 1)")
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundColor(trackColor)
+                Text(sequencer.stageNoteText(track: trackIndex, stage: stageIndex))
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundColor(ColorPalette.textPanelLabel)
+                Spacer()
+            }
+
+            Divider()
+                .background(ColorPalette.divider)
+
+            // Step parameters
+            VStack(spacing: 8) {
+                // Row 1: Pulses + Ratchets
+                HStack(spacing: 12) {
+                    configStepper(label: "PULSES", value: stage.pulses, range: 1...8) {
+                        sequencer.setStagePulses(track: trackIndex, stage: stageIndex, value: $0)
+                    }
+                    configStepper(label: "RATCHETS", value: stage.ratchets, range: 1...8) {
+                        sequencer.setStageRatchets(track: trackIndex, stage: stageIndex, value: $0)
+                    }
+                }
+
+                // Row 2: Gate + Step Type
+                HStack(spacing: 12) {
+                    configDropdown(label: "GATE", value: stage.gateMode.rawValue, width: 60) {
+                        ForEach(SequencerGateMode.allCases) { mode in
+                            Button(mode.rawValue) {
+                                sequencer.setStageGateMode(track: trackIndex, stage: stageIndex, value: mode)
+                            }
+                        }
+                    }
+                    configDropdown(label: "TYPE", value: stage.stepType.rawValue, width: 60) {
+                        ForEach(SequencerStepType.allCases) { stepType in
+                            Button(stepType.rawValue) {
+                                sequencer.setStageStepType(track: trackIndex, stage: stageIndex, value: stepType)
+                            }
+                        }
+                    }
+                }
+
+                // Row 3: Octave + Probability
+                HStack(spacing: 12) {
+                    configStepper(
+                        label: "OCTAVE",
+                        value: stage.octave,
+                        range: -2...2,
+                        signed: true
+                    ) {
+                        sequencer.setStageOctave(track: trackIndex, stage: stageIndex, value: $0)
+                    }
+
+                    // Probability slider
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("PROBABILITY")
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .foregroundColor(ColorPalette.textDimmed)
+                        HStack(spacing: 4) {
+                            Slider(
+                                value: Binding(
+                                    get: { stage.probability },
+                                    set: { sequencer.setStageProbability(track: trackIndex, stage: stageIndex, value: $0) }
+                                ),
+                                in: 0...1
+                            )
+                            .tint(ColorPalette.ledAmber)
+                            .frame(width: 60)
+                            Text("\(Int(stage.probability * 100))%")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundColor(ColorPalette.textMuted)
+                                .frame(width: 32, alignment: .trailing)
+                        }
+                    }
+                }
+
+                // Row 4: Slide toggle
+                HStack {
+                    Text("SLIDE")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundColor(ColorPalette.textDimmed)
+                    Spacer()
+                    Toggle("", isOn: Binding(
+                        get: { stage.slide },
+                        set: { sequencer.setStageSlide(track: trackIndex, stage: stageIndex, value: $0) }
+                    ))
+                    .toggleStyle(.switch)
+                    .scaleEffect(0.65)
+                    .frame(width: 44)
+                }
+            }
+        }
+        .padding(14)
+        .frame(width: 280)
+        .background(ColorPalette.backgroundPrimary)
+    }
+
+    // MARK: - Config Stepper
+
+    @ViewBuilder
+    private func configStepper(
+        label: String,
+        value: Int,
+        range: ClosedRange<Int>,
+        signed: Bool = false,
+        onChange: @escaping (Int) -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundColor(ColorPalette.textDimmed)
+            HStack(spacing: 4) {
+                Button(action: { if value > range.lowerBound { onChange(value - 1) } }) {
+                    Image(systemName: "minus")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(ColorPalette.textMuted)
+                        .frame(width: 20, height: 20)
+                        .background(ColorPalette.backgroundTertiary)
+                        .cornerRadius(3)
+                }
+                .buttonStyle(.plain)
+
+                Text(signed ? "\(value >= 0 ? "+" : "")\(value)" : "\(value)")
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundColor(ColorPalette.textSecondary)
+                    .frame(width: 28)
+
+                Button(action: { if value < range.upperBound { onChange(value + 1) } }) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(ColorPalette.textMuted)
+                        .frame(width: 20, height: 20)
+                        .background(ColorPalette.backgroundTertiary)
+                        .cornerRadius(3)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    // MARK: - Config Dropdown
+
+    @ViewBuilder
+    private func configDropdown<Content: View>(
+        label: String,
+        value: String,
+        width: CGFloat,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundColor(ColorPalette.textDimmed)
+            Menu(content: content) {
+                HStack(spacing: 3) {
+                    Text(value)
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 7))
+                        .foregroundColor(ColorPalette.textDimmed)
+                }
+                .frame(width: width, height: 22)
+                .background(ColorPalette.backgroundTertiary)
+                .cornerRadius(3)
+            }
+            .buttonStyle(.plain)
         }
     }
 }

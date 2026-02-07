@@ -26,8 +26,9 @@ struct ProjectSnapshot: Codable {
     var drumSequencer: DrumSequencerSnapshot?  // Added in version 2
     var daisyDrum: DaisyDrumVoiceSnapshot?     // Added in version 2
     var sampler: SamplerVoiceSnapshot?          // Added in version 3
+    var chordSequencer: ChordSequencerSnapshot? // Added in version 4
 
-    static let currentVersion = 3
+    static let currentVersion = 4
 }
 
 // MARK: - Engine Parameters Snapshot
@@ -293,6 +294,21 @@ struct SamplerVoiceSnapshot: Codable {
     var filterResonance: Float
     var tuning: Float               // Normalized 0-1 (0.5 = center = 0 semitones)
     var level: Float
+}
+
+// MARK: - Chord Sequencer Snapshot
+
+struct ChordSequencerSnapshot: Codable {
+    var steps: [ChordStepSnapshot]
+    var division: String            // SequencerClockDivision raw value
+    var isEnabled: Bool
+}
+
+struct ChordStepSnapshot: Codable {
+    var index: Int
+    var degreeId: String?           // nil = empty step
+    var qualityId: String?          // nil = empty step
+    var active: Bool
 }
 
 // MARK: - UI Preferences Snapshot

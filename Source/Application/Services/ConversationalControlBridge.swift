@@ -248,6 +248,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
     private weak var masterClock: MasterClock?
     private weak var sequencer: StepSequencer?
     private weak var drumSequencer: DrumSequencer?
+    private weak var chordSequencer: ChordSequencer?
     /// Cached C++ engine handle for thread-safe reads (e.g. IsRecording atomic checks)
     private var cachedEngineHandle: OpaquePointer?
     private var cachedSampleRate: Double = 48000.0
@@ -272,11 +273,12 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
     ]
 
     @MainActor
-    func start(audioEngine: AudioEngineWrapper, masterClock: MasterClock, sequencer: StepSequencer? = nil, drumSequencer: DrumSequencer? = nil, port: UInt16 = 4850) {
+    func start(audioEngine: AudioEngineWrapper, masterClock: MasterClock, sequencer: StepSequencer? = nil, drumSequencer: DrumSequencer? = nil, chordSequencer: ChordSequencer? = nil, port: UInt16 = 4850) {
         self.audioEngine = audioEngine
         self.masterClock = masterClock
         self.sequencer = sequencer
         self.drumSequencer = drumSequencer
+        self.chordSequencer = chordSequencer
         self.listenPort = port
         self.cachedEngineHandle = audioEngine.cppEngineHandle
         self.cachedSampleRate = audioEngine.sampleRate
@@ -893,6 +895,20 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                 ],
             ],
             [
+                "module": "chords",
+                "description": "8-step chord progression sequencer feeding intervals into the step sequencer scale system",
+                "actions": ["set", "toggle"],
+                "paths": [
+                    "sequencer.chords.enabled",
+                    "sequencer.chords.clockDivision",
+                    "sequencer.chords.preset",
+                    "sequencer.chords.step<1-8>.degree",
+                    "sequencer.chords.step<1-8>.quality",
+                    "sequencer.chords.step<1-8>.active",
+                    "sequencer.chords.step<1-8>.clear",
+                ],
+            ],
+            [
                 "module": "synth",
                 "actions": ["set"],
                 "paths": [
@@ -1041,6 +1057,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             "sequencer": [
                 "track1": canonicalTrackStatePayload(trackIndex: 0) ?? [:],
                 "track2": canonicalTrackStatePayload(trackIndex: 1) ?? [:],
+                "chords": canonicalChordSequencerPayload(),
             ],
             "synth": [
                 "plaits": [
@@ -1201,6 +1218,44 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             "stepGroupB": ["note": jsonOptional(readStepNoteName(trackIndex: trackIndex, stage: 4))],
             "steps": steps,
         ]
+    }
+
+    private func canonicalChordSequencerPayload() -> [String: Any] {
+        let readBlock: () -> [String: Any] = { [weak self] in
+            MainActor.assumeIsolated {
+                guard let chordSeq = self?.chordSequencer else {
+                    return ["enabled": false, "steps": [] as [[String: Any]]]
+                }
+                var steps: [[String: Any]] = []
+                for step in chordSeq.steps {
+                    var stepDict: [String: Any] = [
+                        "index": step.id + 1,
+                        "active": step.active,
+                    ]
+                    if let degId = step.degreeId {
+                        stepDict["degree"] = degId
+                    }
+                    if let qualId = step.qualityId {
+                        stepDict["quality"] = qualId
+                    }
+                    if !step.isEmpty {
+                        stepDict["chord"] = chordSeq.chordDisplayName(for: step)
+                    }
+                    steps.append(stepDict)
+                }
+                return [
+                    "enabled": chordSeq.isEnabled,
+                    "clockDivision": chordSeq.division.rawValue,
+                    "steps": steps,
+                ] as [String: Any]
+            }
+        }
+        if Thread.isMainThread {
+            return readBlock()
+        }
+        var result: [String: Any] = [:]
+        DispatchQueue.main.sync { result = readBlock() }
+        return result
     }
 
     private func handleStateQuery(_ request: HTTPRequest) -> HTTPResponse {
@@ -2498,6 +2553,11 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return (true, nil)
         }
 
+        // Chord sequencer apply
+        if target.hasPrefix("sequencer.chords") {
+            return applyChordSequencerAction(action, target: target)
+        }
+
         // Drum sequencer apply
         if let drumTarget = parseDrumSequencerTarget(target) {
             return applyDrumSequencerAction(action, target: drumTarget)
@@ -2811,6 +2871,168 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             }
         }
         return nil
+    }
+
+    // MARK: - Chord Sequencer Actions
+
+    private func applyChordSequencerAction(_ action: ActionRequest, target: String) -> (handled: Bool, failure: ActionFailure?) {
+        let suffix = target.replacingOccurrences(of: "sequencer.chords.", with: "")
+
+        // Top-level chord sequencer properties
+        switch suffix {
+        case "enabled":
+            let current = readChordSequencerProperty { $0.isEnabled } ?? true
+            guard let desired = desiredBoolValue(for: action, current: current) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "chords.enabled requires boolean value"))
+            }
+            writeChordSequencer { $0.isEnabled = desired }
+            recordMutation(
+                changedPaths: ["sequencer.chords.enabled"],
+                additionalEvents: [(type: "chords.updated", payload: ["field": "enabled", "value": desired])]
+            )
+            return (true, nil)
+
+        case "clockDivision":
+            guard let text = modeTextFromAction(action),
+                  let division = divisionFromText(text) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid clock division"))
+            }
+            writeChordSequencer { $0.division = division }
+            recordMutation(
+                changedPaths: ["sequencer.chords.clockDivision"],
+                additionalEvents: [(type: "chords.updated", payload: ["field": "clockDivision", "value": division.rawValue])]
+            )
+            return (true, nil)
+
+        case "preset":
+            guard let text = modeTextFromAction(action) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "preset requires text value"))
+            }
+            let lower = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let preset = ChordSequencer.presets.first(where: { $0.id.lowercased() == lower || $0.name.lowercased() == lower }) else {
+                let available = ChordSequencer.presets.map { $0.id }.joined(separator: ", ")
+                return (true, ActionFailure(actionId: action.actionId, code: .notFound, message: "Unknown preset '\(text)'. Available: \(available)"))
+            }
+            writeChordSequencer { $0.loadPreset(preset) }
+            recordMutation(
+                changedPaths: ["sequencer.chords"],
+                additionalEvents: [(type: "chords.preset_loaded", payload: ["preset": preset.id, "name": preset.name])]
+            )
+            return (true, nil)
+
+        default:
+            break
+        }
+
+        // Step-level properties: step<1-8>.degree, step<1-8>.quality, step<1-8>.active, step<1-8>.clear
+        guard suffix.hasPrefix("step") else {
+            return (true, ActionFailure(actionId: action.actionId, code: .notFound, message: "Unknown chord sequencer target: \(target)"))
+        }
+        let stepTail = suffix.dropFirst("step".count)
+        let numberText = String(stepTail.prefix { $0.isNumber })
+        guard !numberText.isEmpty, let stepNumber = Int(numberText), (1...8).contains(stepNumber) else {
+            return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid step number"))
+        }
+        let stepIndex = stepNumber - 1
+        let remainder = stepTail.dropFirst(numberText.count)
+        guard remainder.first == "." else {
+            return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Missing field after step number"))
+        }
+        let field = String(remainder.dropFirst())
+
+        switch field {
+        case "degree":
+            guard let text = modeTextFromAction(action) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "degree requires text value"))
+            }
+            guard ChordSequencer.allDegrees.contains(where: { $0.id == text }) else {
+                let available = ChordSequencer.allDegrees.map { $0.id }.joined(separator: ", ")
+                return (true, ActionFailure(actionId: action.actionId, code: .notFound, message: "Unknown degree '\(text)'. Available: \(available)"))
+            }
+            writeChordSequencer { chordSeq in
+                chordSeq.setDegree(stepIndex, text)
+                // If quality is not set, default to major
+                if chordSeq.steps[stepIndex].qualityId == nil {
+                    chordSeq.setQuality(stepIndex, "maj")
+                }
+            }
+            recordMutation(
+                changedPaths: ["sequencer.chords.step\(stepNumber).degree"],
+                additionalEvents: [(type: "chords.step_updated", payload: ["step": stepNumber, "field": "degree", "value": text])]
+            )
+            return (true, nil)
+
+        case "quality":
+            guard let text = modeTextFromAction(action) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "quality requires text value"))
+            }
+            guard ChordSequencer.allQualities.contains(where: { $0.id == text }) else {
+                let available = ChordSequencer.allQualities.map { $0.id }.joined(separator: ", ")
+                return (true, ActionFailure(actionId: action.actionId, code: .notFound, message: "Unknown quality '\(text)'. Available: \(available)"))
+            }
+            writeChordSequencer { $0.setQuality(stepIndex, text) }
+            recordMutation(
+                changedPaths: ["sequencer.chords.step\(stepNumber).quality"],
+                additionalEvents: [(type: "chords.step_updated", payload: ["step": stepNumber, "field": "quality", "value": text])]
+            )
+            return (true, nil)
+
+        case "active":
+            let current = readChordSequencerProperty { $0.steps[stepIndex].active } ?? true
+            guard let desired = desiredBoolValue(for: action, current: current) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "active requires boolean value"))
+            }
+            writeChordSequencer { $0.setStepActive(stepIndex, desired) }
+            recordMutation(
+                changedPaths: ["sequencer.chords.step\(stepNumber).active"],
+                additionalEvents: [(type: "chords.step_updated", payload: ["step": stepNumber, "field": "active", "value": desired])]
+            )
+            return (true, nil)
+
+        case "clear":
+            writeChordSequencer { $0.clearStep(stepIndex) }
+            recordMutation(
+                changedPaths: ["sequencer.chords.step\(stepNumber)"],
+                additionalEvents: [(type: "chords.step_cleared", payload: ["step": stepNumber])]
+            )
+            return (true, nil)
+
+        default:
+            return (true, ActionFailure(actionId: action.actionId, code: .notFound, message: "Unknown chord step field: \(field)"))
+        }
+    }
+
+    // MARK: - Chord Sequencer Read/Write Helpers
+
+    private func readChordSequencerProperty<T>(_ accessor: @escaping @MainActor (ChordSequencer) -> T) -> T? {
+        if Thread.isMainThread {
+            return MainActor.assumeIsolated { [weak self] in
+                guard let chordSeq = self?.chordSequencer else { return nil }
+                return accessor(chordSeq)
+            }
+        }
+        return DispatchQueue.main.sync {
+            MainActor.assumeIsolated { [weak self] in
+                guard let chordSeq = self?.chordSequencer else { return nil as T? }
+                return accessor(chordSeq)
+            }
+        }
+    }
+
+    private func writeChordSequencer(_ block: @escaping @MainActor (ChordSequencer) -> Void) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { [weak self] in
+                guard let chordSeq = self?.chordSequencer else { return }
+                block(chordSeq)
+            }
+            return
+        }
+        DispatchQueue.main.sync {
+            MainActor.assumeIsolated { [weak self] in
+                guard let chordSeq = self?.chordSequencer else { return }
+                block(chordSeq)
+            }
+        }
     }
 
     private func parseSequencerTrackTarget(_ target: String) -> (trackIndex: Int, property: String)? {

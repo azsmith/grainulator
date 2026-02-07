@@ -222,6 +222,15 @@ final class StepSequencer: ObservableObject {
         let sampleRate: Double
         let lookaheadSamples: UInt64
         let dedupe: Bool
+
+        // Chord sequencer data (captured from ChordSequencer on MainActor)
+        let chordEnabled: Bool
+        let chordDivision: SequencerClockDivision
+        let chordStepCount: Int
+        /// Chord intervals per step: index = step, value = intervals array or nil for empty/muted
+        let chordStepIntervals: [[Int]?]
+        /// Whether scaleIndex selects the "Chord Sequencer" dynamic scale
+        let isChordScale: Bool
     }
 
     /// Mutable scheduling state protected by schedulingLock for clockQueue access.
@@ -234,11 +243,17 @@ final class StepSequencer: ObservableObject {
         var lastPlayedNotes: [UInt8?] = [nil, nil]
         var lastGateSamples: [UInt64?] = [nil, nil]
         var lastScheduledNoteOnSamples: [UInt64?] = [nil, nil]
+
+        // Chord sequencer playhead runtime
+        var chordStageIndex: Int = 0
+        var chordNextPulseSample: UInt64 = 0
+        var chordPlayheadStep: Int = 0
     }
 
     private weak var audioEngine: AudioEngineWrapper?
     private weak var masterClock: MasterClock?
     private weak var drumSequencer: DrumSequencer?
+    private weak var chordSequencer: ChordSequencer?
     private var clockTimer: DispatchSourceTimer?
     private let clockQueue = DispatchQueue(label: "com.grainulator.sequencer.clock", qos: .userInteractive)
 
@@ -301,8 +316,12 @@ final class StepSequencer: ObservableObject {
         SequencerScaleDefinition(id: 37, name: "Gagaku Rittsu Sen Pou", intervals: [0, 2, 5, 7, 9]),
         SequencerScaleDefinition(id: 38, name: "In Sen Pou", intervals: [0, 1, 5, 7, 10]),
         SequencerScaleDefinition(id: 39, name: "Okinawa", intervals: [0, 4, 5, 7, 11]),
-        SequencerScaleDefinition(id: 40, name: "Chromatic", intervals: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+        SequencerScaleDefinition(id: 40, name: "Chromatic", intervals: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),
+        SequencerScaleDefinition(id: 41, name: "Chord Sequencer", intervals: [0, 4, 7]),  // Default major triad; dynamically replaced by chord sequencer
     ]
+
+    /// Index of the "Chord Sequencer" scale in scaleOptions
+    static let chordSequencerScaleIndex = 41
 
     func connect(audioEngine: AudioEngineWrapper) {
         self.audioEngine = audioEngine
@@ -315,6 +334,10 @@ final class StepSequencer: ObservableObject {
 
     func connectDrumSequencer(_ drumSeq: DrumSequencer) {
         self.drumSequencer = drumSeq
+    }
+
+    func connectChordSequencer(_ chordSeq: ChordSequencer) {
+        self.chordSequencer = chordSeq
     }
 
     func togglePlayback() {
@@ -593,6 +616,17 @@ final class StepSequencer: ObservableObject {
     /// Must be called on MainActor.
     private func createSchedulingSnapshot() -> SchedulingSnapshot {
         let scale = currentScale
+        let isChordScale = scaleIndex == StepSequencer.chordSequencerScaleIndex
+
+        // Capture chord sequencer state
+        let chordEnabled = chordSequencer?.isEnabled ?? false
+        let chordDivision = chordSequencer?.division ?? .div4
+        let chordSteps = chordSequencer?.steps ?? []
+        let chordStepCount = chordSteps.count
+        let chordStepIntervals: [[Int]?] = chordSteps.indices.map { i in
+            chordSequencer?.chordIntervalsForStep(i)
+        }
+
         return SchedulingSnapshot(
             tracks: tracks,
             tempoBPM: tempoBPM,
@@ -604,7 +638,12 @@ final class StepSequencer: ObservableObject {
             ringsTriggerOffsetMs: ringsTriggerOffsetMs,
             sampleRate: max(audioEngine?.sampleRate ?? 48_000.0, 1.0),
             lookaheadSamples: secondsToSamples(schedulerLookaheadSeconds),
-            dedupe: dedupeSameSampleSharedTargetNoteOn
+            dedupe: dedupeSameSampleSharedTargetNoteOn,
+            chordEnabled: chordEnabled,
+            chordDivision: chordDivision,
+            chordStepCount: chordStepCount,
+            chordStepIntervals: chordStepIntervals,
+            isChordScale: isChordScale
         )
     }
 
@@ -661,6 +700,7 @@ final class StepSequencer: ObservableObject {
         let lastNotes = schedulingState.lastPlayedNotes
         let lastGates = schedulingState.lastGateSamples
         let lastScheduled = schedulingState.lastScheduledNoteOnSamples
+        let chordPlayhead = schedulingState.chordPlayheadStep
         schedulingLock.unlock()
 
         playheadStagePerTrack = stages
@@ -668,6 +708,9 @@ final class StepSequencer: ObservableObject {
         lastPlayedNotePerTrack = lastNotes
         lastGateSamplePerTrack = lastGates
         lastScheduledNoteOnSamplePerTrack = lastScheduled
+
+        // Update chord sequencer playhead on MainActor
+        chordSequencer?.playheadStep = chordPlayhead
     }
 
     private func resetRuntimeState(startSample: UInt64) {
@@ -691,6 +734,10 @@ final class StepSequencer: ObservableObject {
             schedulingState.playheadPulses[trackIndex] = 0
             schedulingState.lastPlayedNotes[trackIndex] = nil
         }
+        // Reset chord sequencer playhead
+        schedulingState.chordStageIndex = 0
+        schedulingState.chordNextPulseSample = startSample
+        schedulingState.chordPlayheadStep = 0
         schedulingLock.unlock()
 
         for trackIndex in tracks.indices {
@@ -698,6 +745,9 @@ final class StepSequencer: ObservableObject {
             playheadPulsePerTrack[trackIndex] = 0
             lastPlayedNotePerTrack[trackIndex] = nil
         }
+
+        // Reset chord sequencer playhead on MainActor
+        chordSequencer?.playheadStep = 0
     }
 
     // MARK: - Clock Queue Scheduling (runs OFF MainActor)
@@ -722,6 +772,17 @@ final class StepSequencer: ObservableObject {
         schedulingLock.unlock()
 
         let tracks = snapshot.tracks
+
+        // Advance chord sequencer playhead if needed (before note scheduling so
+        // the correct chord intervals are used in the same lookahead window)
+        if snapshot.chordEnabled && snapshot.chordStepCount > 0 {
+            let chordPulseSamples = chordPulseDurationSamples(snapshot: snapshot)
+            while state.chordNextPulseSample <= horizonSample {
+                state.chordStageIndex = (state.chordStageIndex + 1) % snapshot.chordStepCount
+                state.chordPlayheadStep = state.chordStageIndex
+                state.chordNextPulseSample = state.chordNextPulseSample &+ chordPulseSamples
+            }
+        }
 
         while true {
             var earliestSample: UInt64 = UInt64.max
@@ -829,7 +890,7 @@ final class StepSequencer: ObservableObject {
         }
 
         if shouldGate && stage.probability >= Double.random(in: 0...1) {
-            let note = noteForStageFromSnapshot(track: track, stage: stage, snapshot: snapshot)
+            let note = noteForStageFromSnapshot(track: track, stage: stage, snapshot: snapshot, state: state)
             state.lastPlayedNotes[trackIndex] = note
             state.lastGateSamples[trackIndex] = eventSample
 
@@ -894,10 +955,33 @@ final class StepSequencer: ObservableObject {
         return UInt64(max(1.0, (pulseSeconds * snapshot.sampleRate).rounded()))
     }
 
-    private func noteForStageFromSnapshot(track: SequencerTrack, stage: SequencerStage, snapshot: SchedulingSnapshot) -> UInt8 {
+    /// Pulse duration for chord sequencer clock division
+    private func chordPulseDurationSamples(snapshot: SchedulingSnapshot) -> UInt64 {
+        let bpm = max(snapshot.tempoBPM, 1.0)
+        let quarterSeconds = 60.0 / bpm
+        let multiplier = max(snapshot.chordDivision.multiplier, 0.0001)
+        let pulseSeconds = quarterSeconds / multiplier
+        return UInt64(max(1.0, (pulseSeconds * snapshot.sampleRate).rounded()))
+    }
+
+    private func noteForStageFromSnapshot(track: SequencerTrack, stage: SequencerStage, snapshot: SchedulingSnapshot, state: SchedulingState) -> UInt8 {
         let rootMidi = (track.baseOctave + snapshot.sequenceOctave + 1) * 12 + snapshot.rootNote
+
+        // When "Chord Sequencer" scale is active, use the current chord's intervals
+        let intervals: [Int]
+        if snapshot.isChordScale && snapshot.chordEnabled && snapshot.chordStepCount > 0 {
+            let chordStep = state.chordPlayheadStep % snapshot.chordStepCount
+            if let chordIntervals = snapshot.chordStepIntervals[chordStep], !chordIntervals.isEmpty {
+                intervals = chordIntervals
+            } else {
+                intervals = snapshot.scaleIntervals
+            }
+        } else {
+            intervals = snapshot.scaleIntervals
+        }
+
         let degree = degreeForNoteSlot(stage.noteSlot) + track.transpose
-        let semitoneOffset = semitoneForDegree(degree, intervals: snapshot.scaleIntervals)
+        let semitoneOffset = semitoneForDegree(degree, intervals: intervals)
         let note = rootMidi + semitoneOffset + stage.octave * 12
         return UInt8(min(max(note, 0), 127))
     }
@@ -1081,8 +1165,18 @@ final class StepSequencer: ObservableObject {
 
     private func noteForStage(track: SequencerTrack, stage: SequencerStage) -> UInt8 {
         let rootMidi = (track.baseOctave + sequenceOctave + 1) * 12 + rootNote
+
+        // Use chord intervals for display when Chord Sequencer scale is active
+        let intervals: [Int]
+        if scaleIndex == StepSequencer.chordSequencerScaleIndex,
+           let chordIntervals = chordSequencer?.currentChordIntervals(), !chordIntervals.isEmpty {
+            intervals = chordIntervals
+        } else {
+            intervals = currentScale.intervals
+        }
+
         let degree = degreeForNoteSlot(stage.noteSlot) + track.transpose
-        let semitoneOffset = semitoneForDegree(degree, intervals: currentScale.intervals)
+        let semitoneOffset = semitoneForDegree(degree, intervals: intervals)
         let note = rootMidi + semitoneOffset + stage.octave * 12
         let clamped = min(max(note, 0), 127)
         return UInt8(clamped)
