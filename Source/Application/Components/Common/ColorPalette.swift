@@ -70,6 +70,40 @@ struct ColorPalette {
     /// Red pointer accent
     static let knobPointerRed = Color(hex: "#CC3333")
 
+    // MARK: - Minimoog Knob Colors
+
+    /// Minimoog knob body - deep black with slight warmth
+    static let minimoogKnobBody = Color(hex: "#181818")
+
+    /// Minimoog silver cap - bright aluminum
+    static let minimoogCapSilver = Color(hex: "#D0D0D0")
+
+    /// Minimoog cap highlight - chrome catch light
+    static let minimoogCapHighlight = Color(hex: "#E8E8E8")
+
+    /// Minimoog cap shadow - darker edge
+    static let minimoogCapShadow = Color(hex: "#888888")
+
+    /// Minimoog pointer line - white
+    static let minimoogPointer = Color(hex: "#FFFFFF")
+
+    // MARK: - Synth Panel Colors (Minimoog-Inspired)
+
+    /// Panel surface - dark textured background
+    static let synthPanelSurface = Color(hex: "#1A1918")
+
+    /// Panel surface lighter (for subtle gradient)
+    static let synthPanelSurfaceLight = Color(hex: "#222120")
+
+    /// Engraved label color - cream/off-white screen print
+    static let synthPanelLabel = Color(hex: "#E8E0D0")
+
+    /// Engraved label dimmed - for secondary labels
+    static let synthPanelLabelDim = Color(hex: "#A09888")
+
+    /// Panel section border - subtle warm line
+    static let synthPanelDivider = Color(hex: "#2A2826")
+
     // MARK: - VU Meter Colors
 
     /// VU meter face - warm cream

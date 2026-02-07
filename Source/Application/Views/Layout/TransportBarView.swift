@@ -44,7 +44,7 @@ struct TransportBarView: View {
             statusSection
                 .frame(width: 200)
         }
-        .frame(height: 50)
+        .frame(height: 56)
         .background(ColorPalette.backgroundSecondary)
     }
 
@@ -132,7 +132,7 @@ struct TransportBarView: View {
             }
         }
         .frame(width: 60)
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
         .background(
             RoundedRectangle(cornerRadius: 4)
                 .fill(ColorPalette.backgroundPrimary)

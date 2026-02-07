@@ -77,12 +77,14 @@ enum KnobStyle {
     case bakelite       // Classic brown chicken-head style
     case metalPointer   // Black with metal pointer cap
     case aluminum       // Brushed aluminum look
+    case minimoog       // Minimoog-style: black body with silver cap
 
     var bodyColor: Color {
         switch self {
         case .bakelite: return ColorPalette.knobBrown
         case .metalPointer: return ColorPalette.knobBlack
         case .aluminum: return ColorPalette.metalAluminum
+        case .minimoog: return ColorPalette.minimoogKnobBody
         }
     }
 
@@ -91,7 +93,25 @@ enum KnobStyle {
         case .bakelite: return ColorPalette.knobCream
         case .metalPointer: return ColorPalette.metalChrome
         case .aluminum: return ColorPalette.knobPointerRed
+        case .minimoog: return ColorPalette.minimoogPointer
         }
+    }
+
+    /// Whether the knob has a raised silver cap (Minimoog style)
+    var hasCap: Bool {
+        self == .minimoog
+    }
+
+    var capColor: Color {
+        ColorPalette.minimoogCapSilver
+    }
+
+    var capHighlight: Color {
+        ColorPalette.minimoogCapHighlight
+    }
+
+    var capShadow: Color {
+        ColorPalette.minimoogCapShadow
     }
 }
 
@@ -213,7 +233,8 @@ struct ProKnobView: View {
             // Label below knob
             Text(label)
                 .font(size.labelFont)
-                .foregroundColor(ColorPalette.textMuted)
+                .foregroundColor(style == .minimoog ? ColorPalette.synthPanelLabel : ColorPalette.textMuted)
+                .tracking(style == .minimoog ? 1.5 : 0)
                 .textCase(.uppercase)
                 .lineLimit(1)
 
@@ -306,29 +327,72 @@ struct ProKnobView: View {
                 )
                 .frame(width: size.diameter, height: size.diameter)
 
-            // Highlight ring (top edge catch light)
-            Circle()
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.3),
-                            Color.clear,
-                            Color.black.opacity(0.2)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1.5
-                )
-                .frame(width: size.diameter - 1, height: size.diameter - 1)
+            if style.hasCap {
+                // Minimoog-style raised silver cap
+                let capSize = size.diameter * 0.55
 
-            // Knurled edge indication (subtle texture)
-            Circle()
-                .strokeBorder(
-                    style.bodyColor.darker(by: 0.1),
-                    lineWidth: 2
-                )
-                .frame(width: size.diameter - 4, height: size.diameter - 4)
+                // Cap shadow ring
+                Circle()
+                    .fill(Color.black.opacity(0.25))
+                    .frame(width: capSize + 2, height: capSize + 2)
+                    .offset(y: 1)
+
+                // Silver cap body
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                style.capHighlight,
+                                style.capColor,
+                                style.capShadow
+                            ],
+                            center: UnitPoint(x: 0.35, y: 0.3),
+                            startRadius: 0,
+                            endRadius: capSize * 0.6
+                        )
+                    )
+                    .frame(width: capSize, height: capSize)
+
+                // Cap edge highlight
+                Circle()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.5),
+                                Color.clear,
+                                Color.black.opacity(0.15)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+                    .frame(width: capSize, height: capSize)
+            } else {
+                // Standard highlight ring (top edge catch light)
+                Circle()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.3),
+                                Color.clear,
+                                Color.black.opacity(0.2)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1.5
+                    )
+                    .frame(width: size.diameter - 1, height: size.diameter - 1)
+
+                // Knurled edge indication (subtle texture)
+                Circle()
+                    .strokeBorder(
+                        style.bodyColor.darker(by: 0.1),
+                        lineWidth: 2
+                    )
+                    .frame(width: size.diameter - 4, height: size.diameter - 4)
+            }
         }
         .scaleEffect(isDragging ? 1.02 : 1.0)
         .animation(.easeOut(duration: 0.1), value: isDragging)
@@ -419,13 +483,15 @@ extension ProKnobView {
         value: Binding<Float>,
         label: String,
         accentColor: Color = ColorPalette.ledBlue,
-        size: KnobSize = .medium
+        size: KnobSize = .medium,
+        style: KnobStyle = .bakelite
     ) -> ProKnobView {
         ProKnobView(
             value: value,
             label: label,
             accentColor: accentColor,
             size: size,
+            style: style,
             range: 0...1,
             valueFormatter: { String(format: "%.0f%%", $0 * 100) }
         )
@@ -436,13 +502,15 @@ extension ProKnobView {
         value: Binding<Float>,
         label: String,
         accentColor: Color = ColorPalette.ledBlue,
-        size: KnobSize = .medium
+        size: KnobSize = .medium,
+        style: KnobStyle = .bakelite
     ) -> ProKnobView {
         ProKnobView(
             value: value,
             label: label,
             accentColor: accentColor,
             size: size,
+            style: style,
             range: -1...1,
             defaultValue: 0,
             isBipolar: true,
@@ -458,13 +526,15 @@ extension ProKnobView {
         value: Binding<Float>,
         label: String = "PAN",
         accentColor: Color = ColorPalette.ledBlue,
-        size: KnobSize = .medium
+        size: KnobSize = .medium,
+        style: KnobStyle = .bakelite
     ) -> ProKnobView {
         ProKnobView(
             value: value,
             label: label,
             accentColor: accentColor,
             size: size,
+            style: style,
             range: 0...1,
             defaultValue: 0.5,
             isBipolar: true,
@@ -482,13 +552,15 @@ extension ProKnobView {
         value: Binding<Float>,
         label: String = "FREQ",
         accentColor: Color = ColorPalette.ledBlue,
-        size: KnobSize = .medium
+        size: KnobSize = .medium,
+        style: KnobStyle = .bakelite
     ) -> ProKnobView {
         ProKnobView(
             value: value,
             label: label,
             accentColor: accentColor,
             size: size,
+            style: style,
             range: 0...1,
             valueFormatter: { val in
                 let hz = 20.0 * pow(1000.0, Double(val))
@@ -505,13 +577,15 @@ extension ProKnobView {
         value: Binding<Float>,
         label: String = "GAIN",
         accentColor: Color = ColorPalette.ledBlue,
-        size: KnobSize = .medium
+        size: KnobSize = .medium,
+        style: KnobStyle = .bakelite
     ) -> ProKnobView {
         ProKnobView(
             value: value,
             label: label,
             accentColor: accentColor,
             size: size,
+            style: style,
             range: 0...1,
             defaultValue: 0.5,
             valueFormatter: { val in
@@ -601,6 +675,14 @@ struct ProKnobView_Previews: PreviewProvider {
                         accentColor: ColorPalette.ledRed,
                         size: .large,
                         style: .aluminum
+                    )
+
+                    ProKnobView(
+                        value: $value2,
+                        label: "MINIMOOG",
+                        accentColor: ColorPalette.accentPlaits,
+                        size: .large,
+                        style: .minimoog
                     )
                 }
 

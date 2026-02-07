@@ -226,83 +226,69 @@ struct GranularView: View {
                 handleDrop(providers: providers)
             }
 
-            // Core parameters row
-            HStack(spacing: 16) {
-                // SPEED: 0-1 normalized → -2.0 to +2.0 speed → -200% to +200%
-                // 100% = normal speed (1.0x)
-                GranularSlider(
-                    label: "SPEED",
+            // Core parameters row — knobs
+            HStack(spacing: 14) {
+                ProKnobView(
                     value: $speed,
-                    color: voiceColor,
-                    formatter: { value in
-                        // speed = (value - 0.5) * 4.0, percentage = speed * 100
-                        let speed = (Double(value) - 0.5) * 4.0  // -2 to +2
+                    label: "SPEED",
+                    accentColor: voiceColor,
+                    size: .large,
+                    style: .minimoog,
+                    defaultValue: 0.75,
+                    isBipolar: true,
+                    valueFormatter: { value in
+                        let speed = (Double(value) - 0.5) * 4.0
                         let percent = Int(speed * 100)
-                        if percent == 0 {
-                            return "0%"
-                        } else if percent > 0 {
-                            return "+\(percent)%"
-                        } else {
-                            return "\(percent)%"
-                        }
+                        if percent == 0 { return "0%" }
+                        return percent > 0 ? "+\(percent)%" : "\(percent)%"
                     }
                 )
                 .onChange(of: speed) { newValue in
                     audioEngine.setParameter(id: .granularSpeed, value: newValue, voiceIndex: voiceIndex)
                 }
 
-                // PITCH (hard quantized to semitone steps)
-                GranularSlider(
-                    label: "PITCH",
+                ProKnobView(
                     value: $pitch,
-                    color: ColorPalette.ledBlue,
-                    stepCount: 48,  // 49 positions: -24 to +24 semitones
-                    formatter: { value in
-                        let semitones = Int((Double(value) - 0.5) * 48)  // -24 to +24
-                        if semitones == 0 {
-                            return "0st"
-                        } else if semitones > 0 {
-                            return "+\(semitones)st"
-                        } else {
-                            return "\(semitones)st"
-                        }
+                    label: "PITCH",
+                    accentColor: ColorPalette.ledBlue,
+                    size: .large,
+                    style: .minimoog,
+                    defaultValue: 0.5,
+                    isBipolar: true,
+                    valueFormatter: { value in
+                        let semitones = Int((Double(value) - 0.5) * 48)
+                        if semitones == 0 { return "0st" }
+                        return semitones > 0 ? "+\(semitones)st" : "\(semitones)st"
                     }
                 )
                 .onChange(of: pitch) { newValue in
                     audioEngine.setParameter(id: .granularPitch, value: newValue, voiceIndex: voiceIndex)
                 }
 
-                // SIZE (grain duration, linear 0-2500ms)
-                GranularSlider(
-                    label: "SIZE",
+                ProKnobView(
                     value: $size,
-                    color: voiceColor,
-                    formatter: { value in
-                        let ms = Double(value) * 2500.0  // Linear: 0-2500ms
-                        if ms < 1 {
-                            return "0ms"
-                        } else {
-                            return String(format: "%.0fms", ms)
-                        }
+                    label: "SIZE",
+                    accentColor: voiceColor,
+                    size: .large,
+                    style: .minimoog,
+                    valueFormatter: { value in
+                        let ms = Double(value) * 2500.0
+                        return ms < 1 ? "0ms" : String(format: "%.0fms", ms)
                     }
                 )
                 .onChange(of: size) { newValue in
                     audioEngine.setParameter(id: .granularSize, value: newValue, voiceIndex: voiceIndex)
                 }
 
-                // DENSITY (grain rate)
-                GranularSlider(
-                    label: "DENSITY",
+                ProKnobView(
                     value: $density,
-                    color: voiceColor,
-                    formatter: { value in
-                        // 1Hz to 512Hz logarithmic
+                    label: "DENSITY",
+                    accentColor: voiceColor,
+                    size: .large,
+                    style: .minimoog,
+                    valueFormatter: { value in
                         let hz = 1.0 * pow(512.0, Double(value))
-                        if hz < 10 {
-                            return String(format: "%.1fHz", hz)
-                        } else {
-                            return String(format: "%.0fHz", hz)
-                        }
+                        return hz < 10 ? String(format: "%.1fHz", hz) : String(format: "%.0fHz", hz)
                     }
                 )
                 .onChange(of: density) { newValue in
@@ -330,71 +316,60 @@ struct GranularView: View {
 
             // Extended parameters (collapsible)
             if showAdvanced {
-                HStack(spacing: 16) {
-                    // JITTER (position randomization)
-                    GranularSlider(
-                        label: "JITTER",
+                HStack(spacing: 10) {
+                    ProKnobView(
                         value: $jitter,
-                        color: ColorPalette.ledAmber,
-                        formatter: { value in
-                            // 0ms to 500ms
-                            let ms = Double(value) * 500.0
-                            return String(format: "%.0fms", ms)
+                        label: "JITTER",
+                        accentColor: ColorPalette.ledAmber,
+                        size: .medium,
+                        style: .minimoog,
+                        valueFormatter: { value in
+                            String(format: "%.0fms", Double(value) * 500.0)
                         }
                     )
                     .onChange(of: jitter) { newValue in
                         audioEngine.setParameter(id: .granularJitter, value: newValue, voiceIndex: voiceIndex)
                     }
 
-                    // SPREAD (stereo spread)
-                    GranularSlider(
-                        label: "SPREAD",
+                    ProKnobView.normalized(
                         value: $spread,
-                        color: ColorPalette.accentPlaits
+                        label: "SPREAD",
+                        accentColor: ColorPalette.accentPlaits,
+                        size: .medium,
+                        style: .minimoog
                     )
                     .onChange(of: spread) { newValue in
                         audioEngine.setParameter(id: .granularSpread, value: newValue, voiceIndex: voiceIndex)
                     }
 
-                    // MORPH (probability of extra per-grain randomization)
-                    GranularSlider(
-                        label: "MORPH",
+                    ProKnobView.normalized(
                         value: $morph,
-                        color: ColorPalette.ledGreen,
-                        formatter: { value in
-                            String(format: "%.0f%%", value * 100)
-                        }
+                        label: "MORPH",
+                        accentColor: ColorPalette.ledGreen,
+                        size: .medium,
+                        style: .minimoog
                     )
                     .onChange(of: morph) { newValue in
                         audioEngine.setParameter(id: .granularMorph, value: newValue, voiceIndex: voiceIndex)
                     }
 
-                    // FILTER
-                    GranularSlider(
-                        label: "FILTER",
+                    ProKnobView.frequency(
                         value: $filterCutoff,
-                        color: ColorPalette.accentLooper2,
-                        formatter: { value in
-                            let hz = 20.0 * pow(1000.0, Double(value))
-                            if hz < 1000 {
-                                return String(format: "%.0fHz", hz)
-                            } else {
-                                return String(format: "%.1fkHz", hz / 1000)
-                            }
-                        }
+                        label: "FILTER",
+                        accentColor: ColorPalette.accentLooper2,
+                        size: .medium,
+                        style: .minimoog
                     )
                     .onChange(of: filterCutoff) { newValue in
                         audioEngine.setParameter(id: .granularFilterCutoff, value: newValue, voiceIndex: voiceIndex)
                     }
 
-                    // RESONANCE
-                    GranularSlider(
-                        label: "RES",
+                    ProKnobView.normalized(
                         value: $filterResonance,
-                        color: ColorPalette.ledAmber,
-                        formatter: { value in
-                            String(format: "%.0f%%", value * 100)
-                        }
+                        label: "RES",
+                        accentColor: ColorPalette.ledAmber,
+                        size: .medium,
+                        style: .minimoog
                     )
                     .onChange(of: filterResonance) { newValue in
                         audioEngine.setParameter(id: .granularFilterResonance, value: newValue, voiceIndex: voiceIndex)
@@ -497,21 +472,17 @@ struct GranularView: View {
 
                     // Decay control (only visible for pluck/decay envelopes)
                     if envelope >= 5 {  // Pluck, PluckSoft, ExpDecay
-                        GranularSlider(
-                            label: "DECAY",
+                        ProKnobView(
                             value: $decay,
-                            color: ColorPalette.ledAmber,
-                            formatter: { value in
-                                // Higher value = longer decay
-                                if value < 0.25 {
-                                    return "Short"
-                                } else if value < 0.5 {
-                                    return "Med"
-                                } else if value < 0.75 {
-                                    return "Long"
-                                } else {
-                                    return "V.Long"
-                                }
+                            label: "DECAY",
+                            accentColor: ColorPalette.ledAmber,
+                            size: .medium,
+                            style: .minimoog,
+                            valueFormatter: { value in
+                                if value < 0.25 { return "Short" }
+                                else if value < 0.5 { return "Med" }
+                                else if value < 0.75 { return "Long" }
+                                else { return "V.Long" }
                             }
                         )
                         .onChange(of: decay) { newValue in

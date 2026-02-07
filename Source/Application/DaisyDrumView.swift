@@ -3,7 +3,7 @@
 //  Grainulator
 //
 //  DaisyDrum percussion synthesizer UI component
-//  Vertical eurorack-style module (arranged horizontally with other modules).
+//  Minimoog-inspired knob-focused panel layout.
 //
 
 import SwiftUI
@@ -35,47 +35,81 @@ struct DaisyDrumView: View {
         "Hi-Hat"             // 4
     ]
 
-    // Dynamic parameter labels per engine
+    // Dynamic parameter labels per engine (full names for knob labels)
     let parameterLabels: [[String]] = [
-        ["TONE", "PNCH", "DCAY"],    // 0: Analog Kick
-        ["TONE", "FM",   "DCAY"],    // 1: Synth Kick
-        ["TONE", "SNAP", "DCAY"],    // 2: Analog Snare
-        ["FM",   "SNAP", "DCAY"],    // 3: Synth Snare
-        ["TONE", "NOIS", "DCAY"],    // 4: Hi-Hat
+        ["TONE", "PUNCH", "DECAY"],    // 0: Analog Kick
+        ["TONE", "FM",    "DECAY"],    // 1: Synth Kick
+        ["TONE", "SNAP",  "DECAY"],    // 2: Analog Snare
+        ["FM",   "SNAP",  "DECAY"],    // 3: Synth Snare
+        ["TONE", "NOISE", "DECAY"],    // 4: Hi-Hat
     ]
 
     var body: some View {
-        EurorackModuleView(
+        SynthPanelView(
             title: "DRUMS",
             accentColor: ColorPalette.accentDaisyDrum,
-            width: 200
+            width: 280
         ) {
-            VStack(spacing: 10) {
-                // Header: Engine selector
+            VStack(spacing: 6) {
+                // Engine selector
                 headerSection
 
-                ModuleSectionDivider("PERCUSSION", accentColor: ColorPalette.accentDaisyDrum)
+                SynthPanelSectionLabel("PERCUSSION", accentColor: ColorPalette.accentDaisyDrum)
 
-                // Main parameter sliders (HARM, TIMBRE, MORPH, LEVEL)
-                percussionSliders
+                // Main parameter knobs: 2x2 grid
+                VStack(spacing: 4) {
+                    HStack(spacing: 16) {
+                        ProKnobView(
+                            value: $harmonics,
+                            label: parameterLabels[selectedEngine][0],
+                            accentColor: ColorPalette.accentDaisyDrum,
+                            size: .large,
+                            style: .minimoog,
+                            modulationValue: harmonicsMod > 0.001 ? harmonics + harmonicsMod : nil
+                        )
+                        ProKnobView(
+                            value: $timbre,
+                            label: parameterLabels[selectedEngine][1],
+                            accentColor: ColorPalette.accentDaisyDrum,
+                            size: .large,
+                            style: .minimoog,
+                            modulationValue: timbreMod > 0.001 ? timbre + timbreMod : nil
+                        )
+                    }
 
-                ModuleSectionDivider(accentColor: ColorPalette.divider)
+                    HStack(spacing: 16) {
+                        ProKnobView(
+                            value: $morph,
+                            label: parameterLabels[selectedEngine][2],
+                            accentColor: ColorPalette.accentDaisyDrum,
+                            size: .large,
+                            style: .minimoog,
+                            modulationValue: morphMod > 0.001 ? morph + morphMod : nil
+                        )
+                        ProKnobView(
+                            value: $level,
+                            label: "LEVEL",
+                            accentColor: ColorPalette.accentDaisyDrum,
+                            size: .large,
+                            style: .minimoog,
+                            valueFormatter: { String(format: "%.0f%%", $0 * 100) }
+                        )
+                    }
+                }
+                .padding(.horizontal, 12)
 
                 // Trigger button
-                ModuleTriggerButton(
-                    label: isTriggered ? "GATE ON" : "TRIGGER",
-                    isActive: isTriggered,
-                    accentColor: ColorPalette.accentDaisyDrum
-                ) {
-                    isTriggered.toggle()
-                    audioEngine.triggerDaisyDrum(isTriggered)
-                }
+                triggerButton
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
+                    .padding(.bottom, 8)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
         }
+        .onChange(of: harmonics) { audioEngine.setParameter(id: .daisyDrumHarmonics, value: $0) }
+        .onChange(of: timbre) { audioEngine.setParameter(id: .daisyDrumTimbre, value: $0) }
+        .onChange(of: morph) { audioEngine.setParameter(id: .daisyDrumMorph, value: $0) }
+        .onChange(of: level) { audioEngine.setParameter(id: .daisyDrumLevel, value: $0) }
         .onReceive(modulationTimer) { _ in
-            // Poll modulation values from audio engine
             harmonicsMod = audioEngine.getModulationValue(destination: .daisyDrumHarmonics)
             timbreMod = audioEngine.getModulationValue(destination: .daisyDrumTimbre)
             morphMod = audioEngine.getModulationValue(destination: .daisyDrumMorph)
@@ -85,85 +119,76 @@ struct DaisyDrumView: View {
     // MARK: - Header Section
 
     private var headerSection: some View {
-        VStack(spacing: 6) {
-            // Engine selector
-            Menu {
-                ForEach(0..<engineNames.count, id: \.self) { index in
-                    Button(action: {
-                        selectedEngine = index
-                        audioEngine.setParameter(id: .daisyDrumEngine, value: Float(index) / Float(engineNames.count - 1))
-                    }) {
-                        HStack {
-                            Text(engineNames[index])
-                            if selectedEngine == index {
-                                Image(systemName: "checkmark")
-                            }
+        Menu {
+            ForEach(0..<engineNames.count, id: \.self) { index in
+                Button(action: {
+                    selectedEngine = index
+                    audioEngine.setParameter(id: .daisyDrumEngine, value: Float(index) / Float(engineNames.count - 1))
+                }) {
+                    HStack {
+                        Text(engineNames[index])
+                        if selectedEngine == index {
+                            Image(systemName: "checkmark")
                         }
                     }
                 }
-            } label: {
-                HStack(spacing: 4) {
-                    Text(engineNames[selectedEngine])
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 7))
-                        .foregroundColor(ColorPalette.accentDaisyDrum)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(engineNames[selectedEngine])
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(ColorPalette.synthPanelLabel)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(ColorPalette.accentDaisyDrum)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.black.opacity(0.3))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(ColorPalette.synthPanelDivider, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+    }
+
+    // MARK: - Trigger Button
+
+    private var triggerButton: some View {
+        Button(action: {
+            DispatchQueue.main.async {
+                isTriggered.toggle()
+                audioEngine.triggerDaisyDrum(isTriggered)
+            }
+        }) {
+            Text(isTriggered ? "GATE ON" : "TRIGGER")
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .tracking(1.5)
+                .foregroundColor(isTriggered ? ColorPalette.synthPanelSurface : ColorPalette.synthPanelLabel)
                 .frame(maxWidth: .infinity)
+                .frame(height: 34)
                 .background(
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(ColorPalette.backgroundTertiary)
+                        .fill(isTriggered ? ColorPalette.accentDaisyDrum : Color.black.opacity(0.3))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
-                        .stroke(ColorPalette.accentDaisyDrum.opacity(0.3), lineWidth: 1)
+                        .stroke(
+                            isTriggered ? ColorPalette.accentDaisyDrum : ColorPalette.synthPanelDivider,
+                            lineWidth: 1
+                        )
                 )
-            }
-            .buttonStyle(.plain)
         }
-    }
-
-    // MARK: - Percussion Sliders
-
-    private var percussionSliders: some View {
-        SliderBankView(
-            parameters: [
-                SliderParameter(
-                    label: parameterLabels[selectedEngine][0],
-                    value: $harmonics,
-                    modulationAmount: harmonicsMod,
-                    accentColor: ColorPalette.accentDaisyDrum
-                ),
-                SliderParameter(
-                    label: parameterLabels[selectedEngine][1],
-                    value: $timbre,
-                    modulationAmount: timbreMod,
-                    accentColor: ColorPalette.accentDaisyDrum
-                ),
-                SliderParameter(
-                    label: parameterLabels[selectedEngine][2],
-                    value: $morph,
-                    modulationAmount: morphMod,
-                    accentColor: ColorPalette.accentDaisyDrum
-                ),
-                SliderParameter(
-                    label: "LVL",
-                    value: $level,
-                    accentColor: ColorPalette.accentDaisyDrum
-                )
-            ],
-            sliderHeight: 80,
-            sliderWidth: 20
-        )
-        .onChange(of: harmonics) { audioEngine.setParameter(id: .daisyDrumHarmonics, value: $0) }
-        .onChange(of: timbre) { audioEngine.setParameter(id: .daisyDrumTimbre, value: $0) }
-        .onChange(of: morph) { audioEngine.setParameter(id: .daisyDrumMorph, value: $0) }
-        .onChange(of: level) { audioEngine.setParameter(id: .daisyDrumLevel, value: $0) }
+        .buttonStyle(.plain)
+        .shadow(color: isTriggered ? ColorPalette.accentDaisyDrum.opacity(0.4) : .clear, radius: 6)
     }
 }
 

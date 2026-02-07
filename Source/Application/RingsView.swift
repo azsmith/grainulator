@@ -3,7 +3,7 @@
 //  Grainulator
 //
 //  Mutable Rings-inspired resonator controls.
-//  Vertical eurorack-style module (arranged horizontally with other modules).
+//  Minimoog-inspired knob-focused panel layout.
 //
 
 import SwiftUI
@@ -36,42 +36,85 @@ struct RingsView: View {
     ]
 
     var body: some View {
-        EurorackModuleView(
+        SynthPanelView(
             title: "RINGS",
             accentColor: ColorPalette.accentRings,
-            width: 180
+            width: 280
         ) {
-            VStack(spacing: 12) {
+            VStack(spacing: 6) {
                 // Model selector
                 modelSelector
 
-                ModuleSectionDivider("TIMBRE", accentColor: ColorPalette.accentRings)
+                SynthPanelSectionLabel("RESONATOR", accentColor: ColorPalette.accentRings)
 
-                // Parameter sliders with LEDs
-                parameterSliders
+                // Main parameter knobs: top row (Structure + Brightness)
+                HStack(spacing: 16) {
+                    ProKnobView(
+                        value: $structure,
+                        label: "STRUCT",
+                        accentColor: ColorPalette.accentRings,
+                        size: .large,
+                        style: .minimoog,
+                        modulationValue: structureMod > 0.001 ? structure + structureMod : nil
+                    )
+                    ProKnobView(
+                        value: $brightness,
+                        label: "BRIGHT",
+                        accentColor: ColorPalette.accentRings,
+                        size: .large,
+                        style: .minimoog,
+                        modulationValue: brightnessMod > 0.001 ? brightness + brightnessMod : nil
+                    )
+                }
+                .padding(.horizontal, 12)
 
-                ModuleSectionDivider(accentColor: ColorPalette.divider)
+                // Bottom row (Damping + Position + Level)
+                HStack(spacing: 12) {
+                    ProKnobView(
+                        value: $damping,
+                        label: "DAMPING",
+                        accentColor: ColorPalette.accentRings,
+                        size: .medium,
+                        style: .minimoog,
+                        modulationValue: dampingMod > 0.001 ? damping + dampingMod : nil
+                    )
+                    ProKnobView(
+                        value: $position,
+                        label: "POSITN",
+                        accentColor: ColorPalette.accentRings,
+                        size: .medium,
+                        style: .minimoog,
+                        modulationValue: positionMod > 0.001 ? position + positionMod : nil
+                    )
+                    ProKnobView(
+                        value: $level,
+                        label: "LEVEL",
+                        accentColor: ColorPalette.accentRings,
+                        size: .medium,
+                        style: .minimoog,
+                        valueFormatter: { String(format: "%.0f%%", $0 * 100) }
+                    )
+                }
+                .padding(.horizontal, 12)
 
                 // Strike trigger button
-                ModuleTriggerButton(
-                    label: "STRIKE",
-                    isActive: false,
-                    accentColor: ColorPalette.accentRings
-                ) { [audioEngine] in
-                    audioEngine.noteOn(note: 48, velocity: 120)
-                }
+                strikeButton
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
+                    .padding(.bottom, 8)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
         }
+        .onChange(of: structure) { audioEngine.setParameter(id: .ringsStructure, value: $0) }
+        .onChange(of: brightness) { audioEngine.setParameter(id: .ringsBrightness, value: $0) }
+        .onChange(of: damping) { audioEngine.setParameter(id: .ringsDamping, value: $0) }
+        .onChange(of: position) { audioEngine.setParameter(id: .ringsPosition, value: $0) }
+        .onChange(of: level) { audioEngine.setParameter(id: .ringsLevel, value: $0) }
         .onReceive(modulationTimer) { _ in
-            // Poll modulation values from audio engine
             structureMod = audioEngine.getModulationValue(destination: .ringsStructure)
             brightnessMod = audioEngine.getModulationValue(destination: .ringsBrightness)
             dampingMod = audioEngine.getModulationValue(destination: .ringsDamping)
             positionMod = audioEngine.getModulationValue(destination: .ringsPosition)
 
-            // Sync engine mode (may be changed externally via API)
             let rawModel = audioEngine.getParameter(id: .ringsModel)
             let engineIndex = Int(round(rawModel * Float(max(modelNames.count - 1, 1))))
             if engineIndex != modelIndex && engineIndex >= 0 && engineIndex < modelNames.count {
@@ -98,69 +141,53 @@ struct RingsView: View {
             HStack(spacing: 6) {
                 Text(modelNames[modelIndex])
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white)
+                    .foregroundColor(ColorPalette.synthPanelLabel)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: 7, weight: .bold))
                     .foregroundColor(ColorPalette.accentRings)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(ColorPalette.backgroundTertiary)
+                    .fill(Color.black.opacity(0.3))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 4)
-                    .stroke(ColorPalette.accentRings.opacity(0.3), lineWidth: 1)
+                    .stroke(ColorPalette.synthPanelDivider, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
+        .padding(.horizontal, 16)
     }
 
-    // MARK: - Parameter Sliders
+    // MARK: - Strike Button
 
-    private var parameterSliders: some View {
-        SliderBankView(
-            parameters: [
-                SliderParameter(
-                    label: "STR",
-                    value: $structure,
-                    modulationAmount: structureMod,
-                    accentColor: ColorPalette.accentRings
-                ),
-                SliderParameter(
-                    label: "BRT",
-                    value: $brightness,
-                    modulationAmount: brightnessMod,
-                    accentColor: ColorPalette.accentRings
-                ),
-                SliderParameter(
-                    label: "DMP",
-                    value: $damping,
-                    modulationAmount: dampingMod,
-                    accentColor: ColorPalette.accentRings
-                ),
-                SliderParameter(
-                    label: "POS",
-                    value: $position,
-                    modulationAmount: positionMod,
-                    accentColor: ColorPalette.accentRings
-                ),
-                SliderParameter(
-                    label: "LVL",
-                    value: $level,
-                    accentColor: ColorPalette.accentRings
+    private var strikeButton: some View {
+        Button(action: {
+            DispatchQueue.main.async {
+                audioEngine.noteOn(note: 48, velocity: 120)
+            }
+        }) {
+            Text("STRIKE")
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .tracking(1.5)
+                .foregroundColor(ColorPalette.synthPanelLabel)
+                .frame(maxWidth: .infinity)
+                .frame(height: 34)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.black.opacity(0.3))
                 )
-            ],
-            sliderHeight: 100,
-            sliderWidth: 18
-        )
-        .onChange(of: structure) { audioEngine.setParameter(id: .ringsStructure, value: $0) }
-        .onChange(of: brightness) { audioEngine.setParameter(id: .ringsBrightness, value: $0) }
-        .onChange(of: damping) { audioEngine.setParameter(id: .ringsDamping, value: $0) }
-        .onChange(of: position) { audioEngine.setParameter(id: .ringsPosition, value: $0) }
-        .onChange(of: level) { audioEngine.setParameter(id: .ringsLevel, value: $0) }
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(ColorPalette.synthPanelDivider, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Helpers

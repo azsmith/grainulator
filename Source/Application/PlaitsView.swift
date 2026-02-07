@@ -3,7 +3,7 @@
 //  Grainulator
 //
 //  Plaits synthesizer UI component
-//  Vertical eurorack-style module (arranged horizontally with other modules).
+//  Minimoog-inspired knob-focused panel layout.
 //
 
 import SwiftUI
@@ -53,24 +53,24 @@ struct PlaitsView: View {
         "Hi-Hat"             // 15: Analog hihat (TRIGGERED)
     ]
 
-    // Dynamic parameter labels per engine
+    // Dynamic parameter labels per engine (full names for knob labels)
     let parameterLabels: [[String]] = [
         ["DETUNE", "PULSE", "SAW"],        // 0: Virtual Analog
         ["SHAPE", "FOLD", "ASYM"],         // 1: Waveshaper
         ["RATIO", "MOD", "FDBK"],          // 2: Two-Op FM
-        ["FRMNT", "FREQ", "WDTH"],         // 3: Granular Formant
-        ["BUMPS", "BRIT", "WDTH"],         // 4: Harmonic
-        ["BANK", "ROW", "COL"],            // 5: Wavetable
-        ["CHRD", "INV", "WAVE"],           // 6: Chords
-        ["TYPE", "SPEC", "PHNM"],          // 7: Speech
-        ["PTCH", "DENS", "DUR"],           // 8: Granular Cloud
-        ["FILT", "CLK", "RES"],            // 9: Filtered Noise
-        ["FREQ", "DENS", "FILT"],          // 10: Particle Noise
-        ["IHRM", "BRIT", "DEC"],           // 11: String
-        ["IHRM", "BRIT", "DEC"],           // 12: Modal
-        ["PNCH", "DEC", "TONE"],           // 13: Bass Drum
-        ["SNR", "TONE", "DEC"],            // 14: Snare Drum
-        ["METL", "DEC", "DEC+"],           // 15: Hi-Hat
+        ["FORMANT", "FREQ", "WIDTH"],      // 3: Granular Formant
+        ["BUMPS", "BRIGHT", "WIDTH"],      // 4: Harmonic
+        ["BANK", "ROW", "COLUMN"],         // 5: Wavetable
+        ["CHORD", "INVERT", "WAVE"],       // 6: Chords
+        ["TYPE", "SPECTR", "PHONEM"],      // 7: Speech
+        ["PITCH", "DENSITY", "DURATN"],    // 8: Granular Cloud
+        ["FILTER", "CLOCK", "RESON"],      // 9: Filtered Noise
+        ["FREQ", "DENSITY", "FILTER"],     // 10: Particle Noise
+        ["INHARM", "BRIGHT", "DECAY"],     // 11: String
+        ["INHARM", "BRIGHT", "DECAY"],     // 12: Modal
+        ["PUNCH", "DECAY", "TONE"],        // 13: Bass Drum
+        ["SNARE", "TONE", "DECAY"],        // 14: Snare Drum
+        ["METAL", "DECAY", "DECAY+"],      // 15: Hi-Hat
     ]
 
     // Whether engine uses LPG (engines 0-10) or has internal envelope (11-15)
@@ -79,40 +79,35 @@ struct PlaitsView: View {
     }
 
     var body: some View {
-        EurorackModuleView(
+        SynthPanelView(
             title: "PLAITS",
             accentColor: ColorPalette.accentPlaits,
-            width: 220
+            width: 300
         ) {
-            VStack(spacing: 10) {
-                // Header: Engine selector + MIDI indicator
+            VStack(spacing: 6) {
+                // Engine selector + MIDI indicator
                 headerSection
 
-                ModuleSectionDivider("OSCILLATOR", accentColor: ColorPalette.accentPlaits)
+                SynthPanelSectionLabel("OSCILLATOR", accentColor: ColorPalette.accentPlaits)
 
-                // Main parameter sliders (HARM, TIMBRE, MORPH, LEVEL)
-                oscillatorSliders
+                // Main parameter knobs: 2x2 grid
+                oscillatorKnobs
 
-                ModuleSectionDivider("LPG", accentColor: usesLPG ? ColorPalette.accentPlaits : ColorPalette.textDimmed)
+                SynthPanelSectionLabel(
+                    "LPG",
+                    accentColor: usesLPG ? ColorPalette.synthPanelLabelDim : ColorPalette.textDimmed
+                )
 
-                // LPG section (dimmed for triggered engines)
+                // LPG knobs + bypass
                 lpgSection
-                    .opacity(usesLPG ? 1.0 : 0.4)
-
-                ModuleSectionDivider(accentColor: ColorPalette.divider)
+                    .opacity(usesLPG ? 1.0 : 0.35)
 
                 // Trigger button
-                ModuleTriggerButton(
-                    label: isTriggered ? "GATE ON" : "TRIGGER",
-                    isActive: isTriggered,
-                    accentColor: ColorPalette.accentPlaits
-                ) {
-                    isTriggered.toggle()
-                    audioEngine.triggerPlaits(isTriggered)
-                }
+                triggerButton
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
+                    .padding(.bottom, 8)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
         }
         .onReceive(modulationTimer) { _ in
             // Poll modulation values from audio engine
@@ -132,7 +127,7 @@ struct PlaitsView: View {
     // MARK: - Header Section
 
     private var headerSection: some View {
-        VStack(spacing: 6) {
+        HStack(spacing: 8) {
             // Engine selector
             Menu {
                 ForEach(0..<engineNames.count, id: \.self) { index in
@@ -149,26 +144,26 @@ struct PlaitsView: View {
                     }
                 }
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: 6) {
                     Text(engineNames[selectedEngine])
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white)
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(ColorPalette.synthPanelLabel)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .minimumScaleFactor(0.7)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 7))
+                        .font(.system(size: 7, weight: .bold))
                         .foregroundColor(ColorPalette.accentPlaits)
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
                 .frame(maxWidth: .infinity)
                 .background(
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(ColorPalette.backgroundTertiary)
+                        .fill(Color.black.opacity(0.3))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
-                        .stroke(ColorPalette.accentPlaits.opacity(0.3), lineWidth: 1)
+                        .stroke(ColorPalette.synthPanelDivider, lineWidth: 1)
                 )
             }
             .buttonStyle(.plain)
@@ -182,7 +177,7 @@ struct PlaitsView: View {
 
                 if midiManager.lastNote > 0 {
                     Text(noteToName(Int(midiManager.lastNote)))
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
                         .foregroundColor(ColorPalette.accentPlaits)
                 } else {
                     Text("MIDI")
@@ -191,40 +186,54 @@ struct PlaitsView: View {
                 }
             }
         }
+        .padding(.horizontal, 16)
     }
 
-    // MARK: - Oscillator Sliders
+    // MARK: - Oscillator Knobs (2x2 grid)
 
-    private var oscillatorSliders: some View {
-        SliderBankView(
-            parameters: [
-                SliderParameter(
-                    label: parameterLabels[selectedEngine][0],
+    private var oscillatorKnobs: some View {
+        VStack(spacing: 4) {
+            // Top row: param1 + param2
+            HStack(spacing: 16) {
+                ProKnobView(
                     value: $harmonics,
-                    modulationAmount: harmonicsMod,
-                    accentColor: ColorPalette.accentPlaits
-                ),
-                SliderParameter(
-                    label: parameterLabels[selectedEngine][1],
-                    value: $timbre,
-                    modulationAmount: timbreMod,
-                    accentColor: ColorPalette.accentPlaits
-                ),
-                SliderParameter(
-                    label: parameterLabels[selectedEngine][2],
-                    value: $morph,
-                    modulationAmount: morphMod,
-                    accentColor: ColorPalette.accentPlaits
-                ),
-                SliderParameter(
-                    label: "LVL",
-                    value: $level,
-                    accentColor: ColorPalette.accentPlaits
+                    label: parameterLabels[selectedEngine][0],
+                    accentColor: ColorPalette.accentPlaits,
+                    size: .large,
+                    style: .minimoog,
+                    modulationValue: harmonicsMod > 0.001 ? harmonics + harmonicsMod : nil
                 )
-            ],
-            sliderHeight: 80,
-            sliderWidth: 20
-        )
+                ProKnobView(
+                    value: $timbre,
+                    label: parameterLabels[selectedEngine][1],
+                    accentColor: ColorPalette.accentPlaits,
+                    size: .large,
+                    style: .minimoog,
+                    modulationValue: timbreMod > 0.001 ? timbre + timbreMod : nil
+                )
+            }
+
+            // Bottom row: param3 + level
+            HStack(spacing: 16) {
+                ProKnobView(
+                    value: $morph,
+                    label: parameterLabels[selectedEngine][2],
+                    accentColor: ColorPalette.accentPlaits,
+                    size: .large,
+                    style: .minimoog,
+                    modulationValue: morphMod > 0.001 ? morph + morphMod : nil
+                )
+                ProKnobView(
+                    value: $level,
+                    label: "LEVEL",
+                    accentColor: ColorPalette.accentPlaits,
+                    size: .large,
+                    style: .minimoog,
+                    valueFormatter: { String(format: "%.0f%%", $0 * 100) }
+                )
+            }
+        }
+        .padding(.horizontal, 12)
         .onChange(of: harmonics) { audioEngine.setParameter(id: .plaitsHarmonics, value: $0) }
         .onChange(of: timbre) { audioEngine.setParameter(id: .plaitsTimbre, value: $0) }
         .onChange(of: morph) { audioEngine.setParameter(id: .plaitsMorph, value: $0) }
@@ -234,34 +243,28 @@ struct PlaitsView: View {
     // MARK: - LPG Section
 
     private var lpgSection: some View {
-        HStack(spacing: 8) {
-            // LPG sliders
-            SliderBankView(
-                parameters: [
-                    SliderParameter(
-                        label: "ATK",
-                        value: $lpgAttack,
-                        accentColor: ColorPalette.accentLooper1
-                    ),
-                    SliderParameter(
-                        label: "DEC",
-                        value: $lpgDecay,
-                        accentColor: ColorPalette.accentLooper1
-                    ),
-                    SliderParameter(
-                        label: "LPG",
-                        value: $lpgColor,
-                        accentColor: ColorPalette.ledAmber
-                    )
-                ],
-                sliderHeight: 60,
-                sliderWidth: 18
+        HStack(spacing: 12) {
+            ProKnobView(
+                value: $lpgAttack,
+                label: "ATTACK",
+                accentColor: ColorPalette.accentLooper1,
+                size: .medium,
+                style: .minimoog
             )
-            .onChange(of: lpgAttack) { audioEngine.setParameter(id: .plaitsLPGAttack, value: $0) }
-            .onChange(of: lpgDecay) { audioEngine.setParameter(id: .plaitsLPGDecay, value: $0) }
-            .onChange(of: lpgColor) { audioEngine.setParameter(id: .plaitsLPGColor, value: $0) }
-
-            Spacer()
+            ProKnobView(
+                value: $lpgDecay,
+                label: "DECAY",
+                accentColor: ColorPalette.accentLooper1,
+                size: .medium,
+                style: .minimoog
+            )
+            ProKnobView(
+                value: $lpgColor,
+                label: "COLOR",
+                accentColor: ColorPalette.ledAmber,
+                size: .medium,
+                style: .minimoog
+            )
 
             // Bypass toggle
             VStack(spacing: 4) {
@@ -285,10 +288,46 @@ struct PlaitsView: View {
                 .shadow(color: lpgBypass ? ColorPalette.ledAmberGlow.opacity(0.4) : .clear, radius: 4)
 
                 Text("BYP")
-                    .font(.system(size: 7, weight: .medium, design: .monospaced))
+                    .font(.system(size: 7, weight: .bold, design: .monospaced))
                     .foregroundColor(lpgBypass ? ColorPalette.ledAmber : ColorPalette.textDimmed)
+                    .tracking(1)
             }
         }
+        .padding(.horizontal, 14)
+        .onChange(of: lpgAttack) { audioEngine.setParameter(id: .plaitsLPGAttack, value: $0) }
+        .onChange(of: lpgDecay) { audioEngine.setParameter(id: .plaitsLPGDecay, value: $0) }
+        .onChange(of: lpgColor) { audioEngine.setParameter(id: .plaitsLPGColor, value: $0) }
+    }
+
+    // MARK: - Trigger Button
+
+    private var triggerButton: some View {
+        Button(action: {
+            DispatchQueue.main.async {
+                isTriggered.toggle()
+                audioEngine.triggerPlaits(isTriggered)
+            }
+        }) {
+            Text(isTriggered ? "GATE ON" : "TRIGGER")
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .tracking(1.5)
+                .foregroundColor(isTriggered ? ColorPalette.synthPanelSurface : ColorPalette.synthPanelLabel)
+                .frame(maxWidth: .infinity)
+                .frame(height: 34)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(isTriggered ? ColorPalette.accentPlaits : Color.black.opacity(0.3))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(
+                            isTriggered ? ColorPalette.accentPlaits : ColorPalette.synthPanelDivider,
+                            lineWidth: 1
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+        .shadow(color: isTriggered ? ColorPalette.accentPlaits.opacity(0.4) : .clear, radius: 6)
     }
 
     // MARK: - Helpers
