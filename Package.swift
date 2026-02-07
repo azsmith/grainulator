@@ -60,6 +60,7 @@ let package = Package(
                 .headerSearchPath("Synthesis/DaisyDrums/DaisySP/Filters"),
                 .headerSearchPath("Synthesis/DaisyDrums/DaisySP/Synthesis"),
                 .headerSearchPath("Synthesis/DaisyDrums/DaisySP/Utility"),
+                .headerSearchPath("Synthesis/SoundFont"),
                 .define("AUDIO_SAMPLE_RATE", to: "48000"),
                 .define("MAX_GRAINS", to: "128"),
             ],

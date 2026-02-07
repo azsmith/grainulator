@@ -23,10 +23,12 @@ namespace Grainulator {
 // Forward declarations
 class PlaitsVoice;
 class DaisyDrumVoice;
+class SoundFontVoice;
+class WavSamplerVoice;
 
 // Multi-channel ring buffer constants
 constexpr int kMultiChannelRingBufferSize = 4096;  // ~85ms @ 48kHz
-constexpr int kNumMixerChannelsForRing = 7;
+constexpr int kNumMixerChannelsForRing = 8;
 constexpr int kRingBufferProcessFrames = 256;      // Chunk size for background processing
 
 /// Lock-free ring buffer for multi-channel audio
@@ -95,8 +97,9 @@ public:
         TargetDrumLane1 = 1 << 4,  // Synth Kick
         TargetDrumLane2 = 1 << 5,  // Analog Snare
         TargetDrumLane3 = 1 << 6,  // Hi-Hat
+        TargetSampler   = 1 << 7,  // SoundFont sampler
         TargetBoth      = TargetPlaits | TargetRings,
-        TargetAll       = TargetPlaits | TargetRings | TargetDaisyDrum
+        TargetAll       = TargetPlaits | TargetRings | TargetDaisyDrum | TargetSampler
     };
 
     AudioEngine();
@@ -110,9 +113,9 @@ public:
     void process(float** inputBuffers, float** outputBuffers, int numChannels, int numFrames);
 
     // Multi-channel output for AU plugin hosting
-    // Outputs 7 separate stereo channels (14 buffers total) without mixing or effects
-    // Buffer layout: [ch0_L, ch0_R, ch1_L, ch1_R, ..., ch6_L, ch6_R]
-    // Channel mapping: 0=Plaits, 1=Rings, 2=Granular1, 3=Looper1, 4=Looper2, 5=Granular4, 6=DaisyDrum
+    // Outputs 8 separate stereo channels (16 buffers total) without mixing or effects
+    // Buffer layout: [ch0_L, ch0_R, ch1_L, ch1_R, ..., ch7_L, ch7_R]
+    // Channel mapping: 0=Plaits, 1=Rings, 2=Granular1, 3=Looper1, 4=Looper2, 5=Granular4, 6=DaisyDrum, 7=Sampler
     void processMultiChannel(float** channelBuffers, int numFrames);
     void renderAndReadMultiChannel(int channelIndex, int64_t sampleTime, float* left, float* right, int numFrames);
     void renderAndReadLegacyBus(int busIndex, int64_t sampleTime, float* left, float* right, int numFrames);
@@ -210,8 +213,23 @@ public:
         DaisyDrumHarmonics,    // 0–1
         DaisyDrumTimbre,       // 0–1
         DaisyDrumMorph,        // 0–1
-        DaisyDrumLevel         // 0–1
+        DaisyDrumLevel,        // 0–1
+
+        // SoundFont sampler parameters
+        SamplerPreset,          // 0–1 maps to preset index
+        SamplerAttack,          // 0–1 ADSR attack
+        SamplerDecay,           // 0–1 ADSR decay
+        SamplerSustain,         // 0–1 ADSR sustain level
+        SamplerRelease,         // 0–1 ADSR release
+        SamplerFilterCutoff,    // 0–1 maps to 20–20kHz
+        SamplerFilterResonance, // 0–1
+        SamplerTuning,          // 0–1 maps to –24..+24 semitones
+        SamplerLevel,           // 0–1 output level
+        SamplerMode             // 0=SoundFont, 1=WavSampler
     };
+
+    // Sampler engine mode: SoundFont (.sf2) or WAV-based (mx.samples)
+    enum class SamplerMode { SoundFont = 0, WavSampler = 1 };
 
     // Clock output waveform types
     enum class ClockWaveform {
@@ -260,6 +278,9 @@ public:
         DaisyDrumHarmonics,
         DaisyDrumTimbre,
         DaisyDrumMorph,
+        // SoundFont Sampler
+        SamplerFilterCutoff,
+        SamplerLevel,
         NumDestinations
     };
 
@@ -282,6 +303,19 @@ public:
     void setDrumSeqLaneHarmonics(int laneIndex, float value);
     void setDrumSeqLaneTimbre(int laneIndex, float value);
     void setDrumSeqLaneMorph(int laneIndex, float value);
+
+    // SoundFont sampler control
+    bool loadSoundFont(const char* filePath);
+    void unloadSoundFont();
+    int getSoundFontPresetCount() const;
+    const char* getSoundFontPresetName(int index) const;
+
+    // WAV sampler control (mx.samples)
+    bool loadWavSampler(const char* dirPath);
+    void unloadWavSampler();
+    const char* getWavSamplerInstrumentName() const;
+    void setSamplerMode(SamplerMode mode);
+    SamplerMode getSamplerMode() const { return m_samplerMode; }
 
     // Polyphonic note control
     void noteOn(int note, int velocity);
@@ -389,6 +423,11 @@ private:
     std::unique_ptr<DaisyDrumVoice> m_daisyDrumVoice;
     // Drum sequencer: 4 dedicated voices (AnalogKick, SynthKick, AnalogSnare, HiHat)
     std::unique_ptr<DaisyDrumVoice> m_drumSeqVoices[kNumDrumSeqLanes];
+    // SoundFont sampler voice
+    std::unique_ptr<SoundFontVoice> m_soundFontVoice;
+    // WAV sampler voice (mx.samples)
+    std::unique_ptr<WavSamplerVoice> m_wavSamplerVoice;
+    SamplerMode m_samplerMode;
     float m_drumSeqLevel[kNumDrumSeqLanes];
     float m_drumSeqHarmonics[kNumDrumSeqLanes];
     float m_drumSeqTimbre[kNumDrumSeqLanes];
@@ -510,8 +549,8 @@ private:
     float m_lastSendBusBL[kMaxBufferSize]{};
     float m_lastSendBusBR[kMaxBufferSize]{};
 
-    // Per-channel mixer state (0=Plaits, 1=Rings, 2-5=Track voices, 6=DaisyDrum)
-    static constexpr int kNumMixerChannels = 7;
+    // Per-channel mixer state (0=Plaits, 1=Rings, 2-5=Track voices, 6=DaisyDrum, 7=Sampler)
+    static constexpr int kNumMixerChannels = 8;
     static constexpr int kMaxChannelDelaySamples = 2400; // 50ms @ 48kHz
     float m_channelGain[kNumMixerChannels];
     float m_channelPan[kNumMixerChannels];

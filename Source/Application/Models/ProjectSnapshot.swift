@@ -25,8 +25,9 @@ struct ProjectSnapshot: Codable {
     var uiPreferences: UIPreferencesSnapshot
     var drumSequencer: DrumSequencerSnapshot?  // Added in version 2
     var daisyDrum: DaisyDrumVoiceSnapshot?     // Added in version 2
+    var sampler: SamplerVoiceSnapshot?          // Added in version 3
 
-    static let currentVersion = 2
+    static let currentVersion = 3
 }
 
 // MARK: - Engine Parameters Snapshot
@@ -274,6 +275,23 @@ struct DaisyDrumVoiceSnapshot: Codable {
     var harmonics: Float
     var timbre: Float
     var morph: Float
+    var level: Float
+}
+
+// MARK: - SoundFont Sampler Voice Snapshot
+
+struct SamplerVoiceSnapshot: Codable {
+    var samplerMode: String?        // "soundfont" or "wavsampler" (nil = soundfont for backward compat)
+    var soundFontPath: String?      // Path to .sf2 file (relative or absolute)
+    var presetIndex: Int
+    var wavInstrumentId: String?    // mx.samples instrument ID (e.g., "ghost-piano")
+    var attack: Float
+    var decay: Float
+    var sustain: Float
+    var release: Float
+    var filterCutoff: Float
+    var filterResonance: Float
+    var tuning: Float               // Normalized 0-1 (0.5 = center = 0 semitones)
     var level: Float
 }
 

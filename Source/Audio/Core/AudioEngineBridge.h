@@ -80,6 +80,18 @@ void AudioEngine_SetDrumSeqLaneHarmonics(AudioEngineHandle handle, int lane, flo
 void AudioEngine_SetDrumSeqLaneTimbre(AudioEngineHandle handle, int lane, float value);
 void AudioEngine_SetDrumSeqLaneMorph(AudioEngineHandle handle, int lane, float value);
 
+// SoundFont sampler control
+bool AudioEngine_LoadSoundFont(AudioEngineHandle handle, const char* filePath);
+void AudioEngine_UnloadSoundFont(AudioEngineHandle handle);
+int AudioEngine_GetSoundFontPresetCount(AudioEngineHandle handle);
+const char* AudioEngine_GetSoundFontPresetName(AudioEngineHandle handle, int index);
+
+// WAV sampler control (mx.samples)
+bool AudioEngine_LoadWavSampler(AudioEngineHandle handle, const char* dirPath);
+void AudioEngine_UnloadWavSampler(AudioEngineHandle handle);
+const char* AudioEngine_GetWavSamplerInstrumentName(AudioEngineHandle handle);
+void AudioEngine_SetSamplerMode(AudioEngineHandle handle, int mode);
+
 #ifdef __cplusplus
 }
 #endif

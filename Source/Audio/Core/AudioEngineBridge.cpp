@@ -433,4 +433,49 @@ void AudioEngine_SetDrumSeqLaneMorph(AudioEngineHandle handle, int lane, float v
     }
 }
 
+// SoundFont sampler control
+bool AudioEngine_LoadSoundFont(AudioEngineHandle handle, const char* filePath) {
+    if (!handle) return false;
+    return static_cast<AudioEngine*>(handle)->loadSoundFont(filePath);
+}
+
+void AudioEngine_UnloadSoundFont(AudioEngineHandle handle) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->unloadSoundFont();
+    }
+}
+
+int AudioEngine_GetSoundFontPresetCount(AudioEngineHandle handle) {
+    if (!handle) return 0;
+    return static_cast<AudioEngine*>(handle)->getSoundFontPresetCount();
+}
+
+const char* AudioEngine_GetSoundFontPresetName(AudioEngineHandle handle, int index) {
+    if (!handle) return "";
+    return static_cast<AudioEngine*>(handle)->getSoundFontPresetName(index);
+}
+
+bool AudioEngine_LoadWavSampler(AudioEngineHandle handle, const char* dirPath) {
+    if (!handle) return false;
+    return static_cast<AudioEngine*>(handle)->loadWavSampler(dirPath);
+}
+
+void AudioEngine_UnloadWavSampler(AudioEngineHandle handle) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->unloadWavSampler();
+    }
+}
+
+const char* AudioEngine_GetWavSamplerInstrumentName(AudioEngineHandle handle) {
+    if (!handle) return "";
+    return static_cast<AudioEngine*>(handle)->getWavSamplerInstrumentName();
+}
+
+void AudioEngine_SetSamplerMode(AudioEngineHandle handle, int mode) {
+    if (handle) {
+        auto m = (mode == 1) ? AudioEngine::SamplerMode::WavSampler : AudioEngine::SamplerMode::SoundFont;
+        static_cast<AudioEngine*>(handle)->setSamplerMode(m);
+    }
+}
+
 } // extern "C"

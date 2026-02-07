@@ -98,6 +98,9 @@ struct GranularView: View {
                             Button("Granular 4") { recordSourceType = .internalVoice; recordSourceChannel = 5 }
                         }
                     }
+                    Section("Sampler") {
+                        Button("Sampler") { recordSourceType = .internalVoice; recordSourceChannel = 11 }
+                    }
                     Section("Drums") {
                         Button("Drums (All)") { recordSourceType = .internalVoice; recordSourceChannel = 6 }
                         Button("Kick") { recordSourceType = .internalVoice; recordSourceChannel = 7 }
@@ -591,6 +594,7 @@ struct GranularView: View {
         case 8: return "SK"
         case 9: return "SNR"
         case 10: return "HH"
+        case 11: return "SMP"
         default: return "???"
         }
     }

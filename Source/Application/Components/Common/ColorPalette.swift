@@ -173,6 +173,9 @@ struct ColorPalette {
     /// DaisyDrum - yellow
     static let accentDaisyDrum = Color(hex: "#F1C40F")
 
+    /// SoundFont Sampler - green
+    static let accentSampler = Color(hex: "#2ECC71")
+
     /// Master - gold
     static let accentMaster = Color(hex: "#FFD700")
 
@@ -239,7 +242,8 @@ struct ColorPalette {
         accentLooper1,     // 3: Looper 1
         accentLooper2,     // 4: Looper 2
         accentGranular4,   // 5: Granular 4
-        accentDaisyDrum    // 6: DaisyDrum
+        accentDaisyDrum,   // 6: DaisyDrum
+        accentSampler      // 7: SoundFont Sampler
     ]
 
     /// Get channel color by index

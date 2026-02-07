@@ -11,6 +11,8 @@ import SwiftUI
 
 struct WorkspaceTabView: View {
     @ObservedObject var layoutState: WorkspaceLayoutState
+    @EnvironmentObject var audioEngine: AudioEngineWrapper
+    @State private var showLibraryBrowser: Bool = false
 
     var body: some View {
         ZStack {
@@ -27,8 +29,16 @@ struct WorkspaceTabView: View {
             DrumsTabView()
                 .opacity(layoutState.currentTab == .drums ? 1 : 0)
                 .allowsHitTesting(layoutState.currentTab == .drums)
+
+            SamplerTabView(showLibraryBrowser: $showLibraryBrowser)
+                .opacity(layoutState.currentTab == .sampler ? 1 : 0)
+                .allowsHitTesting(layoutState.currentTab == .sampler)
         }
         .animation(.easeInOut(duration: 0.2), value: layoutState.currentTab)
+        .sheet(isPresented: $showLibraryBrowser) {
+            SampleLibraryBrowserView(library: SampleLibraryManager.shared)
+                .environmentObject(audioEngine)
+        }
     }
 }
 
@@ -170,6 +180,21 @@ struct GranularVoiceTabButton: View {
 struct DrumsTabView: View {
     var body: some View {
         DrumSequencerView()
+    }
+}
+
+// MARK: - Sampler Tab View
+
+struct SamplerTabView: View {
+    @Binding var showLibraryBrowser: Bool
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 16) {
+                SoundFontPlayerView(showLibraryBrowser: $showLibraryBrowser)
+            }
+            .padding(20)
+        }
     }
 }
 

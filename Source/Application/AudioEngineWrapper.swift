@@ -217,6 +217,32 @@ func AudioEngine_SetDrumSeqLaneTimbre(_ handle: OpaquePointer, _ lane: Int32, _ 
 @_silgen_name("AudioEngine_SetDrumSeqLaneMorph")
 func AudioEngine_SetDrumSeqLaneMorph(_ handle: OpaquePointer, _ lane: Int32, _ value: Float)
 
+// SoundFont sampler bridge functions
+@_silgen_name("AudioEngine_LoadSoundFont")
+func AudioEngine_LoadSoundFont(_ handle: OpaquePointer, _ filePath: UnsafePointer<CChar>?) -> Bool
+
+@_silgen_name("AudioEngine_UnloadSoundFont")
+func AudioEngine_UnloadSoundFont(_ handle: OpaquePointer)
+
+@_silgen_name("AudioEngine_GetSoundFontPresetCount")
+func AudioEngine_GetSoundFontPresetCount(_ handle: OpaquePointer) -> Int32
+
+@_silgen_name("AudioEngine_GetSoundFontPresetName")
+func AudioEngine_GetSoundFontPresetName(_ handle: OpaquePointer, _ index: Int32) -> UnsafePointer<CChar>?
+
+// WAV sampler bridge functions (mx.samples)
+@_silgen_name("AudioEngine_LoadWavSampler")
+func AudioEngine_LoadWavSampler(_ handle: OpaquePointer, _ dirPath: UnsafePointer<CChar>?) -> Bool
+
+@_silgen_name("AudioEngine_UnloadWavSampler")
+func AudioEngine_UnloadWavSampler(_ handle: OpaquePointer)
+
+@_silgen_name("AudioEngine_GetWavSamplerInstrumentName")
+func AudioEngine_GetWavSamplerInstrumentName(_ handle: OpaquePointer) -> UnsafePointer<CChar>?
+
+@_silgen_name("AudioEngine_SetSamplerMode")
+func AudioEngine_SetSamplerMode(_ handle: OpaquePointer, _ mode: Int32)
+
 /// Main audio engine wrapper that manages CoreAudio and the synthesis engine
 @MainActor
 class AudioEngineWrapper: ObservableObject {
@@ -229,6 +255,7 @@ class AudioEngineWrapper: ObservableObject {
         case drumLane1 = 16   // 1 << 4: Synth Kick
         case drumLane2 = 32   // 1 << 5: Analog Snare
         case drumLane3 = 64   // 1 << 6: Hi-Hat
+        case sampler = 128    // 1 << 7: SoundFont Sampler
     }
 
     // MARK: - Published Properties
@@ -256,10 +283,29 @@ class AudioEngineWrapper: ObservableObject {
     // Playhead positions for granular voices (0-1, indexed by voice)
     @Published var granularPositions: [Int: Float] = [:]
 
-    // Level meters (0=Plaits, 1=Rings, 2-5=track voices, 6=DaisyDrum)
-    @Published var channelLevels: [Float] = [0, 0, 0, 0, 0, 0, 0]
+    // Level meters (0=Plaits, 1=Rings, 2-5=track voices, 6=DaisyDrum, 7=Sampler)
+    @Published var channelLevels: [Float] = [0, 0, 0, 0, 0, 0, 0, 0]
     @Published var masterLevelL: Float = 0
     @Published var masterLevelR: Float = 0
+
+    // MARK: - SoundFont Sampler
+
+    @Published var soundFontLoaded: Bool = false
+    @Published var soundFontPresetNames: [String] = []
+    @Published var soundFontFilePath: URL? = nil
+    @Published var soundFontCurrentPreset: Int = 0
+
+    // MARK: - WAV Sampler (mx.samples)
+
+    enum SamplerMode: Int, Sendable {
+        case soundFont = 0
+        case wavSampler = 1
+    }
+
+    @Published var wavSamplerLoaded: Bool = false
+    @Published var wavSamplerInstrumentName: String = ""
+    @Published var wavSamplerDirectoryPath: URL? = nil
+    @Published var activeSamplerMode: SamplerMode = .soundFont
 
     // MARK: - Recording
 
@@ -277,7 +323,7 @@ class AudioEngineWrapper: ObservableObject {
         var isRecording: Bool = false
         var mode: RecordMode = .oneShot
         var sourceType: RecordSourceType = .external
-        var sourceChannel: Int = 0  // 0=Plaits,1=Rings,2=Gran1,3=Loop1,4=Loop2,5=Gran4,6=Drums(all),7=Kick,8=SynthKick,9=Snare,10=HiHat
+        var sourceChannel: Int = 0  // 0=Plaits,1=Rings,2=Gran1,3=Loop1,4=Loop2,5=Gran4,6=Drums(all),7=Kick,8=SynthKick,9=Snare,10=HiHat,11=Sampler
         var feedback: Float = 0.0
     }
 
@@ -303,8 +349,8 @@ class AudioEngineWrapper: ObservableObject {
     private var legacySendSourceNodes: [AVAudioSourceNode] = []
     private var legacySendReturnMixers: [AVAudioMixerNode] = []
     private var legacyAttachedSendAUs: [AVAudioUnit?] = [nil, nil]
-    private var legacySendLevelsA: [Float] = Array(repeating: 0, count: 6)
-    private var legacySendLevelsB: [Float] = Array(repeating: 0, count: 6)
+    private var legacySendLevelsA: [Float] = Array(repeating: 0, count: 8)
+    private var legacySendLevelsB: [Float] = Array(repeating: 0, count: 8)
     @MainActor private var legacySendRebuildInProgress: Set<Int> = []
     /// Serial queue for audio graph mutations (stop/attach/connect/start).
     /// Keeps heavy AVAudioEngine operations off MainActor to prevent UI stalls.
@@ -820,7 +866,7 @@ class AudioEngineWrapper: ObservableObject {
             return
         }
 
-        let numChannels = 7
+        let numChannels = 8
         resetMultiChannelRenderTimeline()
 
         // Route channel strips directly to mainMixerNode in AU mode.
@@ -1360,9 +1406,9 @@ class AudioEngineWrapper: ObservableObject {
         let newCpuLoad = ProcessInfo.processInfo.systemUptime.truncatingRemainder(dividingBy: 100.0) / 4.0
         let newLatency = (Double(bufferSize) / sampleRate) * 1000.0
 
-        // Channel levels (7 channels)
-        var newChannelLevels: [Float] = [0, 0, 0, 0, 0, 0, 0]
-        for i in 0..<7 {
+        // Channel levels (8 channels)
+        var newChannelLevels: [Float] = [0, 0, 0, 0, 0, 0, 0, 0]
+        for i in 0..<8 {
             newChannelLevels[i] = AudioEngine_GetChannelLevel(handle, Int32(i))
         }
 
@@ -1503,6 +1549,18 @@ class AudioEngineWrapper: ObservableObject {
         case .daisyDrumTimbre: return 66
         case .daisyDrumMorph: return 67
         case .daisyDrumLevel: return 68
+
+        // SoundFont sampler parameters (69-77)
+        case .samplerPreset: return 69
+        case .samplerAttack: return 70
+        case .samplerDecay: return 71
+        case .samplerSustain: return 72
+        case .samplerRelease: return 73
+        case .samplerFilterCutoff: return 74
+        case .samplerFilterResonance: return 75
+        case .samplerTuning: return 76
+        case .samplerLevel: return 77
+        case .samplerMode: return 78
         }
     }
 
@@ -1777,6 +1835,110 @@ class AudioEngineWrapper: ObservableObject {
     func setDrumSeqLaneMorph(_ lane: Int, value: Float) {
         guard let handle = cppEngineHandle else { return }
         AudioEngine_SetDrumSeqLaneMorph(handle, Int32(lane), value)
+    }
+
+    // MARK: - SoundFont Sampler Control
+
+    /// Load a SoundFont (.sf2) file on a background thread.
+    /// Updates published state on completion.
+    func loadSoundFont(url: URL) {
+        guard let handle = cppEngineHandle else { return }
+        let path = url.path
+        soundFontFilePath = url
+
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let success = path.withCString { cPath in
+                AudioEngine_LoadSoundFont(handle, cPath)
+            }
+
+            // Allow a brief moment for the audio thread swap
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+
+            await MainActor.run { [weak self] in
+                guard let self = self else { return }
+                self.soundFontLoaded = success
+                if success {
+                    let count = Int(AudioEngine_GetSoundFontPresetCount(handle))
+                    var names: [String] = []
+                    for i in 0..<count {
+                        if let cStr = AudioEngine_GetSoundFontPresetName(handle, Int32(i)) {
+                            names.append(String(cString: cStr))
+                        } else {
+                            names.append("Preset \(i)")
+                        }
+                    }
+                    self.soundFontPresetNames = names
+                    self.soundFontCurrentPreset = 0
+                } else {
+                    self.soundFontPresetNames = []
+                    self.soundFontFilePath = nil
+                }
+            }
+        }
+    }
+
+    /// Unload the current SoundFont
+    func unloadSoundFont() {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_UnloadSoundFont(handle)
+        soundFontLoaded = false
+        soundFontPresetNames = []
+        soundFontFilePath = nil
+        soundFontCurrentPreset = 0
+    }
+
+    /// Set the active preset by index
+    func setSamplerPreset(_ index: Int) {
+        soundFontCurrentPreset = index
+        let count = soundFontPresetNames.count
+        guard count > 0 else { return }
+        let normalized = Float(index) / Float(max(count - 1, 1))
+        setParameter(id: .samplerPreset, value: normalized)
+    }
+
+    // MARK: - WAV Sampler (mx.samples)
+
+    /// Load a WAV instrument from a directory of mx.samples format WAV files
+    func loadWavSampler(directory: URL) {
+        let path = directory.path
+        Task.detached(priority: .userInitiated) {
+            let handle = await MainActor.run { self.cppEngineHandle }
+            guard let handle else { return }
+            let success = AudioEngine_LoadWavSampler(handle, path)
+            if success {
+                let namePtr = AudioEngine_GetWavSamplerInstrumentName(handle)
+                let name = namePtr.map { String(cString: $0) } ?? ""
+                await MainActor.run {
+                    self.wavSamplerLoaded = true
+                    self.wavSamplerInstrumentName = name
+                    self.wavSamplerDirectoryPath = directory
+                    // Auto-switch to WAV sampler mode
+                    self.setSamplerMode(.wavSampler)
+                }
+            } else {
+                await MainActor.run {
+                    self.wavSamplerLoaded = false
+                    self.wavSamplerInstrumentName = ""
+                    self.wavSamplerDirectoryPath = nil
+                }
+            }
+        }
+    }
+
+    /// Unload the current WAV instrument
+    func unloadWavSampler() {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_UnloadWavSampler(handle)
+        wavSamplerLoaded = false
+        wavSamplerInstrumentName = ""
+        wavSamplerDirectoryPath = nil
+    }
+
+    /// Switch between SoundFont and WAV sampler modes
+    func setSamplerMode(_ mode: SamplerMode) {
+        activeSamplerMode = mode
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_SetSamplerMode(handle, Int32(mode.rawValue))
     }
 
     /// Polyphonic note on - allocates a voice and triggers it
@@ -2108,6 +2270,18 @@ enum ParameterID {
     case daisyDrumTimbre
     case daisyDrumMorph
     case daisyDrumLevel
+
+    // SoundFont sampler parameters
+    case samplerPreset
+    case samplerAttack
+    case samplerDecay
+    case samplerSustain
+    case samplerRelease
+    case samplerFilterCutoff
+    case samplerFilterResonance
+    case samplerTuning
+    case samplerLevel
+    case samplerMode
 }
 
 // MARK: - Insert Slot Data (Value Type)

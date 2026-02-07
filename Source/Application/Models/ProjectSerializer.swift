@@ -36,7 +36,8 @@ struct ProjectSerializer {
             audioFiles: captureAudioFiles(audioEngine),
             uiPreferences: captureUIPreferences(appState),
             drumSequencer: drumSequencer.map { captureDrumSequencer($0) },
-            daisyDrum: captureDaisyDrum(audioEngine)
+            daisyDrum: captureDaisyDrum(audioEngine),
+            sampler: captureSampler(audioEngine)
         )
     }
 
@@ -347,6 +348,31 @@ struct ProjectSerializer {
         )
     }
 
+    // MARK: - SoundFont Sampler Voice
+
+    private static func captureSampler(_ engine: AudioEngineWrapper) -> SamplerVoiceSnapshot {
+        let modeStr = engine.activeSamplerMode == .wavSampler ? "wavsampler" : "soundfont"
+        // Derive instrument ID from directory path (last path component)
+        var wavId: String? = nil
+        if let dirPath = engine.wavSamplerDirectoryPath {
+            wavId = dirPath.lastPathComponent
+        }
+        return SamplerVoiceSnapshot(
+            samplerMode: modeStr,
+            soundFontPath: engine.soundFontFilePath?.path,
+            presetIndex: engine.soundFontCurrentPreset,
+            wavInstrumentId: wavId,
+            attack: engine.getParameter(id: .samplerAttack),
+            decay: engine.getParameter(id: .samplerDecay),
+            sustain: engine.getParameter(id: .samplerSustain),
+            release: engine.getParameter(id: .samplerRelease),
+            filterCutoff: engine.getParameter(id: .samplerFilterCutoff),
+            filterResonance: engine.getParameter(id: .samplerFilterResonance),
+            tuning: engine.getParameter(id: .samplerTuning),
+            level: engine.getParameter(id: .samplerLevel)
+        )
+    }
+
     // MARK: - Restore State
 
     static func restoreSnapshot(
@@ -398,6 +424,11 @@ struct ProjectSerializer {
         // 8. Restore DaisyDrum voice parameters (if present in project)
         if let daisyDrumSnapshot = snapshot.daisyDrum {
             restoreDaisyDrum(daisyDrumSnapshot, engine: audioEngine)
+        }
+
+        // 8b. Restore SoundFont sampler voice (if present in project)
+        if let samplerSnapshot = snapshot.sampler {
+            restoreSampler(samplerSnapshot, engine: audioEngine)
         }
 
         // 9. Sync mixer to C++ engine
@@ -713,5 +744,46 @@ struct ProjectSerializer {
         engine.setParameter(id: .daisyDrumTimbre, value: snapshot.timbre)
         engine.setParameter(id: .daisyDrumMorph, value: snapshot.morph)
         engine.setParameter(id: .daisyDrumLevel, value: snapshot.level)
+    }
+
+    // MARK: - Restore SoundFont Sampler Voice
+
+    private static func restoreSampler(_ snapshot: SamplerVoiceSnapshot, engine: AudioEngineWrapper) {
+        let mode: AudioEngineWrapper.SamplerMode = (snapshot.samplerMode == "wavsampler") ? .wavSampler : .soundFont
+
+        // Load the SoundFont file if a path was saved
+        if let sfPath = snapshot.soundFontPath {
+            let url = URL(fileURLWithPath: sfPath)
+            if FileManager.default.fileExists(atPath: sfPath) {
+                engine.loadSoundFont(url: url)
+                // Set preset after a delay to allow SF2 loading to complete
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    engine.setSamplerPreset(snapshot.presetIndex)
+                }
+            }
+        }
+
+        // Load WAV sampler instrument if saved
+        if let wavId = snapshot.wavInstrumentId {
+            let library = SampleLibraryManager.shared
+            if let localDir = library.localPath(for: wavId) {
+                engine.loadWavSampler(directory: localDir)
+            }
+        }
+
+        // Set mode after a brief delay to ensure loaders have started
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            engine.setSamplerMode(mode)
+        }
+
+        // Restore parameters immediately (they'll be applied once sources load)
+        engine.setParameter(id: .samplerAttack, value: snapshot.attack)
+        engine.setParameter(id: .samplerDecay, value: snapshot.decay)
+        engine.setParameter(id: .samplerSustain, value: snapshot.sustain)
+        engine.setParameter(id: .samplerRelease, value: snapshot.release)
+        engine.setParameter(id: .samplerFilterCutoff, value: snapshot.filterCutoff)
+        engine.setParameter(id: .samplerFilterResonance, value: snapshot.filterResonance)
+        engine.setParameter(id: .samplerTuning, value: snapshot.tuning)
+        engine.setParameter(id: .samplerLevel, value: snapshot.level)
     }
 }

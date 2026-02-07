@@ -12,6 +12,8 @@
 #include "Rings/RingsVoice.h"
 #include "Looper/LooperVoice.h"
 #include "DaisyDrums/DaisyDrumVoice.h"
+#include "SoundFont/SoundFontVoice.h"
+#include "SoundFont/WavSamplerVoice.h"
 // Moog ladder filter models for master filter
 #include "Granular/MoogLadders/LadderFilterBase.h"
 #include "Granular/MoogLadders/SimplifiedModel.h"
@@ -63,6 +65,7 @@ AudioEngine::AudioEngine()
     , m_drumSeqHarmonics{0.5f, 0.5f, 0.5f, 0.5f}
     , m_drumSeqTimbre{0.5f, 0.5f, 0.5f, 0.5f}
     , m_drumSeqMorph{0.5f, 0.5f, 0.5f, 0.5f}
+    , m_samplerMode(SamplerMode::SoundFont)
     , m_activeGranularVoice(0)
     // Mangl-style granular parameters
     , m_granularSpeed(1.0f)
@@ -265,6 +268,15 @@ bool AudioEngine::initialize(int sampleRate, int bufferSize) {
         }
     }
 
+    // Initialize SoundFont sampler voice
+    m_soundFontVoice = std::make_unique<SoundFontVoice>();
+    m_soundFontVoice->Init(static_cast<float>(sampleRate));
+
+    // Initialize WAV sampler voice (mx.samples)
+    m_wavSamplerVoice = std::make_unique<WavSamplerVoice>();
+    m_wavSamplerVoice->Init(static_cast<float>(sampleRate));
+    m_samplerMode = SamplerMode::SoundFont;
+
     // Initialize granular voices
     for (int i = 0; i < kNumGranularVoices; ++i) {
         m_granularVoices[i] = std::make_unique<GranularVoice>();
@@ -448,6 +460,16 @@ void AudioEngine::noteOnTarget(int note, int velocity, uint8_t targetMask) {
             m_drumSeqVoices[lane]->Trigger(true);
         }
     }
+
+    // Sampler (bit 7) — routes to active sampler mode
+    if ((targetMask & static_cast<uint8_t>(NoteTarget::TargetSampler)) != 0) {
+        float vel = static_cast<float>(velocity) / 127.0f;
+        if (m_samplerMode == SamplerMode::WavSampler && m_wavSamplerVoice) {
+            m_wavSamplerVoice->NoteOn(note, vel);
+        } else if (m_soundFontVoice) {
+            m_soundFontVoice->NoteOn(note, vel);
+        }
+    }
 }
 
 void AudioEngine::noteOffTarget(int note, uint8_t targetMask) {
@@ -466,6 +488,15 @@ void AudioEngine::noteOffTarget(int note, uint8_t targetMask) {
         uint8_t laneBit = 1 << (3 + lane);
         if ((targetMask & laneBit) != 0 && m_drumSeqVoices[lane]) {
             m_drumSeqVoices[lane]->Trigger(false);
+        }
+    }
+
+    // Sampler (bit 7) — routes to active sampler mode
+    if ((targetMask & static_cast<uint8_t>(NoteTarget::TargetSampler)) != 0) {
+        if (m_samplerMode == SamplerMode::WavSampler && m_wavSamplerVoice) {
+            m_wavSamplerVoice->NoteOff(note);
+        } else if (m_soundFontVoice) {
+            m_soundFontVoice->NoteOff(note);
         }
     }
 
@@ -927,6 +958,68 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
             }
         }
 
+        // ========== Channel 7: Sampler (SoundFont or WAV) ==========
+        {
+            int ch = 7;
+            bool shouldPlay = !m_channelMute[ch] && (!anySoloed || m_channelSolo[ch]);
+
+            std::memset(m_voiceBuffer[0], 0, frameCount * sizeof(float));
+            std::memset(m_voiceBuffer[1], 0, frameCount * sizeof(float));
+            if (m_samplerMode == SamplerMode::WavSampler) {
+                if (m_wavSamplerVoice) {
+                    // Always call Render — it handles CheckSwap internally
+                    m_wavSamplerVoice->Render(m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+                }
+            } else {
+                if (m_soundFontVoice) {
+                    // Always call Render — it handles CheckSwap internally
+                    // and outputs silence if no SoundFont is active yet
+                    m_soundFontVoice->Render(m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+                }
+            }
+
+            // Record from Sampler (channel 11) pre-mixer
+            processRecordingForChannel(11, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+
+            float gain = m_channelGain[ch];
+            float pan = m_channelPan[ch];
+            float sendA = m_channelSendA[ch];
+            float sendB = m_channelSendB[ch];
+            float panL = std::cos((pan + 1.0f) * 0.25f * 3.14159265f);
+            float panR = std::sin((pan + 1.0f) * 0.25f * 3.14159265f);
+
+            for (int i = 0; i < frameCount; ++i) {
+                float sampleL = m_voiceBuffer[0][i] * gain;
+                float sampleR = m_voiceBuffer[1][i] * gain;
+                float outL = sampleL * panL;
+                float outR = sampleR * panR;
+                float delayedL = 0.0f;
+                float delayedR = 0.0f;
+                applyChannelDelay(ch, outL, outR, delayedL, delayedR);
+
+                channelPeaks[ch] = std::max(channelPeaks[ch], std::max(std::abs(sampleL), std::abs(sampleR)));
+
+                if (shouldPlay) {
+                    m_processingBuffer[0][i] += delayedL;
+                    m_processingBuffer[1][i] += delayedR;
+                }
+
+                const int outputIndex = frameOffset + i;
+                const float sendAL = delayedL * sendA;
+                const float sendAR = delayedR * sendA;
+                const float sendBL = delayedL * sendB;
+                const float sendBR = delayedR * sendB;
+                m_sendBufferAL[i] += sendAL;
+                m_sendBufferAR[i] += sendAR;
+                m_sendBufferBL[i] += sendBL;
+                m_sendBufferBR[i] += sendBR;
+                m_lastSendBusAL[outputIndex] += sendAL;
+                m_lastSendBusAR[outputIndex] += sendAR;
+                m_lastSendBusBL[outputIndex] += sendBL;
+                m_lastSendBusBR[outputIndex] += sendBR;
+            }
+        }
+
         // ========== Process external input recording ==========
         processExternalInputRecording(frameCount);
 
@@ -1250,6 +1343,41 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
             for (int i = 0; i < frameCount; ++i) {
                 float peak = std::max(std::abs(m_voiceBuffer[0][i]), std::abs(m_voiceBuffer[1][i]));
                 channelPeaks[6] = std::max(channelPeaks[6], peak);
+            }
+        }
+
+        // ========== Channel 7: Sampler (SoundFont or WAV, buffers 14, 15) ==========
+        {
+            std::memset(m_voiceBuffer[0], 0, frameCount * sizeof(float));
+            std::memset(m_voiceBuffer[1], 0, frameCount * sizeof(float));
+
+            if (m_samplerMode == SamplerMode::WavSampler) {
+                if (m_wavSamplerVoice) {
+                    // Always call Render — it handles CheckSwap internally
+                    // and outputs silence if no map is active yet
+                    m_wavSamplerVoice->Render(m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+                }
+            } else {
+                if (m_soundFontVoice) {
+                    // Always call Render — it handles CheckSwap internally
+                    // and outputs silence if no SoundFont is active yet
+                    m_soundFontVoice->Render(m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+                }
+            }
+
+            // Record from Sampler (channel 11) pre-output
+            processRecordingForChannel(11, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+
+            if (channelBuffers[14]) {
+                std::memcpy(channelBuffers[14] + frameOffset, m_voiceBuffer[0], frameCount * sizeof(float));
+            }
+            if (channelBuffers[15]) {
+                std::memcpy(channelBuffers[15] + frameOffset, m_voiceBuffer[1], frameCount * sizeof(float));
+            }
+
+            for (int i = 0; i < frameCount; ++i) {
+                float peak = std::max(std::abs(m_voiceBuffer[0][i]), std::abs(m_voiceBuffer[1][i]));
+                channelPeaks[7] = std::max(channelPeaks[7], peak);
             }
         }
 
@@ -1958,6 +2086,57 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
             }
             break;
 
+        // SoundFont sampler parameters
+        case ParameterID::SamplerPreset:
+            if (m_soundFontVoice) {
+                int count = m_soundFontVoice->GetPresetCount();
+                if (count > 0) {
+                    int idx = std::clamp(static_cast<int>(clampedValue * (count - 1) + 0.5f), 0, count - 1);
+                    m_soundFontVoice->SetPreset(idx);
+                }
+            }
+            // WAV sampler doesn't have presets — parameter ignored for it
+            break;
+        case ParameterID::SamplerAttack:
+            if (m_soundFontVoice) m_soundFontVoice->SetAttack(clampedValue);
+            if (m_wavSamplerVoice) m_wavSamplerVoice->SetAttack(clampedValue);
+            break;
+        case ParameterID::SamplerDecay:
+            if (m_soundFontVoice) m_soundFontVoice->SetDecay(clampedValue);
+            if (m_wavSamplerVoice) m_wavSamplerVoice->SetDecay(clampedValue);
+            break;
+        case ParameterID::SamplerSustain:
+            if (m_soundFontVoice) m_soundFontVoice->SetSustain(clampedValue);
+            if (m_wavSamplerVoice) m_wavSamplerVoice->SetSustain(clampedValue);
+            break;
+        case ParameterID::SamplerRelease:
+            if (m_soundFontVoice) m_soundFontVoice->SetRelease(clampedValue);
+            if (m_wavSamplerVoice) m_wavSamplerVoice->SetRelease(clampedValue);
+            break;
+        case ParameterID::SamplerFilterCutoff:
+            if (m_soundFontVoice) m_soundFontVoice->SetFilterCutoff(clampedValue);
+            if (m_wavSamplerVoice) m_wavSamplerVoice->SetFilterCutoff(clampedValue);
+            break;
+        case ParameterID::SamplerFilterResonance:
+            if (m_soundFontVoice) m_soundFontVoice->SetFilterResonance(clampedValue);
+            if (m_wavSamplerVoice) m_wavSamplerVoice->SetFilterResonance(clampedValue);
+            break;
+        case ParameterID::SamplerTuning:
+        {
+            // Map 0-1 to -24..+24 semitones
+            float semitones = (clampedValue * 48.0f) - 24.0f;
+            if (m_soundFontVoice) m_soundFontVoice->SetTuning(semitones);
+            if (m_wavSamplerVoice) m_wavSamplerVoice->SetTuning(semitones);
+            break;
+        }
+        case ParameterID::SamplerLevel:
+            if (m_soundFontVoice) m_soundFontVoice->SetLevel(clampedValue);
+            if (m_wavSamplerVoice) m_wavSamplerVoice->SetLevel(clampedValue);
+            break;
+        case ParameterID::SamplerMode:
+            m_samplerMode = (clampedValue >= 0.5f) ? SamplerMode::WavSampler : SamplerMode::SoundFont;
+            break;
+
         default:
             break;
     }
@@ -2098,6 +2277,23 @@ float AudioEngine::getParameter(ParameterID id, int voiceIndex) const {
         case ParameterID::DaisyDrumMorph: return clamp01(m_daisyDrumMorph);
         case ParameterID::DaisyDrumLevel: return clamp01(m_daisyDrumLevel);
 
+        // SoundFont sampler parameters
+        case ParameterID::SamplerPreset: {
+            if (!m_soundFontVoice) return 0.0f;
+            int count = m_soundFontVoice->GetPresetCount();
+            if (count <= 1) return 0.0f;
+            return clamp01(static_cast<float>(m_soundFontVoice->GetPreset()) / static_cast<float>(count - 1));
+        }
+        case ParameterID::SamplerAttack: return 0.0f;  // Stored in voice, no mirrored member
+        case ParameterID::SamplerDecay: return 0.0f;
+        case ParameterID::SamplerSustain: return 1.0f;
+        case ParameterID::SamplerRelease: return 0.1f;
+        case ParameterID::SamplerFilterCutoff: return 1.0f;
+        case ParameterID::SamplerFilterResonance: return 0.0f;
+        case ParameterID::SamplerTuning: return 0.5f;  // Center = 0 semitones
+        case ParameterID::SamplerLevel: return 0.8f;
+        case ParameterID::SamplerMode: return (m_samplerMode == SamplerMode::WavSampler) ? 1.0f : 0.0f;
+
         default:
             return 0.0f;
     }
@@ -2121,6 +2317,58 @@ void AudioEngine::triggerDaisyDrum(bool state) {
         }
         m_daisyDrumVoice->Trigger(state);
     }
+}
+
+// SoundFont sampler methods
+bool AudioEngine::loadSoundFont(const char* filePath) {
+    if (m_soundFontVoice) {
+        return m_soundFontVoice->LoadSoundFont(filePath);
+    }
+    return false;
+}
+
+void AudioEngine::unloadSoundFont() {
+    if (m_soundFontVoice) {
+        m_soundFontVoice->UnloadSoundFont();
+    }
+}
+
+int AudioEngine::getSoundFontPresetCount() const {
+    if (m_soundFontVoice) {
+        return m_soundFontVoice->GetPresetCount();
+    }
+    return 0;
+}
+
+const char* AudioEngine::getSoundFontPresetName(int index) const {
+    if (m_soundFontVoice) {
+        return m_soundFontVoice->GetPresetName(index);
+    }
+    return "";
+}
+
+bool AudioEngine::loadWavSampler(const char* dirPath) {
+    if (m_wavSamplerVoice) {
+        return m_wavSamplerVoice->LoadFromDirectory(dirPath);
+    }
+    return false;
+}
+
+void AudioEngine::unloadWavSampler() {
+    if (m_wavSamplerVoice) {
+        m_wavSamplerVoice->Unload();
+    }
+}
+
+const char* AudioEngine::getWavSamplerInstrumentName() const {
+    if (m_wavSamplerVoice) {
+        return m_wavSamplerVoice->GetInstrumentName();
+    }
+    return "";
+}
+
+void AudioEngine::setSamplerMode(SamplerMode mode) {
+    m_samplerMode = mode;
 }
 
 void AudioEngine::triggerDrumSeqLane(int laneIndex, bool state) {

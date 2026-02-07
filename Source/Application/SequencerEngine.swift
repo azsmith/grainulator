@@ -101,6 +101,7 @@ enum SequencerTrackOutput: String, CaseIterable, Identifiable {
     case rings = "RINGS"
     case both = "BOTH"
     case daisyDrum = "DRUMS"
+    case sampler = "SAMPLER"
 
     var id: String { rawValue }
 }
@@ -908,6 +909,7 @@ final class StepSequencer: ObservableObject {
         case .rings: offsetMs = snapshot.ringsTriggerOffsetMs
         case .both: offsetMs = 0.0
         case .daisyDrum: offsetMs = 0.0
+        case .sampler: offsetMs = 0.0
         case .drumLane0, .drumLane1, .drumLane2, .drumLane3: offsetMs = 0.0
         }
         let offsetSamples = Int64((offsetMs * snapshot.sampleRate / 1000.0).rounded())
@@ -953,6 +955,10 @@ final class StepSequencer: ObservableObject {
             emitNoteOnDirect(note: note, velocity: velocity,
                              sampleTime: sampleTime,
                              target: .daisyDrum, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys)
+        case .sampler:
+            emitNoteOnDirect(note: note, velocity: velocity,
+                             sampleTime: sampleTime,
+                             target: .sampler, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys)
         case .drumLane0, .drumLane1, .drumLane2, .drumLane3:
             break  // Drum seq lanes are driven by DrumSequencer, not StepSequencer
         }
@@ -996,6 +1002,9 @@ final class StepSequencer: ObservableObject {
         case .daisyDrum:
             AudioEngine_ScheduleNoteOffTarget(handle, Int32(note),
                 sampleTime, AudioEngineWrapper.NoteTargetMask.daisyDrum.rawValue)
+        case .sampler:
+            AudioEngine_ScheduleNoteOffTarget(handle, Int32(note),
+                sampleTime, AudioEngineWrapper.NoteTargetMask.sampler.rawValue)
         case .drumLane0, .drumLane1, .drumLane2, .drumLane3:
             break  // Drum seq lanes are driven by DrumSequencer, not StepSequencer
         }
@@ -1028,6 +1037,7 @@ final class StepSequencer: ObservableObject {
         case .rings: return .rings
         case .both: return .both
         case .daisyDrum: return .daisyDrum
+        case .sampler: return .sampler
         case .drumLane0, .drumLane1, .drumLane2, .drumLane3: return .daisyDrum  // Fallback; not used for drum seq lanes
         }
     }
@@ -1159,6 +1169,8 @@ final class StepSequencer: ObservableObject {
             return .both
         case .daisyDrum:
             return .daisyDrum
+        case .sampler:
+            return .sampler
         }
     }
 

@@ -902,6 +902,16 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                     "synth.daisydrum.harmonics",
                     "synth.daisydrum.timbre",
                     "synth.daisydrum.morph",
+                    "synth.sampler.mode",
+                    "synth.sampler.preset",
+                    "synth.sampler.attack",
+                    "synth.sampler.decay",
+                    "synth.sampler.sustain",
+                    "synth.sampler.release",
+                    "synth.sampler.filterCutoff",
+                    "synth.sampler.filterResonance",
+                    "synth.sampler.tuning",
+                    "synth.sampler.level",
                 ],
             ],
             [
@@ -1028,6 +1038,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                     "timbre": readGlobalParameter(id: .daisyDrumTimbre),
                     "morph": readGlobalParameter(id: .daisyDrumMorph),
                 ] as [String: Any],
+                "sampler": canonicalSamplerStatePayload(),
             ],
             "granular": [
                 "recording": granularRecording,
@@ -1078,6 +1089,62 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                 ] as [String: Any]
             }
         }
+    }
+
+    private func canonicalSamplerStatePayload() -> [String: Any] {
+        var result: [String: Any] = [
+            "mode": "soundfont",
+            "loaded": false,
+            "preset": 0,
+            "presetName": "",
+            "wavSamplerLoaded": false,
+            "wavInstrumentName": "",
+            "attack": readGlobalParameter(id: .samplerAttack),
+            "decay": readGlobalParameter(id: .samplerDecay),
+            "sustain": readGlobalParameter(id: .samplerSustain),
+            "release": readGlobalParameter(id: .samplerRelease),
+            "filterCutoff": readGlobalParameter(id: .samplerFilterCutoff),
+            "filterResonance": readGlobalParameter(id: .samplerFilterResonance),
+            "tuning": readGlobalParameter(id: .samplerTuning),
+            "level": readGlobalParameter(id: .samplerLevel),
+        ]
+        // Read loaded state from audioEngine on main thread
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { [weak self] in
+                guard let self, let engine = self.audioEngine else { return }
+                result["mode"] = engine.activeSamplerMode == .wavSampler ? "wavsampler" : "soundfont"
+                result["loaded"] = engine.soundFontLoaded
+                result["preset"] = engine.soundFontCurrentPreset
+                result["wavSamplerLoaded"] = engine.wavSamplerLoaded
+                result["wavInstrumentName"] = engine.wavSamplerInstrumentName
+                if engine.soundFontLoaded {
+                    let names = engine.soundFontPresetNames
+                    let idx = engine.soundFontCurrentPreset
+                    result["presetName"] = idx < names.count ? names[idx] : ""
+                    result["presetCount"] = names.count
+                    result["filePath"] = engine.soundFontFilePath ?? ""
+                }
+            }
+        } else {
+            DispatchQueue.main.sync {
+                MainActor.assumeIsolated { [weak self] in
+                    guard let self, let engine = self.audioEngine else { return }
+                    result["mode"] = engine.activeSamplerMode == .wavSampler ? "wavsampler" : "soundfont"
+                    result["loaded"] = engine.soundFontLoaded
+                    result["preset"] = engine.soundFontCurrentPreset
+                    result["wavSamplerLoaded"] = engine.wavSamplerLoaded
+                    result["wavInstrumentName"] = engine.wavSamplerInstrumentName
+                    if engine.soundFontLoaded {
+                        let names = engine.soundFontPresetNames
+                        let idx = engine.soundFontCurrentPreset
+                        result["presetName"] = idx < names.count ? names[idx] : ""
+                        result["presetCount"] = names.count
+                        result["filePath"] = engine.soundFontFilePath ?? ""
+                    }
+                }
+            }
+        }
+        return result
     }
 
     private func canonicalTrackStatePayload(trackIndex: Int) -> [String: Any]? {
@@ -1878,6 +1945,39 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return (true, nil)
         }
 
+        // Sampler targets
+        if target == "synth.sampler.mode" {
+            guard let value = modeTextFromAction(action),
+                  value == "soundfont" || value == "wavsampler" else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Sampler mode must be \"soundfont\" or \"wavsampler\""))
+            }
+            return (true, nil)
+        }
+
+        if target == "synth.sampler.preset" {
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Sampler preset must be within [0.0, 1.0] (normalized)"))
+            }
+            return (true, nil)
+        }
+
+        if target == "synth.sampler.attack" || target == "synth.sampler.decay" ||
+           target == "synth.sampler.sustain" || target == "synth.sampler.release" ||
+           target == "synth.sampler.filterCutoff" || target == "synth.sampler.filterResonance" ||
+           target == "synth.sampler.level" {
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Sampler parameter must be within [0.0, 1.0]"))
+            }
+            return (true, nil)
+        }
+
+        if target == "synth.sampler.tuning" {
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Sampler tuning must be within [0.0, 1.0] (0.5 = center)"))
+            }
+            return (true, nil)
+        }
+
         // Drum sequencer targets
         if let drumTarget = parseDrumSequencerTarget(target) {
             return validateDrumSequencerAction(action, target: drumTarget)
@@ -2268,6 +2368,54 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                 changedPaths: ["synth.daisydrum.morph"],
                 additionalEvents: [
                     (type: "synth.param_changed", payload: ["synth": "daisydrum", "param": "morph", "value": value]),
+                ]
+            )
+            return (true, nil)
+        }
+
+        // Sampler mode apply
+        if target == "synth.sampler.mode" {
+            guard let modeStr = modeTextFromAction(action) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Missing mode value"))
+            }
+            let mode: AudioEngineWrapper.SamplerMode = modeStr == "wavsampler" ? .wavSampler : .soundFont
+            DispatchQueue.main.sync {
+                MainActor.assumeIsolated { [weak self] in
+                    self?.audioEngine?.setSamplerMode(mode)
+                }
+            }
+            recordMutation(
+                changedPaths: [target],
+                additionalEvents: [
+                    (type: "synth.sampler_mode_changed", payload: ["mode": modeStr]),
+                ]
+            )
+            return (true, nil)
+        }
+
+        // Sampler apply
+        let samplerParamMap: [String: ParameterID] = [
+            "synth.sampler.preset": .samplerPreset,
+            "synth.sampler.attack": .samplerAttack,
+            "synth.sampler.decay": .samplerDecay,
+            "synth.sampler.sustain": .samplerSustain,
+            "synth.sampler.release": .samplerRelease,
+            "synth.sampler.filterCutoff": .samplerFilterCutoff,
+            "synth.sampler.filterResonance": .samplerFilterResonance,
+            "synth.sampler.tuning": .samplerTuning,
+            "synth.sampler.level": .samplerLevel,
+        ]
+        if let paramId = samplerParamMap[target] {
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                let paramName = String(target.split(separator: ".").last ?? "")
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Sampler \(paramName) must be within [0.0, 1.0]"))
+            }
+            writeSynthMode(parameter: paramId, normalizedValue: Float(value))
+            let paramName = String(target.split(separator: ".").last ?? "")
+            recordMutation(
+                changedPaths: [target],
+                additionalEvents: [
+                    (type: "synth.param_changed", payload: ["synth": "sampler", "param": paramName, "value": value]),
                 ]
             )
             return (true, nil)
@@ -2739,6 +2887,8 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return .both
         case "drums", "daisydrum", "drum":
             return .daisyDrum
+        case "sampler", "soundfont", "sf2":
+            return .sampler
         default:
             return nil
         }
@@ -3581,6 +3731,51 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return readGlobalParameter(id: .daisyDrumTimbre)
         case "synth.daisydrum.morph":
             return readGlobalParameter(id: .daisyDrumMorph)
+        case "synth.sampler":
+            return canonicalSamplerStatePayload()
+        case "synth.sampler.mode":
+            var mode = "soundfont"
+            DispatchQueue.main.sync {
+                MainActor.assumeIsolated { [weak self] in
+                    if self?.audioEngine?.activeSamplerMode == .wavSampler {
+                        mode = "wavsampler"
+                    }
+                }
+            }
+            return mode
+        case "synth.sampler.instrumentName":
+            var name = ""
+            DispatchQueue.main.sync {
+                MainActor.assumeIsolated { [weak self] in
+                    guard let engine = self?.audioEngine else { return }
+                    if engine.activeSamplerMode == .wavSampler {
+                        name = engine.wavSamplerInstrumentName
+                    } else if engine.soundFontLoaded {
+                        let names = engine.soundFontPresetNames
+                        let idx = engine.soundFontCurrentPreset
+                        name = idx < names.count ? names[idx] : ""
+                    }
+                }
+            }
+            return name
+        case "synth.sampler.preset":
+            return readGlobalParameter(id: .samplerPreset)
+        case "synth.sampler.attack":
+            return readGlobalParameter(id: .samplerAttack)
+        case "synth.sampler.decay":
+            return readGlobalParameter(id: .samplerDecay)
+        case "synth.sampler.sustain":
+            return readGlobalParameter(id: .samplerSustain)
+        case "synth.sampler.release":
+            return readGlobalParameter(id: .samplerRelease)
+        case "synth.sampler.filterCutoff":
+            return readGlobalParameter(id: .samplerFilterCutoff)
+        case "synth.sampler.filterResonance":
+            return readGlobalParameter(id: .samplerFilterResonance)
+        case "synth.sampler.tuning":
+            return readGlobalParameter(id: .samplerTuning)
+        case "synth.sampler.level":
+            return readGlobalParameter(id: .samplerLevel)
         case "drums.playing":
             return readDrumSequencerProperty { $0.isPlaying }
         case "drums.syncToTransport":
@@ -3989,6 +4184,8 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                 return (.internalVoice, 9)
             case "hihat", "hi_hat", "hi-hat", "hat":
                 return (.internalVoice, 10)
+            case "sampler", "sample", "sf2", "wav_sampler", "soundfont":
+                return (.internalVoice, 11)
             default:
                 // Fall through to standard resolution
                 break
@@ -4013,6 +4210,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             ["name": "synth_kick", "channel": 8, "sourceType": "internal", "description": "Synth Kick lane only"],
             ["name": "snare", "aliases": ["analog_snare"], "channel": 9, "sourceType": "internal", "description": "Analog Snare lane only"],
             ["name": "hihat", "aliases": ["hi_hat", "hi-hat"], "channel": 10, "sourceType": "internal", "description": "Hi-Hat lane only"],
+            ["name": "sampler", "aliases": ["sample", "sf2", "soundfont"], "channel": 11, "sourceType": "internal", "description": "Sampler output (SF2 or WAV)"],
         ]
     }
 
