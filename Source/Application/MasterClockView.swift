@@ -181,7 +181,7 @@ struct MasterClockView: View {
 
 // MARK: - Clock Output Group Colors (matching drum sequencer step palette)
 
-private struct ClockOutputColors {
+struct ClockOutputColors {
     /// Group colors for outputs 1-2, 3-4, 5-6, 7-8
     static let groupColors: [Color] = [
         Color(red: 0.85, green: 0.20, blue: 0.20),  // Red

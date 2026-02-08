@@ -1,265 +1,112 @@
 # Grainulator
 
-A sophisticated macOS music application combining granular synthesis, wavetable synthesis, and effects processing with extensive hardware controller support.
+A macOS granular/wavetable synthesizer with step sequencer, effects processing, and conversational AI control.
 
 ## Overview
 
-Grainulator is a real-time granular synthesis engine with multi-track capabilities, inspired by the Make Noise Morphagene and the Mangl engine for norns. It features:
+Grainulator is a real-time synthesis workstation combining granular sampling, wavetable synthesis, drum machine, and chord-driven sequencing. It features:
 
-- **Granular Synthesis Engine**: 4 independent voices with Morphagene-inspired controls
-- **Plaits Synthesizer**: 16 synthesis models from Mutable Instruments
-- **Effects Chain**: Tape delay, reverb, and distortion
-- **Multi-View Interface**: Focus, multi-voice, and performance modes
-- **Hardware Integration**: MIDI, Monome Grid (128), and Arc support
-- **Musical Quantization**: Octaves, fifths, custom intervals for harmonic layering
+- **Granular Synthesis Engine**: 4 independent voices with Morphagene-inspired controls (speed, pitch, size, density, jitter, spread, envelope shaping)
+- **Plaits Synthesizer**: 16 synthesis models from Mutable Instruments (virtual analog, FM, wavetable, physical modeling, percussion)
+- **Rings Synthesizer**: 6 resonator models from Mutable Instruments (modal, sympathetic, string, FM voice)
+- **Drum Machine**: 4-lane percussion sequencer using Plaits drum engines with per-lane timbre controls
+- **Step Sequencer**: 2 melodic tracks x 8 steps with probability, ratchets, gate modes, and flexible clock divisions
+- **Chord Sequencer**: 8-step chord progression programmer feeding intervals into the melodic sequencer's scale system
+- **SoundFont Sampler**: SF2/WAV sample playback with ADSR envelope and filter
+- **Effects Chain**: Tape delay (with wow/flutter/sync), reverb, master filter
+- **Modular Mixer**: Per-channel gain/pan/mute/solo, insert effects, send routing, micro-delay, phase invert
+- **Master Clock**: Multi-output clock/LFO modulation system with per-output waveform, division, and destination
+- **Conversational AI Control**: HTTP API on localhost:4850 for ChatGPT/Claude tool-calling integration
+- **Project Save/Load**: Full project serialization with versioned snapshots
+- **MIDI Support**: Note input, CC mapping, pitch bend
 
-## Project Status
+## Building
 
-**Current Phase**: Specification & Planning
-- ✅ Feature specification complete
-- ✅ Architecture documentation complete
-- ✅ API specification complete
-- ✅ UI/UX design complete
-- ✅ Project structure initialized
-- ⏳ Implementation pending
+```bash
+# Build from command line
+swift build
 
-## Documentation
+# Run
+.build/debug/Grainulator
 
-### Core Specifications
-- **[music-app-specification.md](music-app-specification.md)** - Complete feature specification with detailed parameter descriptions
-- **[architecture.md](architecture.md)** - System architecture, threading model, and technical design
-- **[api-specification.md](api-specification.md)** - API documentation for C++, Swift, and controller protocols
-- **[ui-design-specification.md](ui-design-specification.md)** - UI/UX design guidelines and component specifications
+# Or open in Xcode
+open Package.swift
+```
 
-### Key Features
+## Testing
 
-#### Granular Synthesis Engine
-- **Hierarchical Structure**: Reels → Splices → Grains
-- **Core Parameters**: Slide, Gene Size, Morph, Varispeed, Organize, Pitch
-- **Extended Parameters**: Spread, Jitter, Filter (cutoff & resonance)
-- **Multi-Track**: 4 independent granular voices
-- **Recording**: Live input, Sound-on-Sound overdubbing
-- **Musical Quantization**: Octaves, octaves+fifths, chromatic, custom intervals
-
-#### Plaits Synthesizer
-- **16 Synthesis Models**: Virtual analog, FM, wavetable, physical modeling, percussion
-- **Modulation**: Internal LFO and ADSR envelope
-- **Dual Outputs**: Main and auxiliary outputs
-
-#### Effects
-- **Tape Delay**: With wow/flutter and tape saturation
-- **Reverb**: Algorithmic plate/hall with adjustable decay and damping
-- **Distortion**: Multiple algorithms (tape, tube, fuzz, bit crushing)
-
-#### User Interface
-- **Multi-Voice View**: See all voices simultaneously
-- **Focus View**: Full-width single voice with all parameters visible
-- **Performance View**: Minimal UI with scene recall and large visual feedback
-- **Dark Theme**: Eye-strain reducing color scheme
-
-#### Controllers
-- **MIDI**: Learn mode, CC mapping, note input with quantization
-- **Monome Grid 128**: Custom pages for granular, synthesis, mixer
-- **Monome Arc**: 4-encoder control with visual LED feedback
+```bash
+swift test
+```
 
 ## Project Structure
 
 ```
-grainulator/
-├── README.md                          # This file
-├── music-app-specification.md          # Feature specification
-├── architecture.md                     # Architecture documentation
-├── api-specification.md                # API documentation
-├── ui-design-specification.md          # UI/UX design spec
-│
-├── Source/                             # Source code
-│   ├── Audio/                          # C++ audio engine
-│   │   ├── Core/                       # Core audio infrastructure
-│   │   ├── Granular/                   # Granular synthesis engine
-│   │   ├── Plaits/                     # Plaits synthesizer (ported)
-│   │   ├── Effects/                    # Effects processors
-│   │   └── Mixer/                      # Mixer and routing
+Grainulator/
+├── Source/
+│   ├── Audio/                          # C++ real-time audio engine
+│   │   ├── Core/                       # Audio infrastructure, command queue
+│   │   ├── Synthesis/                  # Plaits, Rings, granular engines
+│   │   ├── Effects/                    # Delay, reverb, filter, inserts
+│   │   └── Mixer/                      # Mixer routing and metering
 │   │
 │   ├── Application/                    # Swift application layer
-│   │   ├── Models/                     # Data models
-│   │   ├── ViewModels/                 # View models
-│   │   └── Services/                   # Business logic services
+│   │   ├── GrainulatorApp.swift        # App entry point, subsystem wiring
+│   │   ├── ContentView.swift           # Main layout
+│   │   ├── Models/                     # ProjectManager, ProjectSerializer, ProjectSnapshot
+│   │   ├── Services/                   # ConversationalControlBridge, MIDI
+│   │   ├── SequencerEngine.swift       # Step sequencer clock + state
+│   │   ├── ChordSequencerEngine.swift  # Chord progression sequencer
+│   │   ├── DrumSequencer.swift         # Drum machine sequencer
+│   │   ├── MasterClock.swift           # Clock/LFO modulation system
+│   │   └── Views/                      # SwiftUI views (Sequencer, Mixer, Synth, etc.)
 │   │
-│   ├── UI/                             # SwiftUI user interface
-│   │   ├── Views/                      # Main views
-│   │   ├── Components/                 # Reusable UI components
-│   │   └── Visualizations/             # Waveform, meters, etc.
-│   │
-│   └── Controllers/                    # Controller integration
-│       ├── MIDI/                       # MIDI controller support
-│       └── Monome/                     # Grid and Arc support
+│   └── BridgingHeader.h               # C++/Swift interop
 │
-├── Resources/                          # Application resources
-│   ├── Assets/                         # Images, icons, colors
-│   ├── Presets/                        # Factory presets
-│   ├── Samples/                        # Demo audio samples
-│   └── Documentation/                  # Additional docs
+├── Resources/                          # Samples, SoundFonts, presets
+├── Tests/                              # Unit tests
+├── scripts/                            # Test and utility scripts
 │
-├── Tests/                              # Test suites
-│   ├── AudioEngineTests/               # Audio engine unit tests
-│   ├── ApplicationTests/               # Application logic tests
-│   ├── UITests/                        # UI automation tests
-│   └── IntegrationTests/               # End-to-end tests
-│
-├── Build/                              # Build outputs
-└── Tools/                              # Development tools & scripts
+├── ai-conversational-control-spec.md   # AI control system architecture
+├── ai-conversational-control-api-spec.md # API endpoint specification
+├── ai-conversational-control-openapi.yaml # OpenAPI 3.1.0 schema
+└── CLAUDE.md                           # Claude Code project instructions
 ```
+
+## Architecture
+
+### Audio Engine (C++)
+- Real-time DSP with lock-free command queue
+- No allocations, locks, or blocking calls on the audio thread
+- Granular synthesis, Plaits/Rings ports, effects processing, mixer routing
+
+### Application Layer (Swift/SwiftUI)
+- `@MainActor`-isolated state objects (`AudioEngineWrapper`, `StepSequencer`, `MasterClock`, `MixerState`, etc.)
+- Minimoog-inspired dark UI with knob controls
+- Project save/load with versioned JSON snapshots (currently version 4)
+
+### Conversational Control Bridge
+- HTTP/1.1 + WebSocket server on `127.0.0.1:4850`
+- Bearer token session auth, idempotency keys, validate-then-schedule action model
+- Canonical state snapshots, action bundles, event stream
+- See `ai-conversational-control-api-spec.md` for full endpoint documentation
 
 ## Technology Stack
 
-### Core Technologies
-- **Platform**: macOS 12.0+
+- **Platform**: macOS 13.0+
 - **Languages**: Swift 5.9+ (UI/App), C++17 (Audio)
-- **Audio**: CoreAudio, AudioUnit
 - **UI**: SwiftUI
+- **Audio**: CoreAudio, AVFoundation
 - **MIDI**: CoreMIDI
-- **Grid/Arc**: serialosc (OSC protocol)
-
-### Frameworks & Dependencies
-- **Accelerate.framework** - SIMD DSP operations
-- **AVFoundation** - Audio file I/O
-- **CoreMIDI** - MIDI communication
-- **SwiftOSC** - OSC messaging for Monome devices
-- **Mutable Instruments Plaits** - Synthesis engine (MIT license)
-
-### Development Tools
-- **Xcode** 15.0+
-- **Swift Package Manager** - Dependency management
-- **Instruments** - Performance profiling
-- **Git** - Version control
-
-## Getting Started
-
-### Prerequisites
-- macOS 12.0 (Monterey) or later
-- Xcode 15.0 or later
-- Audio interface (recommended for low latency)
-- Optional: MIDI controller, Monome Grid, Monome Arc
-
-### Building (Future)
-```bash
-# Clone the repository
-git clone <repository-url>
-cd grainulator
-
-# Open in Xcode
-open Grainulator.xcodeproj
-
-# Or build from command line
-xcodebuild -scheme Grainulator -configuration Release
-```
-
-### Running Tests (Future)
-```bash
-# Run all tests
-xcodebuild test -scheme Grainulator
-
-# Run specific test suite
-xcodebuild test -scheme Grainulator -only-testing:AudioEngineTests
-```
-
-## Development Roadmap
-
-### Phase 1: Core Audio & Synthesis (Planned)
-- [ ] Basic macOS application scaffold
-- [ ] CoreAudio setup and audio I/O
-- [ ] Plaits synthesizer port and integration
-- [ ] Basic UI for Plaits control
-
-### Phase 2: Granular Engine (Planned)
-- [ ] Audio file loading and buffer management
-- [ ] Basic granular synthesis engine
-- [ ] Morphagene-inspired parameter implementation
-- [ ] Waveform display and buffer navigation UI
-- [ ] Multi-track architecture
-- [ ] Musical quantization system
-
-### Phase 3: Effects & Mixer (Planned)
-- [ ] Tape delay implementation
-- [ ] Reverb implementation
-- [ ] Distortion implementation
-- [ ] Mixer with routing and metering
-
-### Phase 4: File Management (Planned)
-- [ ] Project save/load system
-- [ ] Preset management for each voice
-- [ ] Audio file import/export
-- [ ] Settings persistence
-
-### Phase 5: Controller Integration (Planned)
-- [ ] MIDI keyboard input and learn system
-- [ ] Monome Grid integration and layout implementation
-- [ ] Monome Arc integration
-- [ ] Controller configuration UI
-
-### Phase 6: Polish & Optimization (Planned)
-- [ ] UI refinement and visual design
-- [ ] Performance optimization
-- [ ] Testing and bug fixes
-- [ ] Documentation and user manual
-
-## Architecture Highlights
-
-### Threading Model
-- **Main Thread**: UI, file I/O, controller communication
-- **Audio Thread**: Real-time processing (lock-free, allocation-free)
-- **Background Thread**: File loading, preset scanning, bouncing
-- **Display Link Thread**: 60Hz UI updates
-
-### Lock-Free Communication
-- Command queue: Main → Audio thread
-- Response queue: Audio → Main thread
-- No mutexes or locks in audio processing path
-
-### Memory Architecture
-- Pre-allocated grain pools (128 grains per voice)
-- Circular buffers for reels (up to 32 × 2.5 minutes)
-- Zero allocation in real-time path
-
-### Performance Targets
-- **CPU Usage**: <25% (full configuration on M1)
-- **Latency**: <10ms round-trip at 48kHz/128 buffer
-- **Grain Polyphony**: Up to 64 concurrent grains
-
-## License
-
-To be determined. Project uses the following open-source components:
-
-- **Mutable Instruments Plaits**: MIT License
-  - Source: https://github.com/pichenettes/eurorack
-  - Copyright (c) 2014-2023 Émilie Gillet
-
-## Contributing
-
-This project is currently in the specification phase. Contribution guidelines will be established once implementation begins.
-
-## Contact & Support
-
-- **Issues**: [To be set up on GitHub]
-- **Discussions**: [To be set up on GitHub]
-- **Documentation**: See `/Resources/Documentation/` for additional guides
+- **Build**: Swift Package Manager
+- **Synthesis**: Mutable Instruments Plaits + Rings (MIT license)
 
 ## Acknowledgments
 
-### Inspiration
-- **Make Noise Morphagene** - Hardware granular processor by Tony Rolando
-- **Mangl** - Norns granular sampler by @justmat
-- **Mutable Instruments Plaits** - Macro oscillator by Émilie Gillet
-- **Monome** - Grid and Arc controllers
-
-### Similar Projects
-- **Morphagene** (hardware)
-- **Mangl** (norns/lua)
-- **Granulator** (Max/MSP)
-- **PaulStretch** (extreme time-stretching)
+- **Mutable Instruments Plaits/Rings** by Emilie Gillet (MIT License)
+- **Make Noise Morphagene** — granular synthesis inspiration
+- **Mangl** (norns) — granular sampler inspiration
 
 ---
 
-**Version**: 1.0.0-spec
-**Status**: Specification Complete
-**Last Updated**: 2026-02-01
+**Last Updated**: 2026-02-06

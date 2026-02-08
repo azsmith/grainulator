@@ -161,7 +161,16 @@ Canonical state is the single source of truth for all controllable domains.
     "bar": 17,
     "beat": 2.5
   },
-  "sequencer": {},
+  "sequencer": {
+    "chords": {
+      "enabled": true,
+      "clockDivision": "x1",
+      "steps": [
+        {"step": 1, "degree": "I", "quality": "maj", "active": true, "displayName": "I", "notes": ["C", "E", "G"]},
+        {"step": 2, "degree": "V", "quality": "maj", "active": true, "displayName": "V", "notes": ["G", "B", "D"]}
+      ]
+    }
+  },
   "synth": {},
   "granular": {},
   "loop": {},

@@ -400,7 +400,6 @@ class MonomeArcManager: ObservableObject {
 
         // Stepped rate: accumulate ticks and step by semitones
         if case .steppedRate = mapping {
-            NSLog("[Arc] steppedRate: delta=%d accum=%d semitone=%d", delta, rateTickAccumulator, rateSemitone)
             rateTickAccumulator += delta
             let steps = rateTickAccumulator / ticksPerSemitone
             if steps != 0 {

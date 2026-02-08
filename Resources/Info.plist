@@ -16,9 +16,21 @@
     <string>APPL</string>
     <key>CFBundleExecutable</key>
     <string>Grainulator</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Grainulator needs microphone access to record audio from external inputs (mic, line in) into the granular and looper engines.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.music</string>
+    <key>NSSupportsAutomaticTermination</key>
+    <false/>
+    <key>NSSupportsSuddenTermination</key>
+    <false/>
 </dict>
 </plist>

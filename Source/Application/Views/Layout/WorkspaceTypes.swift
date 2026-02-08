@@ -7,9 +7,10 @@
 
 import SwiftUI
 
-// MARK: - Workspace Tab (Top Section)
+// MARK: - Workspace Tab
 
 enum WorkspaceTab: String, CaseIterable, Identifiable {
+    case sequencer = "SEQUENCER"
     case synths = "SYNTHS"
     case granular = "GRANULAR"
     case drums = "DRUMS"
@@ -18,6 +19,7 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
+        case .sequencer: return "clock"
         case .synths: return "waveform"
         case .granular: return "waveform.path"
         case .drums: return "drum.fill"
@@ -26,6 +28,7 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
 
     var shortName: String {
         switch self {
+        case .sequencer: return "SEQ"
         case .synths: return "SYN"
         case .granular: return "GRN"
         case .drums: return "DRM"
@@ -34,32 +37,10 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
 
     var accentColor: Color {
         switch self {
+        case .sequencer: return ColorPalette.ledAmber
         case .synths: return ColorPalette.accentPlaits
         case .granular: return ColorPalette.accentGranular1
         case .drums: return ColorPalette.accentDaisyDrum
-        }
-    }
-}
-
-// MARK: - Master Control Tab (Bottom Section)
-
-enum MasterControlTab: String, CaseIterable, Identifiable {
-    case timing = "TIMING"
-    case mixer = "MIXER"
-
-    var id: String { rawValue }
-
-    var icon: String {
-        switch self {
-        case .timing: return "clock"
-        case .mixer: return "slider.horizontal.3"
-        }
-    }
-
-    var accentColor: Color {
-        switch self {
-        case .timing: return ColorPalette.ledAmber
-        case .mixer: return ColorPalette.accentMaster
         }
     }
 }
@@ -68,14 +49,7 @@ enum MasterControlTab: String, CaseIterable, Identifiable {
 
 class WorkspaceLayoutState: ObservableObject {
     @Published var currentTab: WorkspaceTab = .synths
-    @Published var currentBottomTab: MasterControlTab = .mixer
-    @Published var isMixerCollapsed: Bool = false
-    @Published var mixerHeight: CGFloat = 380
-
-    // Master control section heights
-    static let masterControlHeightFull: CGFloat = 380
-    static let masterControlHeightCompact: CGFloat = 260
-    static let masterControlHeightCollapsed: CGFloat = 40
+    @Published var isMixerWindowOpen: Bool = false
 
     func selectTab(_ tab: WorkspaceTab) {
         withAnimation(.easeInOut(duration: 0.2)) {
@@ -83,24 +57,8 @@ class WorkspaceLayoutState: ObservableObject {
         }
     }
 
-    func selectBottomTab(_ tab: MasterControlTab) {
-        withAnimation(.easeInOut(duration: 0.2)) {
-            currentBottomTab = tab
-        }
-    }
-
-    func toggleMixerCollapsed() {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-            isMixerCollapsed.toggle()
-            mixerHeight = isMixerCollapsed ? Self.masterControlHeightCollapsed : Self.masterControlHeightFull
-        }
-    }
-
-    func setMixerHeight(_ height: CGFloat) {
-        withAnimation(.easeOut(duration: 0.15)) {
-            mixerHeight = height
-            isMixerCollapsed = height <= Self.masterControlHeightCollapsed
-        }
+    func toggleMixerWindow() {
+        isMixerWindowOpen.toggle()
     }
 }
 

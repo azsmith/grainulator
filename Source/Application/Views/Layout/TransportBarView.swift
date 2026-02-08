@@ -2,7 +2,7 @@
 //  TransportBarView.swift
 //  Grainulator
 //
-//  Transport controls and workspace tab navigation bar
+//  Transport controls, clock outputs, workspace tab navigation, and status bar
 //
 
 import SwiftUI
@@ -16,6 +16,9 @@ struct TransportBarView: View {
     @EnvironmentObject var sequencer: StepSequencer
     @EnvironmentObject var drumSequencer: DrumSequencer
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var audioEngine: AudioEngineWrapper
+    @EnvironmentObject var mixerState: MixerState
+    @EnvironmentObject var pluginManager: AUPluginManager
 
     @State private var tapTimestamps: [Date] = []
     @State private var isEditingBPM: Bool = false
@@ -35,6 +38,14 @@ struct TransportBarView: View {
                 // Left section: Transport controls
                 transportSection
                     .frame(width: 240)
+
+                // Divider
+                Rectangle()
+                    .fill(ColorPalette.divider)
+                    .frame(width: 1)
+
+                // Clock outputs
+                clockOutputsSection
 
                 // Divider
                 Rectangle()
@@ -149,6 +160,17 @@ struct TransportBarView: View {
         )
     }
 
+    // MARK: - Clock Outputs Section
+
+    private var clockOutputsSection: some View {
+        HStack(spacing: 2) {
+            ForEach(0..<8, id: \.self) { index in
+                CompactClockOutputPad(output: masterClock.outputs[index], index: index)
+            }
+        }
+        .padding(.horizontal, 8)
+    }
+
     // MARK: - Tab Navigation Section
 
     private var tabNavigationSection: some View {
@@ -191,19 +213,26 @@ struct TransportBarView: View {
                 }
             }
 
-            // Mixer toggle/collapse button
-            Button(action: { layoutState.toggleMixerCollapsed() }) {
-                Image(systemName: layoutState.isMixerCollapsed ? "rectangle.expand.vertical" : "rectangle.compress.vertical")
+            // Mixer window toggle button
+            Button(action: {
+                MixerWindowManager.shared.toggle(
+                    mixerState: mixerState,
+                    audioEngine: audioEngine,
+                    pluginManager: pluginManager,
+                    layoutState: layoutState
+                )
+            }) {
+                Image(systemName: "slider.horizontal.3")
                     .font(.system(size: 14))
-                    .foregroundColor(ColorPalette.textMuted)
+                    .foregroundColor(layoutState.isMixerWindowOpen ? ColorPalette.accentMaster : ColorPalette.textMuted)
                     .frame(width: 28, height: 28)
                     .background(
                         RoundedRectangle(cornerRadius: 4)
-                            .fill(ColorPalette.backgroundTertiary)
+                            .fill(layoutState.isMixerWindowOpen ? ColorPalette.accentMaster.opacity(0.2) : ColorPalette.backgroundTertiary)
                     )
             }
             .buttonStyle(.plain)
-            .help(layoutState.isMixerCollapsed ? "Expand mixer" : "Collapse mixer")
+            .help(layoutState.isMixerWindowOpen ? "Close mixer window" : "Open mixer window")
         }
         .padding(.horizontal, 12)
     }
@@ -243,15 +272,15 @@ struct WorkspaceTabButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
                 Image(systemName: tab.icon)
-                    .font(.system(size: 12))
+                    .font(.system(size: 11))
 
-                Text(tab.rawValue)
+                Text(tab.shortName)
                     .font(Typography.buttonStandard)
             }
             .foregroundColor(isSelected ? .white : (isHovering ? tab.accentColor : ColorPalette.textMuted))
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 6)

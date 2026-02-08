@@ -83,7 +83,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [sequencer, synth, granular, loop, fx, files, transport]
+            enum: [sequencer, synth, granular, loop, fx, files, transport, chords, drums]
       responses:
         '200':
           description: Parameter metadata
@@ -658,6 +658,17 @@ components:
         sequencer:
           type: object
           additionalProperties: true
+          description: |
+            Sequencer state including melodic tracks, drum sequencer, and chord sequencer.
+            Contains sub-objects:
+            - tracks: array of track state (2 melodic tracks, 8 steps each)
+            - drums: drum sequencer state (4 lanes, 16 steps each)
+            - chords: chord progression sequencer (8 steps)
+              - enabled: boolean
+              - clockDivision: string (e.g. "x1", "1/4")
+              - steps: array of { step, degree, quality, active, displayName, notes }
+              Degrees: I, bII, ii, bIII, iii, IV, bV, V, bVI, vi, bVII, vii
+              Qualities: maj, min, dim, aug, sus2, sus4, pow, maj7, min7, dom7, hdim7, fdim7, dom9, maj9, min9, dom11, dom13
         synth:
           type: object
           additionalProperties: true

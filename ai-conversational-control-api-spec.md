@@ -90,6 +90,25 @@ This API defines how a conversational client (for example, ChatGPT or Claude con
 }
 ```
 
+Example for chords module:
+
+```json
+{
+  "module": "chords",
+  "description": "8-step chord progression sequencer",
+  "actions": ["set", "toggle"],
+  "paths": [
+    "sequencer.chords.enabled",
+    "sequencer.chords.clockDivision",
+    "sequencer.chords.preset",
+    "sequencer.chords.step<1-8>.degree",
+    "sequencer.chords.step<1-8>.quality",
+    "sequencer.chords.step<1-8>.active",
+    "sequencer.chords.step<1-8>.clear"
+  ]
+}
+```
+
 ### 4.2 ParameterSpec
 
 ```json

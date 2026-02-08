@@ -166,6 +166,17 @@ curl -s -X POST http://127.0.0.1:4850/v1/actions/schedule \
 | `sequencer.track<1\|2>.step<1-8>.gateMode` | string | EVERY, FIRST, LAST, TIE, REST |
 | `sequencer.track<1\|2>.step<1-8>.stepType` | string | PLAY, SKIP, ELIDE, REST, TIE |
 
+### Chord Sequencer (8-step chord progression)
+| Target Pattern | Type | Values |
+|---------------|------|--------|
+| `sequencer.chords.enabled` | bool | true/false |
+| `sequencer.chords.clockDivision` | string | 1/16, 1/8, 1/4, 1/2, x1, x2, x3, x4, x8, x16 etc. |
+| `sequencer.chords.preset` | string | pop, jazz, blues, emotional |
+| `sequencer.chords.step<1-8>.degree` | string | I, bII, ii, bIII, iii, IV, bV, V, bVI, vi, bVII, vii |
+| `sequencer.chords.step<1-8>.quality` | string | maj, min, dim, aug, sus2, sus4, pow, maj7, min7, dom7, hdim7, fdim7, dom9, maj9, min9, dom11, dom13 |
+| `sequencer.chords.step<1-8>.active` | bool | true/false |
+| `sequencer.chords.step<1-8>.clear` | trigger | (clears degree and quality) |
+
 ### Recording Control (dedicated endpoints, not action bundles)
 
 ```bash
