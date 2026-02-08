@@ -26,12 +26,6 @@ struct ProMasterStripView: View {
             Divider()
                 .background(ColorPalette.divider)
 
-            // Effects returns
-            effectsReturnsSection
-
-            Divider()
-                .background(ColorPalette.divider)
-
             // Master fader with stereo bar meters
             faderSection
 
@@ -155,7 +149,7 @@ struct ProMasterStripView: View {
                     ),
                     segments: 12,
                     width: 5,
-                    height: showNeedleMeter ? 100 : 80
+                    height: 120
                 )
 
                 if showNeedleMeter {
@@ -166,7 +160,7 @@ struct ProMasterStripView: View {
                 ProFaderView(
                     value: $master.gain,
                     accentColor: ColorPalette.accentMaster,
-                    size: .large,
+                    size: .xlarge,
                     showScale: false,
                     isMuted: master.isMuted
                 )
@@ -184,7 +178,7 @@ struct ProMasterStripView: View {
                     ),
                     segments: 12,
                     width: 5,
-                    height: showNeedleMeter ? 100 : 80
+                    height: 120
                 )
             }
 
@@ -215,7 +209,7 @@ struct ProMasterStripView: View {
                 Text(label)
                     .font(Typography.vuScale)
                     .foregroundColor(label == "0" ? ColorPalette.accentMaster : ColorPalette.textDimmed)
-                    .frame(height: 100 / 7)
+                    .frame(height: 120 / 7)
             }
         }
         .frame(width: 24)

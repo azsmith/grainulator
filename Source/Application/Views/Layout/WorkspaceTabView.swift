@@ -17,6 +17,10 @@ struct WorkspaceTabView: View {
         ZStack {
             // Keep all tab views alive so @State is preserved when switching tabs.
             // Only the selected tab is visible; others are hidden but retain their state.
+            SequencerTabView()
+                .opacity(layoutState.currentTab == .sequencer ? 1 : 0)
+                .allowsHitTesting(layoutState.currentTab == .sequencer)
+
             SynthsTabView()
                 .opacity(layoutState.currentTab == .synths ? 1 : 0)
                 .allowsHitTesting(layoutState.currentTab == .synths)
@@ -30,6 +34,50 @@ struct WorkspaceTabView: View {
                 .allowsHitTesting(layoutState.currentTab == .drums)
         }
         .animation(.easeInOut(duration: 0.2), value: layoutState.currentTab)
+    }
+}
+
+// MARK: - Sequencer Tab View
+
+struct SequencerTabView: View {
+    @EnvironmentObject var masterClock: MasterClock
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Compact swing bar
+            swingBar
+
+            Divider()
+                .background(ColorPalette.divider)
+
+            // Full sequencer view
+            ScrollView {
+                SequencerView()
+                    .padding(20)
+            }
+        }
+    }
+
+    private var swingBar: some View {
+        HStack(spacing: 8) {
+            Text("SWING")
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundColor(ColorPalette.textDimmed)
+
+            Slider(value: $masterClock.swing, in: 0...1)
+                .tint(ColorPalette.ledAmber)
+                .frame(width: 80)
+
+            Text(String(format: "%.0f%%", masterClock.swing * 100))
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundColor(ColorPalette.textMuted)
+                .frame(width: 32, alignment: .trailing)
+
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 6)
+        .background(ColorPalette.backgroundSecondary)
     }
 }
 
@@ -181,70 +229,6 @@ struct GranularVoiceTabButton: View {
 struct DrumsTabView: View {
     var body: some View {
         DrumSequencerView()
-    }
-}
-
-// MARK: - Collapsed Mixer Bar
-
-struct CollapsedMixerBar: View {
-    @ObservedObject var mixerState: MixerState
-    let onExpand: () -> Void
-
-    var body: some View {
-        HStack(spacing: 8) {
-            // Mini meters for each channel
-            ForEach(mixerState.channels) { channel in
-                VStack(spacing: 2) {
-                    // Mini meter
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(
-                            LinearGradient(
-                                colors: [ColorPalette.vuGreen, ColorPalette.vuYellow, ColorPalette.vuRed],
-                                startPoint: .bottom,
-                                endPoint: .top
-                            )
-                        )
-                        .frame(width: 4, height: 20)
-                        .mask(
-                            VStack {
-                                Spacer()
-                                Rectangle()
-                                    .frame(height: 20 * CGFloat(channel.meterLevel))
-                            }
-                        )
-
-                    // Mute indicator
-                    Circle()
-                        .fill(channel.isMuted ? ColorPalette.ledRed : ColorPalette.ledOff)
-                        .frame(width: 6, height: 6)
-                }
-            }
-
-            Spacer()
-
-            // Master level
-            HStack(spacing: 4) {
-                Text("MASTER")
-                    .font(Typography.parameterLabelSmall)
-                    .foregroundColor(ColorPalette.textDimmed)
-
-                Text(mixerState.master.gainDB)
-                    .font(Typography.valueSmall)
-                    .foregroundColor(ColorPalette.accentMaster)
-                    .monospacedDigit()
-            }
-
-            // Expand button
-            Button(action: onExpand) {
-                Image(systemName: "chevron.up")
-                    .font(.system(size: 12))
-                    .foregroundColor(ColorPalette.textMuted)
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(ColorPalette.backgroundSecondary)
     }
 }
 

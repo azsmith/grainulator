@@ -244,13 +244,13 @@ struct ProChannelStripView: View {
                     ),
                     segments: 10,
                     width: 5,
-                    height: 80
+                    height: 120
                 )
 
                 ProFaderView(
                     value: $channel.gain,
                     accentColor: channel.accentColor,
-                    size: .medium,
+                    size: .xlarge,
                     showScale: false,
                     isMuted: channel.isMuted
                 )
