@@ -67,10 +67,10 @@ Comprehensive code review findings, ordered by severity.
 
 ## Low
 
-### 12. Magic numbers in audio processing
+### 12. ~~Magic numbers in audio processing~~ FIXED
 **File:** `Source/Audio/Core/AudioEngine.cpp`
-**Issue:** Values like `0.95f`, `0.05f` (level smoothing), `0.3f` (delay time default), etc. are unexplained.
-**Fix:** Define named constants.
+**Issue:** Level smoothing constants `0.95f` / `0.05f` used in 4 places without explanation.
+**Fix:** Extracted to named constants `kMeterDecay` / `kMeterAttack` with documenting comment.
 
 ### 13. ~~Inconsistent channel naming~~ FIXED
 **File:** `Source/Application/LooperView.swift:396`

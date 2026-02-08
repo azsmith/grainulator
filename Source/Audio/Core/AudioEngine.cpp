@@ -41,11 +41,14 @@
 #include <pmmintrin.h>  // _MM_SET_DENORMALS_ZERO_MODE
 #endif
 
-#if defined(__aarch64__) || defined(__arm64__)
-#include <fenv.h>
-#endif
+// ARM64 flushes denormals to zero by default — no extra includes needed.
 
 namespace Grainulator {
+
+// Level meter smoothing: ~50ms decay at 48kHz with 512-sample buffers
+// smoothed = current * kMeterDecay + target * (1 - kMeterDecay)
+constexpr float kMeterDecay = 0.95f;
+constexpr float kMeterAttack = 1.0f - kMeterDecay;
 
 AudioEngine::AudioEngine()
     : m_sampleRate(kSampleRate)
@@ -1123,14 +1126,14 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
         if (target > current) {
             m_channelLevels[i].store(target);
         } else {
-            m_channelLevels[i].store(current * 0.95f + target * 0.05f);
+            m_channelLevels[i].store(current * kMeterDecay + target * kMeterAttack);
         }
     }
 
     float currentL = m_masterLevelL.load();
     float currentR = m_masterLevelR.load();
-    m_masterLevelL.store(masterPeakL > currentL ? masterPeakL : currentL * 0.95f + masterPeakL * 0.05f);
-    m_masterLevelR.store(masterPeakR > currentR ? masterPeakR : currentR * 0.95f + masterPeakR * 0.05f);
+    m_masterLevelL.store(masterPeakL > currentL ? masterPeakL : currentL * kMeterDecay + masterPeakL * kMeterAttack);
+    m_masterLevelR.store(masterPeakR > currentR ? masterPeakR : currentR * kMeterDecay + masterPeakR * kMeterAttack);
 
     m_activeGrains.store(totalActiveGrains);
     m_currentSampleTime.store(bufferEndSample, std::memory_order_relaxed);
@@ -1437,7 +1440,7 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
         if (target > current) {
             m_channelLevels[i].store(target);
         } else {
-            m_channelLevels[i].store(current * 0.95f + target * 0.05f);
+            m_channelLevels[i].store(current * kMeterDecay + target * kMeterAttack);
         }
     }
 
