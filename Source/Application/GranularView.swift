@@ -33,7 +33,6 @@ struct GranularView: View {
 
     // State
     @State private var isPlaying: Bool = false
-    @State private var showAdvanced: Bool = false
     @State private var isDragOver: Bool = false
     @State private var loadedFileName: String?
 
@@ -96,7 +95,7 @@ struct GranularView: View {
                         Button("Looper 1") { recordSourceType = .internalVoice; recordSourceChannel = 3 }
                         Button("Looper 2") { recordSourceType = .internalVoice; recordSourceChannel = 4 }
                         if voiceIndex != 3 {
-                            Button("Granular 4") { recordSourceType = .internalVoice; recordSourceChannel = 5 }
+                            Button("Granular 2") { recordSourceType = .internalVoice; recordSourceChannel = 5 }
                         }
                     }
                     Section("Sampler") {
@@ -299,24 +298,6 @@ struct GranularView: View {
 
             ConsoleSectionDivider(accentColor: ColorPalette.dividerSubtle)
 
-            // Advanced toggle
-            Button(action: {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    showAdvanced.toggle()
-                }
-            }) {
-                HStack {
-                    Image(systemName: showAdvanced ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10))
-                    Text("ADVANCED")
-                        .font(Typography.parameterLabel)
-                }
-                .foregroundColor(ColorPalette.textDimmed)
-            }
-            .buttonStyle(.plain)
-
-            // Extended parameters (collapsible)
-            if showAdvanced {
                 HStack(spacing: 10) {
                     ProKnobView(
                         value: $jitter,
@@ -491,8 +472,6 @@ struct GranularView: View {
                         }
                     }
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
         }
         .padding(16)
         } // end ConsoleModuleView
@@ -507,6 +486,15 @@ struct GranularView: View {
         }
         .onChange(of: arcManager.shiftEncoderValues) { _ in
             syncFromEngine()
+        }
+        .onChange(of: recordSourceType) { _ in
+            audioEngine.setRecordingSource(reelIndex: voiceIndex, mode: recordMode, sourceType: recordSourceType, sourceChannel: recordSourceChannel)
+        }
+        .onChange(of: recordSourceChannel) { _ in
+            audioEngine.setRecordingSource(reelIndex: voiceIndex, mode: recordMode, sourceType: recordSourceType, sourceChannel: recordSourceChannel)
+        }
+        .onChange(of: recordMode) { _ in
+            audioEngine.setRecordingSource(reelIndex: voiceIndex, mode: recordMode, sourceType: recordSourceType, sourceChannel: recordSourceChannel)
         }
     }
 

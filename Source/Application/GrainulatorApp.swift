@@ -81,7 +81,7 @@ struct GrainulatorApp: App {
                     conversationalBridge.start(audioEngine: audioEngine, masterClock: masterClock, sequencer: sequencer, drumSequencer: drumSequencer, chordSequencer: chordSequencer)
                     setupMIDICallbacks()
                     arcManager.connect(audioEngine: audioEngine, appState: appState)
-                    gridManager.connect(sequencer: sequencer, chordSequencer: chordSequencer, masterClock: masterClock)
+                    gridManager.connect(sequencer: sequencer, chordSequencer: chordSequencer, masterClock: masterClock, audioEngine: audioEngine, appState: appState)
                 }
         }
         .windowResizability(.contentMinSize)

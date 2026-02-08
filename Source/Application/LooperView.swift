@@ -63,7 +63,7 @@ struct LooperView: View {
                         if voiceIndex != 2 {
                             Button("Looper 2") { recordSourceType = .internalVoice; recordSourceChannel = 4 }
                         }
-                        Button("Granular 4") { recordSourceType = .internalVoice; recordSourceChannel = 5 }
+                        Button("Granular 2") { recordSourceType = .internalVoice; recordSourceChannel = 5 }
                     }
                     Section("Sampler") {
                         Button("Sampler") { recordSourceType = .internalVoice; recordSourceChannel = 11 }
@@ -286,6 +286,15 @@ struct LooperView: View {
         }
         .onReceive(audioEngine.objectWillChange) { _ in
             syncFromEngine()
+        }
+        .onChange(of: recordSourceType) { _ in
+            audioEngine.setRecordingSource(reelIndex: voiceIndex, mode: recordMode, sourceType: recordSourceType, sourceChannel: recordSourceChannel)
+        }
+        .onChange(of: recordSourceChannel) { _ in
+            audioEngine.setRecordingSource(reelIndex: voiceIndex, mode: recordMode, sourceType: recordSourceType, sourceChannel: recordSourceChannel)
+        }
+        .onChange(of: recordMode) { _ in
+            audioEngine.setRecordingSource(reelIndex: voiceIndex, mode: recordMode, sourceType: recordSourceType, sourceChannel: recordSourceChannel)
         }
     }
 

@@ -1728,6 +1728,24 @@ class AudioEngineWrapper: ObservableObject {
         )
     }
 
+    /// Update recording source preferences for a reel (persists across tab switches).
+    func setRecordingSource(reelIndex: Int, mode: RecordMode, sourceType: RecordSourceType, sourceChannel: Int) {
+        if var state = recordingStates[reelIndex] {
+            state.mode = mode
+            state.sourceType = sourceType
+            state.sourceChannel = sourceChannel
+            recordingStates[reelIndex] = state
+        } else {
+            recordingStates[reelIndex] = RecordingUIState(
+                isRecording: false,
+                mode: mode,
+                sourceType: sourceType,
+                sourceChannel: sourceChannel,
+                feedback: 0.0
+            )
+        }
+    }
+
     /// Stop recording for a reel
     func stopRecording(reelIndex: Int) {
         guard let handle = cppEngineHandle else { return }

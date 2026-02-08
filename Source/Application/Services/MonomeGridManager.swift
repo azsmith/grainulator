@@ -96,15 +96,25 @@ class MonomeGridManager: ObservableObject {
     private weak var sequencer: StepSequencer?
     private weak var chordSequencer: ChordSequencer?
     private weak var masterClock: MasterClock?
+    private weak var audioEngine: AudioEngineWrapper?
+    private weak var appState: AppState?
     private var cancellables = Set<AnyCancellable>()
+
+    /// Voice indices for the 4 granular/looper voices in grid row order.
+    private let voiceIndices: [Int] = [0, 3, 1, 2]  // G1, G2, L1, L2
+
+    /// Local tracking of per-voice playing state (toggled by grid buttons).
+    private var voicePlaying: [Int: Bool] = [:]
 
     // MARK: - Lifecycle
 
     /// Connect the Grid manager to sequencer subsystems.
-    func connect(sequencer: StepSequencer, chordSequencer: ChordSequencer, masterClock: MasterClock) {
+    func connect(sequencer: StepSequencer, chordSequencer: ChordSequencer, masterClock: MasterClock, audioEngine: AudioEngineWrapper? = nil, appState: AppState? = nil) {
         self.sequencer = sequencer
         self.chordSequencer = chordSequencer
         self.masterClock = masterClock
+        self.audioEngine = audioEngine
+        self.appState = appState
 
         observeStateChanges()
         startDiscovery()
@@ -421,18 +431,24 @@ class MonomeGridManager: ObservableObject {
             activeTrack = .track2
         case 2: // Chords
             activeTrack = .chords
-        case 4: // Play
-            sequencer?.start()
-        case 5: // Stop
-            sequencer?.stop()
-        case 6: // Reset
+        case 4: // Play/Stop toggle
+            if sequencer?.isPlaying == true {
+                sequencer?.stop()
+            } else {
+                sequencer?.start()
+            }
+        case 5: // Reset
             sequencer?.reset()
+        case 6: // G1 Record toggle
+            toggleRecording(voiceIndex: voiceIndices[0])
+        case 7: // G1 Play toggle
+            togglePlaying(voiceIndex: voiceIndices[0])
         default:
             break
         }
     }
 
-    /// Row 1: Track mutes + Octave up/down
+    /// Row 1: Track mutes + Octave up/down + G2 Rec/Play
     private func handleRow1Press(panelCol: Int) {
         switch panelCol {
         case 0: // Mute Track 1
@@ -448,22 +464,27 @@ class MonomeGridManager: ObservableObject {
             adjustOctave(direction: 1)
         case 5: // Octave Down
             adjustOctave(direction: -1)
+        case 6: // G2 Record toggle
+            toggleRecording(voiceIndex: voiceIndices[1])
+        case 7: // G2 Play toggle
+            togglePlaying(voiceIndex: voiceIndices[1])
         default:
             break
         }
     }
 
-    /// Row 2: Ratchets (Track 1/2) or Triad qualities (Chords)
+    /// Row 2: Ratchets (Track 1/2) or Triad qualities (Chords) + L1 Rec/Play
     private func handleRow2Press(panelCol: Int) {
+        if panelCol == 6 { toggleRecording(voiceIndex: voiceIndices[2]); return }
+        if panelCol == 7 { togglePlaying(voiceIndex: voiceIndices[2]); return }
+
         switch activeTrack {
         case .track1, .track2:
             if panelCol >= 0, panelCol <= 3 {
-                // Ratchets 1-4 for the target step
                 let targetStep = heldStepColumns.first ?? selectedStep
                 sequencer?.setStageRatchets(track: activeTrack.rawValue, stage: targetStep, value: panelCol + 1)
             }
         case .chords:
-            // Chord triads (cols 8-14 = panelCol 0-6)
             if panelCol < chordTriadQualities.count {
                 let targetStep = heldStepColumns.first ?? selectedStep
                 chordSequencer?.setQuality(targetStep, chordTriadQualities[panelCol])
@@ -471,16 +492,12 @@ class MonomeGridManager: ObservableObject {
         }
     }
 
-    /// Row 3: Probability bar (Track 1/2) or Seventh qualities (Chords)
+    /// Row 3: L2 Rec/Play + Seventh qualities (Chords only)
     private func handleRow3Press(panelCol: Int) {
-        switch activeTrack {
-        case .track1, .track2:
-            // Probability: panelCol 0-7 maps to 12.5%-100%
-            let prob = Double(panelCol + 1) / 8.0
-            let targetStep = heldStepColumns.first ?? selectedStep
-            sequencer?.setStageProbability(track: activeTrack.rawValue, stage: targetStep, value: prob)
-        case .chords:
-            // Seventh chord qualities
+        if panelCol == 6 { toggleRecording(voiceIndex: voiceIndices[3]); return }
+        if panelCol == 7 { togglePlaying(voiceIndex: voiceIndices[3]); return }
+
+        if case .chords = activeTrack {
             if panelCol < chordSeventhQualities.count {
                 let targetStep = heldStepColumns.first ?? selectedStep
                 chordSequencer?.setQuality(targetStep, chordSeventhQualities[panelCol])
@@ -566,6 +583,41 @@ class MonomeGridManager: ObservableObject {
         let trackIdx = activeTrack.rawValue
         let current = seq.trackOctaveOffset(trackIdx)
         seq.setTrackOctaveOffset(trackIdx, current + direction)
+    }
+
+    /// Toggle recording for a granular/looper voice.
+    private func toggleRecording(voiceIndex: Int) {
+        guard let engine = audioEngine else { return }
+        let isRec = engine.recordingStates[voiceIndex]?.isRecording ?? false
+        if isRec {
+            engine.stopRecording(reelIndex: voiceIndex)
+        } else {
+            // Reuse previous recording settings if available
+            if let prev = engine.recordingStates[voiceIndex] {
+                engine.startRecording(
+                    reelIndex: voiceIndex,
+                    mode: prev.mode,
+                    sourceType: prev.sourceType,
+                    sourceChannel: prev.sourceChannel
+                )
+            } else {
+                // First time: default to Plaits internal source
+                let isLooper = (voiceIndex == 1 || voiceIndex == 2)
+                let mode: AudioEngineWrapper.RecordMode = isLooper ? .liveLoop : .oneShot
+                engine.startRecording(reelIndex: voiceIndex, mode: mode, sourceType: .internalVoice, sourceChannel: 0)
+            }
+        }
+    }
+
+    /// Toggle playback for a granular/looper voice.
+    private func togglePlaying(voiceIndex: Int) {
+        guard let engine = audioEngine else { return }
+        let isPlaying = voicePlaying[voiceIndex] ?? false
+        let newState = !isPlaying
+        voicePlaying[voiceIndex] = newState
+        engine.setGranularPlaying(voiceIndex: voiceIndex, playing: newState)
+        // Also switch to this voice tab in the UI
+        appState?.focusVoice(voiceIndex)
     }
 
     // MARK: - LED Rendering
@@ -721,6 +773,14 @@ class MonomeGridManager: ObservableObject {
     }
 
     /// Row 0: Track selection + Transport
+    /// Render Rec (col 14) and Play (col 15) LEDs for a voice on the given row.
+    private func renderVoiceRecPlay(row: Int, voiceIndex: Int) {
+        let isRec = audioEngine?.recordingStates[voiceIndex]?.isRecording ?? false
+        let isPlay = voicePlaying[voiceIndex] ?? false
+        ledBuffer[row][14] = isRec ? 15 : 4     // Rec: bright when recording
+        ledBuffer[row][15] = isPlay ? 15 : 4    // Play: bright when playing
+    }
+
     private func renderRow0() {
         let isPlaying = sequencer?.isPlaying ?? false
 
@@ -730,12 +790,14 @@ class MonomeGridManager: ObservableObject {
         ledBuffer[0][10] = (activeTrack == .chords) ? 15 : 4
 
         // Transport
-        ledBuffer[0][12] = isPlaying ? 15 : 4    // Play
-        ledBuffer[0][13] = isPlaying ? 4 : 15    // Stop
-        ledBuffer[0][14] = 4                      // Reset (always dim, flashes handled separately)
+        ledBuffer[0][12] = isPlaying ? 15 : 4    // Play toggle
+        ledBuffer[0][13] = 4                      // Reset
+
+        // G1 Rec / Play
+        renderVoiceRecPlay(row: 0, voiceIndex: voiceIndices[0])
     }
 
-    /// Row 1: Mutes + Octave up/down
+    /// Row 1: Mutes + Octave up/down + G2 Rec/Play
     private func renderRow1() {
         // Track mutes
         ledBuffer[1][8]  = (sequencer?.tracks[0].muted ?? false) ? 15 : 0
@@ -751,9 +813,12 @@ class MonomeGridManager: ObservableObject {
             ledBuffer[1][12] = 0
             ledBuffer[1][13] = 0
         }
+
+        // G2 Rec / Play
+        renderVoiceRecPlay(row: 1, voiceIndex: voiceIndices[1])
     }
 
-    /// Row 2 (Track mode): Ratchets
+    /// Row 2 (Track mode): Ratchets + L1 Rec/Play
     private func renderRow2Track() {
         guard let seq = sequencer else { return }
         let trackIdx = activeTrack.rawValue
@@ -766,29 +831,19 @@ class MonomeGridManager: ObservableObject {
         for i in 0..<4 {
             ledBuffer[2][8 + i] = (i < ratchets) ? 15 : 4
         }
+
+        // L1 Rec / Play
+        renderVoiceRecPlay(row: 2, voiceIndex: voiceIndices[2])
     }
 
-    /// Row 3 (Track mode): Probability bar
+    /// Row 3 (Track mode): L2 Rec/Play (probability removed)
     private func renderRow3Track() {
-        guard let seq = sequencer else { return }
-        let trackIdx = activeTrack.rawValue
-        let step = heldStepColumns.first ?? selectedStep
-        guard trackIdx < seq.tracks.count, step < seq.tracks[trackIdx].stages.count else { return }
-
-        let prob = seq.tracks[trackIdx].stages[step].probability
-        let fillCount = prob * 8.0
-
-        for i in 0..<8 {
-            let fi = Double(i)
-            if fi + 1.0 <= fillCount {
-                ledBuffer[3][8 + i] = 12
-            } else if fi < fillCount {
-                let frac = fillCount - fi
-                ledBuffer[3][8 + i] = UInt8(max(2, Int(frac * 12.0)))
-            } else {
-                ledBuffer[3][8 + i] = 2
-            }
+        // Clear cols 8-13 (probability removed)
+        for i in 8..<14 {
+            ledBuffer[3][i] = 0
         }
+        // L2 Rec / Play
+        renderVoiceRecPlay(row: 3, voiceIndex: voiceIndices[3])
     }
 
     /// Row 4 (Track mode): Step type
@@ -819,7 +874,7 @@ class MonomeGridManager: ObservableObject {
         }
     }
 
-    /// Row 2 (Chord mode): Triad qualities
+    /// Row 2 (Chord mode): Triad qualities + L1 Rec/Play
     private func renderRow2Chords() {
         guard let chordSeq = chordSequencer else { return }
         let step = heldStepColumns.first ?? selectedStep
@@ -830,9 +885,12 @@ class MonomeGridManager: ObservableObject {
         for (i, qId) in chordTriadQualities.enumerated() {
             ledBuffer[2][8 + i] = (qId == currentQuality) ? 15 : 4
         }
+
+        // L1 Rec / Play
+        renderVoiceRecPlay(row: 2, voiceIndex: voiceIndices[2])
     }
 
-    /// Row 3 (Chord mode): Seventh qualities
+    /// Row 3 (Chord mode): Seventh qualities + L2 Rec/Play
     private func renderRow3Chords() {
         guard let chordSeq = chordSequencer else { return }
         let step = heldStepColumns.first ?? selectedStep
@@ -843,6 +901,9 @@ class MonomeGridManager: ObservableObject {
         for (i, qId) in chordSeventhQualities.enumerated() {
             ledBuffer[3][8 + i] = (qId == currentQuality) ? 15 : 4
         }
+
+        // L2 Rec / Play
+        renderVoiceRecPlay(row: 3, voiceIndex: voiceIndices[3])
     }
 
     /// Row 4 (Chord mode): Extended qualities

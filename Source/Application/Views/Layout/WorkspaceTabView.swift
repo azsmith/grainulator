@@ -77,9 +77,9 @@ struct GranularTabView: View {
 
     private let voiceTabs: [VoiceTab] = [
         VoiceTab(id: 0, name: "GRAN 1", icon: "waveform", accentColor: ColorPalette.accentGranular1),
+        VoiceTab(id: 3, name: "GRAN 2", icon: "waveform", accentColor: ColorPalette.accentGranular4),
         VoiceTab(id: 1, name: "LOOPER 1", icon: "repeat", accentColor: ColorPalette.accentLooper1),
         VoiceTab(id: 2, name: "LOOPER 2", icon: "repeat", accentColor: ColorPalette.accentLooper2),
-        VoiceTab(id: 3, name: "GRAN 4", icon: "waveform", accentColor: ColorPalette.accentGranular4),
     ]
 
     var body: some View {
