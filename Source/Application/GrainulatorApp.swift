@@ -20,6 +20,8 @@ struct GrainulatorApp: App {
     @StateObject private var conversationalBridge = ConversationalControlBridge()
     @StateObject private var drumSequencer = DrumSequencer()
     @StateObject private var chordSequencer = ChordSequencer()
+    @StateObject private var arcManager = MonomeArcManager()
+    @StateObject private var gridManager = MonomeGridManager()
 
     var body: some Scene {
         WindowGroup {
@@ -34,6 +36,8 @@ struct GrainulatorApp: App {
                 .environmentObject(projectManager)
                 .environmentObject(drumSequencer)
                 .environmentObject(chordSequencer)
+                .environmentObject(arcManager)
+                .environmentObject(gridManager)
                 .frame(minWidth: 1200, minHeight: 600)
                 .onAppear {
                     // Ensure we get a proper menu bar when launched from terminal
@@ -76,6 +80,8 @@ struct GrainulatorApp: App {
                     )
                     conversationalBridge.start(audioEngine: audioEngine, masterClock: masterClock, sequencer: sequencer, drumSequencer: drumSequencer, chordSequencer: chordSequencer)
                     setupMIDICallbacks()
+                    arcManager.connect(audioEngine: audioEngine, appState: appState)
+                    gridManager.connect(sequencer: sequencer, chordSequencer: chordSequencer, masterClock: masterClock)
                 }
         }
         .windowResizability(.contentMinSize)

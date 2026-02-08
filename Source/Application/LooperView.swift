@@ -30,6 +30,9 @@ struct LooperView: View {
     @State private var recordSourceChannel: Int = 0
     @State private var recordFeedback: Float = 0.5  // Default 50% feedback for looper
 
+    /// Periodic sync from engine (recording state, loop bounds changed externally).
+    private let stateSyncTimer = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
+
     private let rateOptions: [Float] = [0.25, 0.5, 1.0, 1.5, 2.0]
     private let cutCount = 8
 
@@ -276,9 +279,13 @@ struct LooperView: View {
         .padding(16)
         } // end ConsoleModuleView
         .onAppear {
-            sendRate()
-            sendReverse()
-            sendLoopBounds()
+            syncFromEngine()
+        }
+        .onReceive(stateSyncTimer) { _ in
+            syncFromEngine()
+        }
+        .onReceive(audioEngine.objectWillChange) { _ in
+            syncFromEngine()
         }
     }
 
@@ -287,6 +294,32 @@ struct LooperView: View {
             return String(format: "x%.0f", value)
         }
         return String(format: "x%.2g", value)
+    }
+
+    private func syncFromEngine() {
+        let engineStart = audioEngine.getParameter(id: .looperLoopStart, voiceIndex: voiceIndex)
+        let engineEnd = audioEngine.getParameter(id: .looperLoopEnd, voiceIndex: voiceIndex)
+        loopStart = engineStart
+        loopEnd = max(engineEnd, engineStart)
+
+        let engineRate = audioEngine.getParameter(id: .looperRate, voiceIndex: voiceIndex)
+        // Denormalize: normalized = (rate - 0.25) / 1.75
+        let denormalized = engineRate * 1.75 + 0.25
+        rate = denormalized
+
+        let engineReverse = audioEngine.getParameter(id: .looperReverse, voiceIndex: voiceIndex)
+        isReverse = engineReverse > 0.5
+
+        // Sync recording state from engine (may have been toggled by Arc tap or API)
+        if let recState = audioEngine.recordingStates[voiceIndex] {
+            if recState.isRecording != isRecording { isRecording = recState.isRecording }
+            if recState.mode != recordMode { recordMode = recState.mode }
+            if recState.sourceType != recordSourceType { recordSourceType = recState.sourceType }
+            if recState.sourceChannel != recordSourceChannel { recordSourceChannel = recState.sourceChannel }
+            if abs(recState.feedback - recordFeedback) > 0.001 { recordFeedback = recState.feedback }
+        } else if isRecording {
+            isRecording = false
+        }
     }
 
     private func sendRate() {

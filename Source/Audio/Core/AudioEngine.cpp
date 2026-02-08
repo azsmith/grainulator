@@ -2277,6 +2277,37 @@ float AudioEngine::getParameter(ParameterID id, int voiceIndex) const {
         case ParameterID::DaisyDrumMorph: return clamp01(m_daisyDrumMorph);
         case ParameterID::DaisyDrumLevel: return clamp01(m_daisyDrumLevel);
 
+        // Looper readbacks (tracks 2 & 3)
+        case ParameterID::LooperRate: {
+            const int lv = (voiceIndex == 1 || voiceIndex == 2) ? (voiceIndex - 1) : -1;
+            if (lv >= 0 && lv < kNumLooperVoices && m_looperVoices[lv]) {
+                // Inverse of set: rate = 0.25 + normalized * 1.75  =>  normalized = (rate - 0.25) / 1.75
+                return clamp01((m_looperVoices[lv]->GetRate() - 0.25f) / 1.75f);
+            }
+            return 0.0f;
+        }
+        case ParameterID::LooperReverse: {
+            const int lv = (voiceIndex == 1 || voiceIndex == 2) ? (voiceIndex - 1) : -1;
+            if (lv >= 0 && lv < kNumLooperVoices && m_looperVoices[lv]) {
+                return m_looperVoices[lv]->GetReverse() ? 1.0f : 0.0f;
+            }
+            return 0.0f;
+        }
+        case ParameterID::LooperLoopStart: {
+            const int lv = (voiceIndex == 1 || voiceIndex == 2) ? (voiceIndex - 1) : -1;
+            if (lv >= 0 && lv < kNumLooperVoices && m_looperVoices[lv]) {
+                return clamp01(m_looperVoices[lv]->GetLoopStart());
+            }
+            return 0.0f;
+        }
+        case ParameterID::LooperLoopEnd: {
+            const int lv = (voiceIndex == 1 || voiceIndex == 2) ? (voiceIndex - 1) : -1;
+            if (lv >= 0 && lv < kNumLooperVoices && m_looperVoices[lv]) {
+                return clamp01(m_looperVoices[lv]->GetLoopEnd());
+            }
+            return 0.0f;
+        }
+
         // SoundFont sampler parameters
         case ParameterID::SamplerPreset: {
             if (!m_soundFontVoice) return 0.0f;

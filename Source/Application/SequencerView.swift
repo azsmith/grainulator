@@ -11,6 +11,7 @@ import SwiftUI
 struct SequencerView: View {
     @EnvironmentObject var sequencer: StepSequencer
     @EnvironmentObject var chordSequencer: ChordSequencer
+    @EnvironmentObject var gridManager: MonomeGridManager
 
     var body: some View {
         ConsoleModuleView(
@@ -30,6 +31,9 @@ struct SequencerView: View {
             .padding(12)
         }
         .environment(\.colorScheme, .dark)
+        .onChange(of: gridManager.activeTrack) { _ in
+            // Grid switched tracks — UI can respond (e.g. scroll to track)
+        }
     }
 
     // MARK: - Compact Header (Single Line)

@@ -11,6 +11,7 @@ import AppKit
 
 struct GranularView: View {
     @EnvironmentObject var audioEngine: AudioEngineWrapper
+    @EnvironmentObject var arcManager: MonomeArcManager
     let voiceIndex: Int
 
     // Core Mangl parameters
@@ -501,6 +502,12 @@ struct GranularView: View {
         .onReceive(stateSyncTimer) { _ in
             syncFromEngine()
         }
+        .onChange(of: arcManager.encoderValues) { _ in
+            syncFromEngine()
+        }
+        .onChange(of: arcManager.shiftEncoderValues) { _ in
+            syncFromEngine()
+        }
     }
 
     // MARK: - File Handling
@@ -615,6 +622,17 @@ struct GranularView: View {
 
         let engineReverse = audioEngine.getParameter(id: .granularReverse, voiceIndex: voiceIndex) >= 0.5
         if engineReverse != reverseGrains { reverseGrains = engineReverse }
+
+        // Sync recording state from engine (may have been toggled by Arc tap or API)
+        if let recState = audioEngine.recordingStates[voiceIndex] {
+            if recState.isRecording != isRecording { isRecording = recState.isRecording }
+            if recState.mode != recordMode { recordMode = recState.mode }
+            if recState.sourceType != recordSourceType { recordSourceType = recState.sourceType }
+            if recState.sourceChannel != recordSourceChannel { recordSourceChannel = recState.sourceChannel }
+            if abs(recState.feedback - recordFeedback) > 0.001 { recordFeedback = recState.feedback }
+        } else if isRecording {
+            isRecording = false
+        }
     }
 }
 

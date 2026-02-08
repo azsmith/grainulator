@@ -15,13 +15,13 @@ let package = Package(
         ),
     ],
     dependencies: [
-        // Add dependencies here as needed
+        .package(url: "https://github.com/orchetect/OSCKit", from: "2.1.0"),
     ],
     targets: [
         // Main application target
         .executableTarget(
             name: "Grainulator",
-            dependencies: ["GrainulatorCore"],
+            dependencies: ["GrainulatorCore", .product(name: "OSCKit", package: "OSCKit")],
             path: "Source/Application",
             exclude: [],
             swiftSettings: [
