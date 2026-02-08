@@ -1,0 +1,85 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f0f0f"/>
+      <stop offset="100%" stop-color="#1c1c1c"/>
+    </linearGradient>
+    <linearGradient id="solidGrad" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0%" stop-color="#ff6a3d"/>
+      <stop offset="55%" stop-color="#e04520"/>
+      <stop offset="100%" stop-color="#c22a0a"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.42" cy="0.45" r="0.55">
+      <stop offset="0%" stop-color="#ff8855" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#ff8855" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="iconClip">
+      <rect width="1024" height="1024" rx="228" ry="228"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#iconClip)">
+    <!-- Background -->
+    <rect width="1024" height="1024" fill="url(#bg)"/>
+    <rect width="1024" height="1024" fill="url(#glow)"/>
+
+    <!-- Main solid circle - bigger and more centered -->
+    <circle cx="460" cy="512" r="290" fill="url(#solidGrad)"/>
+
+    <!-- Subtle highlight on main shape -->
+    <ellipse cx="400" cy="420" rx="110" ry="70" fill="rgba(255,255,255,0.04)"/>
+    <circle cx="460" cy="512" r="290" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="1.5"/>
+
+    <!-- GRAINS - Layer 1: Large grains just detaching from edge -->
+    <circle cx="730" cy="370" r="18" fill="#ff6a3d" opacity="0.95"/>
+    <circle cx="740" cy="430" r="16" fill="#e04520" opacity="0.92"/>
+    <circle cx="745" cy="500" r="20" fill="#e04520" opacity="0.9"/>
+    <circle cx="738" cy="565" r="14" fill="#d93a15" opacity="0.88"/>
+    <circle cx="725" cy="625" r="17" fill="#e04520" opacity="0.9"/>
+    <circle cx="710" cy="320" r="13" fill="#ff6a3d" opacity="0.92"/>
+    <circle cx="715" cy="680" r="15" fill="#c22a0a" opacity="0.85"/>
+    <circle cx="700" cy="280" r="11" fill="#ff6a3d" opacity="0.88"/>
+    <circle cx="695" cy="730" r="12" fill="#c22a0a" opacity="0.82"/>
+
+    <!-- Layer 2: Medium grains dispersing -->
+    <circle cx="775" cy="390" r="11" fill="#e04520" opacity="0.75"/>
+    <circle cx="785" cy="460" r="9" fill="#d93a15" opacity="0.7"/>
+    <circle cx="780" cy="530" r="12" fill="#e04520" opacity="0.68"/>
+    <circle cx="790" cy="590" r="8" fill="#c22a0a" opacity="0.65"/>
+    <circle cx="770" cy="650" r="10" fill="#d93a15" opacity="0.6"/>
+    <circle cx="760" cy="340" r="9" fill="#ff6a3d" opacity="0.7"/>
+    <circle cx="755" cy="710" r="8" fill="#c22a0a" opacity="0.55"/>
+    <circle cx="750" cy="270" r="7" fill="#ff6a3d" opacity="0.6"/>
+    <circle cx="765" cy="300" r="8" fill="#ff6a3d" opacity="0.65"/>
+
+    <!-- Layer 3: Smaller grains further out -->
+    <circle cx="820" cy="410" r="7" fill="#e04520" opacity="0.5"/>
+    <circle cx="830" cy="480" r="5.5" fill="#d93a15" opacity="0.45"/>
+    <circle cx="825" cy="550" r="6" fill="#e04520" opacity="0.42"/>
+    <circle cx="835" cy="610" r="4.5" fill="#c22a0a" opacity="0.4"/>
+    <circle cx="810" cy="670" r="5.5" fill="#d93a15" opacity="0.35"/>
+    <circle cx="805" cy="355" r="5" fill="#ff6a3d" opacity="0.45"/>
+    <circle cx="800" cy="730" r="4" fill="#c22a0a" opacity="0.3"/>
+    <circle cx="795" cy="300" r="5" fill="#ff6a3d" opacity="0.4"/>
+    <circle cx="815" cy="250" r="4" fill="#ff6a3d" opacity="0.32"/>
+
+    <!-- Layer 4: Tiny grains - far dispersal -->
+    <circle cx="860" cy="430" r="4" fill="#e04520" opacity="0.32"/>
+    <circle cx="870" cy="500" r="3" fill="#d93a15" opacity="0.28"/>
+    <circle cx="865" cy="570" r="3.5" fill="#e04520" opacity="0.25"/>
+    <circle cx="855" cy="640" r="2.8" fill="#c22a0a" opacity="0.22"/>
+    <circle cx="850" cy="370" r="3" fill="#ff6a3d" opacity="0.28"/>
+    <circle cx="845" cy="700" r="2.5" fill="#c22a0a" opacity="0.2"/>
+    <circle cx="858" cy="320" r="3" fill="#ff6a3d" opacity="0.25"/>
+
+    <!-- Layer 5: Dust particles -->
+    <circle cx="895" cy="450" r="2.5" fill="#e04520" opacity="0.2"/>
+    <circle cx="905" cy="520" r="2" fill="#d93a15" opacity="0.16"/>
+    <circle cx="900" cy="580" r="1.8" fill="#c22a0a" opacity="0.14"/>
+    <circle cx="890" cy="400" r="2" fill="#ff6a3d" opacity="0.18"/>
+    <circle cx="885" cy="660" r="1.5" fill="#c22a0a" opacity="0.12"/>
+    <circle cx="910" cy="490" r="1.5" fill="#e04520" opacity="0.12"/>
+    <circle cx="898" cy="350" r="1.8" fill="#ff6a3d" opacity="0.14"/>
+    <circle cx="920" cy="540" r="1.2" fill="#d93a15" opacity="0.1"/>
+  </g>
+</svg>
