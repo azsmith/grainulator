@@ -329,6 +329,7 @@ class AudioEngineWrapper: ObservableObject {
 
     @Published var recordingStates: [Int: RecordingUIState] = [:]
     @Published var recordingPositions: [Int: Float] = [:]
+    @Published var playingStates: [Int: Bool] = [:]
 
     // MARK: - Audio Graph Mode
 
@@ -1693,6 +1694,7 @@ class AudioEngineWrapper: ObservableObject {
     func setGranularPlaying(voiceIndex: Int, playing: Bool) {
         guard let handle = cppEngineHandle else { return }
         AudioEngine_SetGranularPlaying(handle, Int32(voiceIndex), playing)
+        playingStates[voiceIndex] = playing
     }
 
     /// Seeks to a position in the granular voice (0-1)

@@ -319,6 +319,10 @@ struct LooperView: View {
         let engineReverse = audioEngine.getParameter(id: .looperReverse, voiceIndex: voiceIndex)
         isReverse = engineReverse > 0.5
 
+        // Sync playing state from engine
+        let enginePlaying = audioEngine.playingStates[voiceIndex] ?? false
+        if enginePlaying != isPlaying { isPlaying = enginePlaying }
+
         // Sync recording state from engine (may have been toggled by Arc tap or API)
         if let recState = audioEngine.recordingStates[voiceIndex] {
             if recState.isRecording != isRecording { isRecording = recState.isRecording }
