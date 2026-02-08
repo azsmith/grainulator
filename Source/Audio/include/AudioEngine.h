@@ -416,6 +416,11 @@ private:
     // Processing buffers
     float* m_processingBuffer[2];
     float* m_voiceBuffer[2];  // Temp buffer for individual voice rendering
+    float m_tempVoiceL[kMaxBufferSize];  // Pre-allocated temp buffer for voice rendering (avoids stack allocation)
+    float m_tempVoiceR[kMaxBufferSize];
+    float m_tempDrumSeq[kMaxBufferSize]; // Pre-allocated temp buffer for drum seq rendering
+    static constexpr int kMaxOutputChannels = 16;
+    float* m_chunkOutputPtrs[kMaxOutputChannels];  // Pre-allocated pointer array for chunked processing
 
     // Polyphonic Plaits voices
     std::unique_ptr<PlaitsVoice> m_plaitsVoices[kNumPlaitsVoices];

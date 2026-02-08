@@ -31,10 +31,18 @@
 #include <algorithm>
 #include <chrono>
 #include <thread>
-#include <vector>
 
 #if defined(__APPLE__)
 #include <pthread.h>
+#endif
+
+#if defined(__x86_64__) || defined(__i386__)
+#include <xmmintrin.h>  // _MM_SET_FLUSH_ZERO_MODE
+#include <pmmintrin.h>  // _MM_SET_DENORMALS_ZERO_MODE
+#endif
+
+#if defined(__aarch64__) || defined(__arm64__)
+#include <fenv.h>
 #endif
 
 namespace Grainulator {
@@ -205,6 +213,14 @@ bool AudioEngine::initialize(int sampleRate, int bufferSize) {
     if (m_initialized.load()) {
         return false;
     }
+
+    // Flush denormalized floats to zero to prevent CPU spikes in recursive
+    // filters (reverb, delay feedback, master filter). ARM64 does this by
+    // default; x86 needs explicit MXCSR flags.
+#if defined(__x86_64__) || defined(__i386__)
+    _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
+    _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
+#endif
 
     m_sampleRate = sampleRate;
     m_bufferSize = bufferSize;
@@ -600,14 +616,14 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
     if (numFrames > kMaxBufferSize) {
         // Hosts can request larger render quanta. Process in fixed-size chunks so
         // timing/sample counters continue to advance instead of returning silence.
+        const int clampedChannels = std::min(numChannels, kMaxOutputChannels);
         int frameOffset = 0;
         while (frameOffset < numFrames) {
             const int chunkFrames = std::min(kMaxBufferSize, numFrames - frameOffset);
-            std::vector<float*> chunkOutputs(static_cast<size_t>(numChannels), nullptr);
-            for (int ch = 0; ch < numChannels; ++ch) {
-                chunkOutputs[static_cast<size_t>(ch)] = outputBuffers[ch] + frameOffset;
+            for (int ch = 0; ch < clampedChannels; ++ch) {
+                m_chunkOutputPtrs[ch] = outputBuffers[ch] + frameOffset;
             }
-            process(inputBuffers, chunkOutputs.data(), numChannels, chunkFrames);
+            process(inputBuffers, m_chunkOutputPtrs, clampedChannels, chunkFrames);
             frameOffset += chunkFrames;
         }
         return;
@@ -654,10 +670,16 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
         enqueueScheduledEvent(futureEvents[i]);
     }
 
-    std::sort(dueEvents.begin(), dueEvents.begin() + dueEventCount,
-        [](const ScheduledNoteEvent& a, const ScheduledNoteEvent& b) {
-            return a.sampleTime < b.sampleTime;
-        });
+    // Insertion sort — no allocations, O(n^2) is fine for small event counts
+    for (int i = 1; i < dueEventCount; ++i) {
+        ScheduledNoteEvent key = dueEvents[i];
+        int j = i - 1;
+        while (j >= 0 && dueEvents[j].sampleTime > key.sampleTime) {
+            dueEvents[j + 1] = dueEvents[j];
+            --j;
+        }
+        dueEvents[j + 1] = key;
+    }
 
     // Check if any channel is soloed
     bool anySoloed = false;
@@ -719,13 +741,12 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
 
             for (int v = 0; v < kNumPlaitsVoices; ++v) {
                 if (m_plaitsVoices[v]) {
-                    float tempL[kMaxBufferSize], tempR[kMaxBufferSize];
-                    std::memset(tempL, 0, frameCount * sizeof(float));
-                    std::memset(tempR, 0, frameCount * sizeof(float));
-                    m_plaitsVoices[v]->Render(tempL, tempR, frameCount);
+                    std::memset(m_tempVoiceL, 0, frameCount * sizeof(float));
+                    std::memset(m_tempVoiceR, 0, frameCount * sizeof(float));
+                    m_plaitsVoices[v]->Render(m_tempVoiceL, m_tempVoiceR, frameCount);
                     for (int i = 0; i < frameCount; ++i) {
-                        m_voiceBuffer[0][i] += tempL[i];
-                        m_voiceBuffer[1][i] += tempR[i];
+                        m_voiceBuffer[0][i] += m_tempVoiceL[i];
+                        m_voiceBuffer[1][i] += m_tempVoiceR[i];
                     }
                 }
             }
@@ -901,16 +922,15 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
 
             // Render drum sequencer voices and sum into the same buffer
             {
-                float drumSeqTemp[kMaxBufferSize];
                 for (int lane = 0; lane < kNumDrumSeqLanes; ++lane) {
                     if (m_drumSeqVoices[lane]) {
-                        std::memset(drumSeqTemp, 0, frameCount * sizeof(float));
-                        m_drumSeqVoices[lane]->Render(drumSeqTemp, nullptr, frameCount);
+                        std::memset(m_tempDrumSeq, 0, frameCount * sizeof(float));
+                        m_drumSeqVoices[lane]->Render(m_tempDrumSeq, nullptr, frameCount);
                         // Record per-lane: channel 7=Kick, 8=SynthKick, 9=Snare, 10=HiHat
-                        processRecordingForChannel(7 + lane, drumSeqTemp, drumSeqTemp, frameCount);
+                        processRecordingForChannel(7 + lane, m_tempDrumSeq, m_tempDrumSeq, frameCount);
                         for (int i = 0; i < frameCount; ++i) {
-                            m_voiceBuffer[0][i] += drumSeqTemp[i];
-                            m_voiceBuffer[1][i] += drumSeqTemp[i];
+                            m_voiceBuffer[0][i] += m_tempDrumSeq[i];
+                            m_voiceBuffer[1][i] += m_tempDrumSeq[i];
                         }
                     }
                 }
@@ -1122,14 +1142,8 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
     // Outputs 6 separate stereo channels without mixing or effects
     // All mixing, effects, and routing are handled by Swift-side AVAudioEngine
 
-    static int uninitCounter = 0;
     if (!m_initialized.load()) {
         // Not initialized - output silence
-        if (++uninitCounter % 200 == 1) {
-            printf("[processMultiChannel] SKIPPING - initialized=%d numFrames=%d\n",
-                   m_initialized.load() ? 1 : 0, numFrames);
-            fflush(stdout);
-        }
         for (int ch = 0; ch < kNumMixerChannels * 2; ++ch) {
             if (channelBuffers[ch]) {
                 std::memset(channelBuffers[ch], 0, numFrames * sizeof(float));
@@ -1194,10 +1208,16 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
         enqueueScheduledEvent(futureEvents[i]);
     }
 
-    std::sort(dueEvents.begin(), dueEvents.begin() + dueEventCount,
-        [](const ScheduledNoteEvent& a, const ScheduledNoteEvent& b) {
-            return a.sampleTime < b.sampleTime;
-        });
+    // Insertion sort — no allocations, O(n^2) is fine for small event counts
+    for (int i = 1; i < dueEventCount; ++i) {
+        ScheduledNoteEvent key = dueEvents[i];
+        int j = i - 1;
+        while (j >= 0 && dueEvents[j].sampleTime > key.sampleTime) {
+            dueEvents[j + 1] = dueEvents[j];
+            --j;
+        }
+        dueEvents[j + 1] = key;
+    }
 
     float channelPeaks[kNumMixerChannels] = {0.0f};
     int totalActiveGrains = 0;
@@ -1213,13 +1233,12 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
 
             for (int v = 0; v < kNumPlaitsVoices; ++v) {
                 if (m_plaitsVoices[v]) {
-                    float tempL[kMaxBufferSize], tempR[kMaxBufferSize];
-                    std::memset(tempL, 0, frameCount * sizeof(float));
-                    std::memset(tempR, 0, frameCount * sizeof(float));
-                    m_plaitsVoices[v]->Render(tempL, tempR, frameCount);
+                    std::memset(m_tempVoiceL, 0, frameCount * sizeof(float));
+                    std::memset(m_tempVoiceR, 0, frameCount * sizeof(float));
+                    m_plaitsVoices[v]->Render(m_tempVoiceL, m_tempVoiceR, frameCount);
                     for (int i = 0; i < frameCount; ++i) {
-                        m_voiceBuffer[0][i] += tempL[i];
-                        m_voiceBuffer[1][i] += tempR[i];
+                        m_voiceBuffer[0][i] += m_tempVoiceL[i];
+                        m_voiceBuffer[1][i] += m_tempVoiceR[i];
                     }
                 }
             }
@@ -1315,16 +1334,15 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
 
             // Render drum sequencer voices and sum into the same buffer
             {
-                float drumSeqTemp[kMaxBufferSize];
                 for (int lane = 0; lane < kNumDrumSeqLanes; ++lane) {
                     if (m_drumSeqVoices[lane]) {
-                        std::memset(drumSeqTemp, 0, frameCount * sizeof(float));
-                        m_drumSeqVoices[lane]->Render(drumSeqTemp, nullptr, frameCount);
+                        std::memset(m_tempDrumSeq, 0, frameCount * sizeof(float));
+                        m_drumSeqVoices[lane]->Render(m_tempDrumSeq, nullptr, frameCount);
                         // Record per-lane: channel 7=Kick, 8=SynthKick, 9=Snare, 10=HiHat
-                        processRecordingForChannel(7 + lane, drumSeqTemp, drumSeqTemp, frameCount);
+                        processRecordingForChannel(7 + lane, m_tempDrumSeq, m_tempDrumSeq, frameCount);
                         for (int i = 0; i < frameCount; ++i) {
-                            m_voiceBuffer[0][i] += drumSeqTemp[i];
-                            m_voiceBuffer[1][i] += drumSeqTemp[i];
+                            m_voiceBuffer[0][i] += m_tempDrumSeq[i];
+                            m_voiceBuffer[1][i] += m_tempDrumSeq[i];
                         }
                     }
                 }
@@ -1510,6 +1528,11 @@ void AudioEngine::renderAndReadMultiChannel(
         } else {
             int spinCount = 0;
             while (m_cachedRenderInProgress.load(std::memory_order_acquire) && spinCount < 50000) {
+#if defined(__aarch64__) || defined(__arm64__)
+                __builtin_arm_yield();
+#elif defined(__x86_64__) || defined(__i386__)
+                __builtin_ia32_pause();
+#endif
                 ++spinCount;
             }
 
@@ -1621,6 +1644,11 @@ void AudioEngine::renderAndReadLegacyBus(
         } else {
             int spinCount = 0;
             while (m_cachedLegacyRenderInProgress.load(std::memory_order_acquire) && spinCount < 50000) {
+#if defined(__aarch64__) || defined(__arm64__)
+                __builtin_arm_yield();
+#elif defined(__x86_64__) || defined(__i386__)
+                __builtin_ia32_pause();
+#endif
                 ++spinCount;
             }
 
@@ -3458,7 +3486,6 @@ void AudioEngine::multiChannelProcessingLoop() {
         std::memset(bufferPtrs[i], 0, kRingBufferProcessFrames * sizeof(float));
     }
 
-    int debugCounter = 0;
     while (m_multiChannelProcessingActive.load(std::memory_order_acquire)) {
         // Only process if ring buffer has space for another chunk
         if (m_ringBuffer.canWrite(kRingBufferProcessFrames)) {
@@ -3470,21 +3497,6 @@ void AudioEngine::multiChannelProcessingLoop() {
                 m_ringBuffer.writeChannel(ch, bufferPtrs[ch * 2], bufferPtrs[ch * 2 + 1], kRingBufferProcessFrames);
             }
             m_ringBuffer.advanceWriteIndex(kRingBufferProcessFrames);
-
-            // Debug: log sample time every second (~200 iterations at 4.8ms)
-            if (++debugCounter % 200 == 0) {
-                printf("[RingBuffer] sampleTime=%llu writable=%zu\n",
-                       m_currentSampleTime.load(std::memory_order_relaxed),
-                       m_ringBuffer.getWritableFrames());
-                fflush(stdout);
-            }
-        } else {
-            // Debug: buffer full, can't write
-            if (++debugCounter % 200 == 0) {
-                printf("[RingBuffer] BLOCKED - buffer full, writable=%zu\n",
-                       m_ringBuffer.getWritableFrames());
-                fflush(stdout);
-            }
         }
 
         // Sleep to maintain timing
