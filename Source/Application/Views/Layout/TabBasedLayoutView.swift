@@ -14,6 +14,8 @@ struct TabBasedLayoutView: View {
     @EnvironmentObject var audioEngine: AudioEngineWrapper
     @EnvironmentObject var masterClock: MasterClock
     @EnvironmentObject var sequencer: StepSequencer
+    @EnvironmentObject var mixerState: MixerState
+    @EnvironmentObject var pluginManager: AUPluginManager
 
     @StateObject private var layoutState = WorkspaceLayoutState()
     @StateObject private var transportState = TransportState()
@@ -45,6 +47,23 @@ struct TabBasedLayoutView: View {
         }
         .onChange(of: masterClock.bpm) { bpm in
             transportState.bpm = bpm
+        }
+        .onChange(of: appState.pendingTab) { tab in
+            if let tab = tab {
+                layoutState.selectTab(tab)
+                appState.pendingTab = nil
+            }
+        }
+        .onChange(of: appState.pendingMixerToggle) { toggle in
+            if toggle {
+                MixerWindowManager.shared.toggle(
+                    mixerState: mixerState,
+                    audioEngine: audioEngine,
+                    pluginManager: pluginManager,
+                    layoutState: layoutState
+                )
+                appState.pendingMixerToggle = false
+            }
         }
     }
 }

@@ -23,7 +23,6 @@ public:
     RingsVoice();
 
     void Init(float sample_rate);
-    void Render(float* out, float* aux, size_t size);
 
     void NoteOn(int midiNote, int velocity);
     void NoteOff(int midiNote);
@@ -35,6 +34,15 @@ public:
     void SetPosition(float value);
     void SetModel(int modelIndex);
     void SetLevel(float value);
+
+    // Extended parameters
+    void SetPolyphony(int polyphony);       // 1, 2, or 4
+    void SetChord(int chord);               // 0-10 (11 chords)
+    void SetFM(float fm);                   // 0-1, maps to ±24 semitones
+    void SetInternalExciter(bool internal);
+
+    // Render with external excitation input
+    void Render(const float* in, float* out, float* aux, size_t size);
 
     // Modulation (adds to base value, clamped to 0-0.9995)
     void SetStructureMod(float amount);
@@ -60,6 +68,11 @@ private:
     float render_l_[kRenderBlockSize];
     float render_r_[kRenderBlockSize];
     uint16_t reverb_buffer_[32768];
+
+    // Extended parameter state
+    int chord_;              // 0-10, default 0
+    float fm_;               // 0-1, default 0
+    bool internal_exciter_;  // default true
 
     // Modulation amounts (0-1, added to base patch values)
     float structure_mod_;

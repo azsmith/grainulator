@@ -20,6 +20,8 @@ enum ArcTarget {
     case playheadPosition
     /// Semitone-stepped rate control for looper (range -24..+12 semitones)
     case steppedRate
+    /// Semitone-stepped pitch control for granular (range -24..+24 semitones)
+    case steppedPitch
 }
 
 /// Whether the current voice is a granular or looper voice.
@@ -43,18 +45,18 @@ class MonomeArcManager: ObservableObject {
 
     // MARK: Encoder Mappings (voice-aware)
 
-    /// Granular primary: Speed, Pitch, Size (length), Density
+    /// Granular primary: Speed, Size, Density, Position
     private let granularPrimaryMappings: [ArcTarget] = [
         .parameter(.granularSpeed),
-        .parameter(.granularPitch),
         .parameter(.granularSize),
         .parameter(.granularDensity),
+        .playheadPosition,
     ]
 
-    /// Granular shift: Jitter, Spread, Filter, Morph
+    /// Granular shift: Jitter, Pitch (semitone-stepped), Filter, Morph
     private let granularShiftMappings: [ArcTarget] = [
         .parameter(.granularJitter),
-        .parameter(.granularSpread),
+        .steppedPitch,
         .parameter(.granularFilterCutoff),
         .parameter(.granularMorph),
     ]
@@ -129,6 +131,10 @@ class MonomeArcManager: ObservableObject {
     private var rateSemitone: Int = 0
     /// Stepped rate: accumulates encoder delta ticks between semitone steps.
     private var rateTickAccumulator: Int = 0
+    /// Stepped pitch: current semitone offset (-24..+24). 0 = no shift.
+    private var pitchSemitone: Int = 0
+    /// Stepped pitch: accumulates encoder delta ticks between semitone steps.
+    private var pitchTickAccumulator: Int = 0
     /// Ticks per semitone step (~1/10 revolution).
     private let ticksPerSemitone: Int = 24
 
@@ -419,6 +425,30 @@ class MonomeArcManager: ObservableObject {
             return
         }
 
+        // Stepped pitch: accumulate ticks and step by semitones (granular pitch)
+        if case .steppedPitch = mapping {
+            pitchTickAccumulator += delta
+            let steps = pitchTickAccumulator / ticksPerSemitone
+            if steps != 0 {
+                pitchTickAccumulator -= steps * ticksPerSemitone
+                pitchSemitone = max(-24, min(24, pitchSemitone + steps))
+                // Normalize to 0..1: semitone / 48 + 0.5  (maps -24..+24 to 0..1)
+                let normalized = Float(pitchSemitone) / 48.0 + 0.5
+                if isShift {
+                    shiftValues[encoder] = normalized
+                    shiftEncoderValues[encoder] = normalized
+                } else {
+                    primaryValues[encoder] = normalized
+                    encoderValues[encoder] = normalized
+                }
+                let voiceIndex = appState?.selectedGranularVoice ?? 0
+                audioEngine?.setParameter(id: .granularPitch, value: normalized, voiceIndex: voiceIndex)
+            }
+            ledDirty[encoder] = true
+            uiNotifyPending = true
+            return
+        }
+
         // Get current value
         let currentValue = isShift ? shiftValues[encoder] : primaryValues[encoder]
 
@@ -439,7 +469,7 @@ class MonomeArcManager: ObservableObject {
         switch mapping {
         case .parameter(let paramId):
             audioEngine?.setParameter(id: paramId, value: newValue, voiceIndex: voiceIndex)
-        case .steppedRate:
+        case .steppedRate, .steppedPitch:
             break // handled above
         case .playheadPosition:
             audioEngine?.setGranularPosition(voiceIndex: voiceIndex, position: newValue)
@@ -646,6 +676,12 @@ class MonomeArcManager: ObservableObject {
                 let semitone = Int(round(12.0 * log2f(rate)))
                 rateSemitone = max(-24, min(12, semitone))
                 engineValue = normalized
+            case .steppedPitch:
+                // Read normalized pitch from engine, convert back to semitone
+                let normalized = engine.getParameter(id: .granularPitch, voiceIndex: voice)
+                let semitone = Int(round((normalized - 0.5) * 48.0))
+                pitchSemitone = max(-24, min(24, semitone))
+                engineValue = normalized
             }
             if abs(engineValue - primaryValues[i]) > epsilon {
                 primaryValues[i] = engineValue
@@ -662,6 +698,11 @@ class MonomeArcManager: ObservableObject {
                 engineValue = engine.getParameter(id: paramId, voiceIndex: voice)
             case .steppedRate:
                 engineValue = engine.getParameter(id: .looperRate, voiceIndex: voice)
+            case .steppedPitch:
+                let normalized = engine.getParameter(id: .granularPitch, voiceIndex: voice)
+                let semitone = Int(round((normalized - 0.5) * 48.0))
+                pitchSemitone = max(-24, min(24, semitone))
+                engineValue = normalized
             case .playheadPosition:
                 continue
             }

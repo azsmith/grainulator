@@ -433,6 +433,13 @@ void AudioEngine_SetDrumSeqLaneMorph(AudioEngineHandle handle, int lane, float v
     }
 }
 
+// Plaits wavetable loading
+void AudioEngine_LoadUserWavetable(AudioEngineHandle handle, const float* data, int numSamples, int frameSize) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->loadUserWavetable(data, numSamples, frameSize);
+    }
+}
+
 // SoundFont sampler control
 bool AudioEngine_LoadSoundFont(AudioEngineHandle handle, const char* filePath) {
     if (!handle) return false;
@@ -460,6 +467,11 @@ bool AudioEngine_LoadWavSampler(AudioEngineHandle handle, const char* dirPath) {
     return static_cast<AudioEngine*>(handle)->loadWavSampler(dirPath);
 }
 
+bool AudioEngine_LoadSfzFile(AudioEngineHandle handle, const char* sfzPath) {
+    if (!handle) return false;
+    return static_cast<AudioEngine*>(handle)->loadSfzFile(sfzPath);
+}
+
 void AudioEngine_UnloadWavSampler(AudioEngineHandle handle) {
     if (handle) {
         static_cast<AudioEngine*>(handle)->unloadWavSampler();
@@ -473,7 +485,12 @@ const char* AudioEngine_GetWavSamplerInstrumentName(AudioEngineHandle handle) {
 
 void AudioEngine_SetSamplerMode(AudioEngineHandle handle, int mode) {
     if (handle) {
-        auto m = (mode == 1) ? AudioEngine::SamplerMode::WavSampler : AudioEngine::SamplerMode::SoundFont;
+        AudioEngine::SamplerMode m;
+        switch (mode) {
+            case 1:  m = AudioEngine::SamplerMode::Sfz; break;
+            case 2:  m = AudioEngine::SamplerMode::WavSampler; break;
+            default: m = AudioEngine::SamplerMode::SoundFont; break;
+        }
         static_cast<AudioEngine*>(handle)->setSamplerMode(m);
     }
 }

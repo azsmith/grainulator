@@ -12,6 +12,14 @@ enum SequencerDirection: String, CaseIterable, Identifiable {
     case reverse = "REV"
     case alternate = "ALT"
     case random = "RND"
+    case skip2 = "SKP2"
+    case skip3 = "SKP3"
+    case climb2 = "CLM2"
+    case climb3 = "CLM3"
+    case drunk = "DRNK"
+    case randomNoRepeat = "RN!R"
+    case converge = "CNVG"
+    case diverge = "DIVG"
 
     var id: String { rawValue }
 }
@@ -121,6 +129,7 @@ struct SequencerStage: Identifiable {
     var noteSlot: Int
     var octave: Int
     var stepType: SequencerStepType
+    var gateLength: Double   // 0.0-1.0, default 0.65
     var slide: Bool
 }
 
@@ -154,6 +163,7 @@ struct SequencerTrack: Identifiable {
                     noteSlot: min(max(noteSlot, 0), 8),
                     octave: 0,
                     stepType: stepType,
+                    gateLength: 1.0,
                     slide: false
                 )
             )
@@ -200,6 +210,8 @@ final class StepSequencer: ObservableObject {
         var nextPulseSample: UInt64 = 0
         var alternateForward: Bool = true
         var heldTieNote: UInt8?
+        var patternStep: Int = 0       // Counter for skip/converge/diverge patterns
+        var climbWindowStart: Int = 0  // Window origin for climb patterns
     }
 
     private struct NoteOnDedupKey: Hashable {
@@ -434,7 +446,7 @@ final class StepSequencer: ObservableObject {
         }
 
         // Debug voicing: Plaits String (11/15), Rings String (2/5).
-        audioEngine?.setParameter(id: .plaitsModel, value: Float(11.0 / 15.0))
+        audioEngine?.setParameter(id: .plaitsModel, value: Float(11.0 / 16.0))
         audioEngine?.setParameter(id: .ringsModel, value: Float(2.0 / 5.0))
     }
 
@@ -596,6 +608,11 @@ final class StepSequencer: ObservableObject {
         tracks[track].stages[stage].slide = value
     }
 
+    func setStageGateLength(track: Int, stage: Int, value: Double) {
+        guard isValidStage(track: track, stage: stage) else { return }
+        tracks[track].stages[stage].gateLength = min(max(value, 0.01), 1.0)
+    }
+
     func setStageStepType(track: Int, stage: Int, value: SequencerStepType) {
         guard isValidStage(track: track, stage: stage) else { return }
         tracks[track].stages[stage].stepType = value
@@ -728,7 +745,9 @@ final class StepSequencer: ObservableObject {
                 pulseInStage: 0,
                 nextPulseSample: startSample,
                 alternateForward: true,
-                heldTieNote: nil
+                heldTieNote: nil,
+                patternStep: 0,
+                climbWindowStart: start
             )
             schedulingState.playheadStages[trackIndex] = start
             schedulingState.playheadPulses[trackIndex] = 0
@@ -914,7 +933,8 @@ final class StepSequencer: ObservableObject {
                 }
                 triggerRatchetsDirect(
                     note: note, velocity: UInt8(track.velocity), ratchets: stage.ratchets,
-                    pulseDurationSamples: pulseDurationSamples, eventSample: eventSample,
+                    gateLength: stage.gateLength, pulseDurationSamples: pulseDurationSamples,
+                    eventSample: eventSample,
                     target: targetMask(for: track.output), snapshot: snapshot, handle: handle,
                     dedupKeys: &dedupKeys
                 )
@@ -1095,18 +1115,18 @@ final class StepSequencer: ObservableObject {
     }
 
     private func triggerRatchetsDirect(
-        note: UInt8, velocity: UInt8, ratchets: Int, pulseDurationSamples: UInt64,
+        note: UInt8, velocity: UInt8, ratchets: Int, gateLength: Double,
+        pulseDurationSamples: UInt64,
         eventSample: UInt64, target: AudioEngineWrapper.NoteTargetMask,
         snapshot: SchedulingSnapshot, handle: OpaquePointer,
         dedupKeys: inout Set<NoteOnDedupKey>
     ) {
         let ratchetCount = max(ratchets, 1)
         let subdivisionSamples = max(1, Int(pulseDurationSamples) / ratchetCount)
-        let maxGateLengthSamples = max(1, Int(snapshot.sampleRate * 0.14))
 
         for ratchetIndex in 0..<ratchetCount {
             let onSample = eventSample &+ UInt64(ratchetIndex * subdivisionSamples)
-            let gateLengthSamples = max(1, min(maxGateLengthSamples, Int(Double(subdivisionSamples) * 0.65)))
+            let gateLengthSamples = max(1, Int(Double(subdivisionSamples) * gateLength))
             let offSample = onSample &+ UInt64(gateLengthSamples)
 
             scheduleNoteOnDirect(note: note, velocity: velocity, sampleTime: onSample,
@@ -1160,7 +1180,91 @@ final class StepSequencer: ObservableObject {
         case .random:
             let loopIndices = Array(lower...upper)
             return loopIndices.randomElement() ?? runtime.stageIndex
+
+        case .skip2:
+            return nextSkipIndex(step: 2, lower: lower, upper: upper, runtime: &runtime)
+
+        case .skip3:
+            return nextSkipIndex(step: 3, lower: lower, upper: upper, runtime: &runtime)
+
+        case .climb2:
+            return nextClimbIndex(windowSize: 2, lower: lower, upper: upper, runtime: &runtime)
+
+        case .climb3:
+            return nextClimbIndex(windowSize: 3, lower: lower, upper: upper, runtime: &runtime)
+
+        case .drunk:
+            let delta = Bool.random() ? 1 : -1
+            let next = runtime.stageIndex + delta
+            return min(max(next, lower), upper)
+
+        case .randomNoRepeat:
+            let loopLen = upper - lower + 1
+            if loopLen <= 1 { return lower }
+            var next: Int
+            repeat {
+                next = Int.random(in: lower...upper)
+            } while next == runtime.stageIndex
+            return next
+
+        case .converge:
+            let loopLen = upper - lower + 1
+            runtime.patternStep += 1
+            if runtime.patternStep >= loopLen { runtime.patternStep = 0 }
+            let step = runtime.patternStep
+            if step % 2 == 0 {
+                return lower + step / 2
+            } else {
+                return upper - step / 2
+            }
+
+        case .diverge:
+            let loopLen = upper - lower + 1
+            runtime.patternStep += 1
+            if runtime.patternStep >= loopLen { runtime.patternStep = 0 }
+            let step = runtime.patternStep
+            let mid = (lower + upper) / 2
+            if step == 0 {
+                return mid
+            } else if step % 2 == 1 {
+                // Expand outward: right side first
+                let offset = (step + 1) / 2
+                return min(mid + offset, upper)
+            } else {
+                // Then left side
+                let offset = step / 2
+                return max(mid - offset, lower)
+            }
         }
+    }
+
+    /// Skip pattern: advance by `step` each time, multi-pass to cover all positions.
+    private func nextSkipIndex(step: Int, lower: Int, upper: Int, runtime: inout TrackRuntimeState) -> Int {
+        let next = runtime.stageIndex + step
+        if next <= upper {
+            return next
+        }
+        // Wrap to next pass
+        runtime.patternStep += 1
+        if runtime.patternStep >= step { runtime.patternStep = 0 }
+        return lower + runtime.patternStep
+    }
+
+    /// Climb pattern: play a window of `windowSize` steps, then shift window forward by 1.
+    private func nextClimbIndex(windowSize: Int, lower: Int, upper: Int, runtime: inout TrackRuntimeState) -> Int {
+        runtime.patternStep += 1
+        if runtime.patternStep >= windowSize {
+            // Window complete — advance window start
+            runtime.patternStep = 0
+            runtime.climbWindowStart += 1
+            if runtime.climbWindowStart > upper {
+                runtime.climbWindowStart = lower
+            }
+        }
+        // Return position within window, wrapping around loop bounds
+        let loopLen = upper - lower + 1
+        let pos = runtime.climbWindowStart + runtime.patternStep
+        return lower + ((pos - lower) % loopLen)
     }
 
     private func noteForStage(track: SequencerTrack, stage: SequencerStage) -> UInt8 {

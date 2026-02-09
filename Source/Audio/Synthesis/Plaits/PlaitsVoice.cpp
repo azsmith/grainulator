@@ -20,6 +20,7 @@
 #include "Engines/noise_engine.h"
 #include "Engines/string_engine.h"
 #include "Engines/percussion_engine.h"
+#include "Engines/sixop_fm_engine.h"
 #include <cstring>
 #include <cmath>
 #include <algorithm>
@@ -47,6 +48,9 @@ PlaitsVoice::PlaitsVoice()
     , prev_trigger_(false)
     , trigger_count_(0)
     , lpg_filter_state_(0.0f)
+    , previous_engine_(-1)
+    , crossfade_position_(1.0f)
+    , crossfade_increment_(0.0f)
 {
     // Allocate engines
     va_engine_ = new Engines::VirtualAnalogEngine();
@@ -61,6 +65,7 @@ PlaitsVoice::PlaitsVoice()
     noise_engine_ = new Engines::NoiseEngine();
     string_engine_ = new Engines::StringEngine();
     percussion_engine_ = new Engines::PercussionEngine();
+    sixop_fm_engine_ = new Engines::SixOpFMEngine();
 }
 
 PlaitsVoice::~PlaitsVoice() {
@@ -76,6 +81,7 @@ PlaitsVoice::~PlaitsVoice() {
     delete static_cast<Engines::NoiseEngine*>(noise_engine_);
     delete static_cast<Engines::StringEngine*>(string_engine_);
     delete static_cast<Engines::PercussionEngine*>(percussion_engine_);
+    delete static_cast<Engines::SixOpFMEngine*>(sixop_fm_engine_);
 }
 
 void PlaitsVoice::Init(float sample_rate) {
@@ -94,6 +100,7 @@ void PlaitsVoice::Init(float sample_rate) {
     static_cast<Engines::NoiseEngine*>(noise_engine_)->Init(sample_rate);
     static_cast<Engines::StringEngine*>(string_engine_)->Init(sample_rate);
     static_cast<Engines::PercussionEngine*>(percussion_engine_)->Init(sample_rate);
+    static_cast<Engines::SixOpFMEngine*>(sixop_fm_engine_)->Init(sample_rate);
 
     // Reset parameters
     current_engine_ = 0;
@@ -108,6 +115,9 @@ void PlaitsVoice::Init(float sample_rate) {
     prev_trigger_ = false;
     trigger_count_ = 0;
     lpg_filter_state_ = 0.0f;
+    previous_engine_ = -1;
+    crossfade_position_ = 1.0f;
+    crossfade_increment_ = 0.0f;
 }
 
 void PlaitsVoice::Render(float* out, float* aux, size_t size) {
@@ -162,6 +172,11 @@ void PlaitsVoice::Render(float* out, float* aux, size_t size) {
     float temp_out[256] = {0};
     float temp_aux[256] = {0};
 
+    // Crossfade buffers (only used during engine transition)
+    float xfade_out[256] = {0};
+    float xfade_aux[256] = {0};
+    bool is_crossfading = (previous_engine_ >= 0 && crossfade_position_ < 1.0f);
+
     // Process in chunks
     size_t remaining = size;
     size_t offset = 0;
@@ -180,6 +195,22 @@ void PlaitsVoice::Render(float* out, float* aux, size_t size) {
 
         // Render from current engine
         RenderEngine(temp_out, temp_aux, chunk);
+
+        // If crossfading, also render from previous engine and blend
+        if (is_crossfading) {
+            RenderSpecificEngine(previous_engine_, xfade_out, xfade_aux, chunk);
+            for (size_t i = 0; i < chunk; ++i) {
+                float fade = std::min(1.0f, crossfade_position_);
+                temp_out[i] = xfade_out[i] * (1.0f - fade) + temp_out[i] * fade;
+                temp_aux[i] = xfade_aux[i] * (1.0f - fade) + temp_aux[i] * fade;
+                crossfade_position_ += crossfade_increment_;
+            }
+            if (crossfade_position_ >= 1.0f) {
+                previous_engine_ = -1;
+                crossfade_position_ = 1.0f;
+                is_crossfading = false;
+            }
+        }
 
         for (size_t i = 0; i < chunk; ++i) {
             float input_sample = temp_out[i];
@@ -277,8 +308,12 @@ void PlaitsVoice::Render(float* out, float* aux, size_t size) {
 }
 
 void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
+    RenderSpecificEngine(current_engine_, out, aux, size);
+}
+
+void PlaitsVoice::RenderSpecificEngine(int engine, float* out, float* aux, size_t size) {
     // =========================================================================
-    // REAL PLAITS ENGINE MAPPING (16 engines)
+    // PLAITS ENGINE MAPPING (17 engines)
     // =========================================================================
     // 0: Virtual Analog - Two detuned oscillators (pulse/saw)
     // 1: Waveshaper - Triangle through waveshaper and wavefolder
@@ -296,14 +331,15 @@ void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
     // 13: Bass Drum - TRIGGERED
     // 14: Snare Drum - TRIGGERED
     // 15: Hi-Hat - TRIGGERED
+    // 16: Six-Op FM - DX7-style 6-operator FM synthesis
     // =========================================================================
 
     // Apply modulation to parameters (modulation adds to base value, clamped 0-1)
-    float mod_harmonics = std::clamp(harmonics_ + harmonics_mod_amount_, 0.0f, 1.0f);
-    float mod_timbre = std::clamp(timbre_ + timbre_mod_amount_, 0.0f, 1.0f);
-    float mod_morph = std::clamp(morph_ + morph_mod_amount_, 0.0f, 1.0f);
+    float mod_harmonics = std::max(0.0f, std::min(1.0f, harmonics_ + harmonics_mod_amount_));
+    float mod_timbre = std::max(0.0f, std::min(1.0f, timbre_ + timbre_mod_amount_));
+    float mod_morph = std::max(0.0f, std::min(1.0f, morph_ + morph_mod_amount_));
 
-    switch (current_engine_) {
+    switch (engine) {
         case 0: // Virtual Analog
         {
             auto* va = static_cast<Engines::VirtualAnalogEngine*>(va_engine_);
@@ -491,6 +527,17 @@ void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
             break;
         }
 
+        case 16: // Six-Op FM
+        {
+            auto* sixop = static_cast<Engines::SixOpFMEngine*>(sixop_fm_engine_);
+            sixop->SetNote(note_);
+            sixop->SetHarmonics(mod_harmonics);  // Algorithm selection
+            sixop->SetTimbre(mod_timbre);        // Modulation depth
+            sixop->SetMorph(mod_morph);          // Operator balance
+            sixop->Render(out, aux, size);
+            break;
+        }
+
         default: {
             // Fallback to Virtual Analog
             auto* va = static_cast<Engines::VirtualAnalogEngine*>(va_engine_);
@@ -505,8 +552,16 @@ void PlaitsVoice::RenderEngine(float* out, float* aux, size_t size) {
 }
 
 void PlaitsVoice::SetEngine(int engine) {
-    // Clamp to valid range (0-15 for 16 engines)
-    current_engine_ = std::max(0, std::min(15, engine));
+    int new_engine = std::max(0, std::min(16, engine));
+    if (new_engine != current_engine_) {
+        // Start crossfade from old engine to new engine
+        previous_engine_ = current_engine_;
+        crossfade_position_ = 0.0f;
+        // Crossfade over kCrossfadeDurationMs
+        float crossfade_samples = (kCrossfadeDurationMs / 1000.0f) * sample_rate_;
+        crossfade_increment_ = 1.0f / std::max(1.0f, crossfade_samples);
+        current_engine_ = new_engine;
+    }
 }
 
 void PlaitsVoice::SetNote(float note) {
@@ -566,6 +621,11 @@ void PlaitsVoice::SetLPGAttack(float attack) {
 
 void PlaitsVoice::SetLPGBypass(bool bypass) {
     lpg_bypass_ = bypass;
+}
+
+void PlaitsVoice::LoadUserWavetable(const float* data, int numSamples, int frameSize) {
+    auto* wt = static_cast<Engines::WavetableEngine*>(wavetable_engine_);
+    wt->LoadUserWavetable(data, numSamples, frameSize);
 }
 
 bool PlaitsVoice::IsPercussionEngine() const {

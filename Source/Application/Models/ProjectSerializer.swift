@@ -215,6 +215,7 @@ struct ProjectSerializer {
                         noteSlot: stage.noteSlot,
                         octave: stage.octave,
                         stepType: stage.stepType.rawValue,
+                        gateLength: stage.gateLength,
                         slide: stage.slide
                     )
                 }
@@ -567,6 +568,7 @@ struct ProjectSerializer {
                 sequencer.tracks[i].stages[j].noteSlot = stageSnap.noteSlot
                 sequencer.tracks[i].stages[j].octave = stageSnap.octave
                 sequencer.tracks[i].stages[j].stepType = SequencerStepType(rawValue: stageSnap.stepType) ?? .play
+                sequencer.tracks[i].stages[j].gateLength = stageSnap.gateLength ?? 1.0
                 sequencer.tracks[i].stages[j].slide = stageSnap.slide
             }
         }

@@ -238,7 +238,7 @@ struct SequencerView: View {
             }
 
             // Direction dropdown
-            compactDropdown(label: track.direction.rawValue, width: 50) {
+            compactDropdown(label: track.direction.rawValue, width: 58) {
                 ForEach(SequencerDirection.allCases) { direction in
                     Button(direction.rawValue) { sequencer.setTrackDirection(trackIndex, direction) }
                 }
@@ -547,7 +547,28 @@ struct SequencerStepConfigView: View {
                     }
                 }
 
-                // Row 4: Slide toggle
+                // Row 4: Gate Length slider
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("GATE LENGTH")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundColor(ColorPalette.textDimmed)
+                    HStack(spacing: 4) {
+                        Slider(
+                            value: Binding(
+                                get: { stage.gateLength },
+                                set: { sequencer.setStageGateLength(track: trackIndex, stage: stageIndex, value: $0) }
+                            ),
+                            in: 0.01...1.0
+                        )
+                        .tint(ColorPalette.ledAmber)
+                        Text("\(Int(stage.gateLength * 100))%")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundColor(ColorPalette.textMuted)
+                            .frame(width: 32, alignment: .trailing)
+                    }
+                }
+
+                // Row 5: Slide toggle
                 HStack {
                     Text("SLIDE")
                         .font(.system(size: 9, weight: .medium, design: .monospaced))

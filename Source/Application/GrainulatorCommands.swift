@@ -9,6 +9,11 @@ import SwiftUI
 
 struct GrainulatorCommands: Commands {
     @ObservedObject var projectManager: ProjectManager
+    @ObservedObject var sequencer: StepSequencer
+    @ObservedObject var audioEngine: AudioEngineWrapper
+    @ObservedObject var masterClock: MasterClock
+    @ObservedObject var mixerState: MixerState
+    @ObservedObject var appState: AppState
 
     var body: some Commands {
         // File menu commands
@@ -43,8 +48,158 @@ struct GrainulatorCommands: Commands {
             .keyboardShortcut("i", modifiers: .command)
         }
 
+        // Transport menu commands
+        CommandMenu("Transport") {
+            Button(sequencer.isPlaying ? "Stop" : "Play") {
+                sequencer.togglePlayback()
+            }
+            .keyboardShortcut(.space, modifiers: [])
+
+            Button("Stop and Reset") {
+                sequencer.stop()
+                sequencer.reset()
+            }
+            .keyboardShortcut(.return, modifiers: [])
+
+            Divider()
+
+            Button("Increase BPM") {
+                sequencer.tempoBPM = min(sequencer.tempoBPM + 1, 300)
+            }
+            .keyboardShortcut(.upArrow, modifiers: .command)
+
+            Button("Decrease BPM") {
+                sequencer.tempoBPM = max(sequencer.tempoBPM - 1, 20)
+            }
+            .keyboardShortcut(.downArrow, modifiers: .command)
+
+            Button("Increase BPM x10") {
+                sequencer.tempoBPM = min(sequencer.tempoBPM + 10, 300)
+            }
+            .keyboardShortcut(.upArrow, modifiers: [.command, .shift])
+
+            Button("Decrease BPM x10") {
+                sequencer.tempoBPM = max(sequencer.tempoBPM - 10, 20)
+            }
+            .keyboardShortcut(.downArrow, modifiers: [.command, .shift])
+
+            Button("Fine Increase BPM") {
+                sequencer.tempoBPM = min(sequencer.tempoBPM + 0.1, 300)
+            }
+            .keyboardShortcut(.upArrow, modifiers: .option)
+
+            Button("Fine Decrease BPM") {
+                sequencer.tempoBPM = max(sequencer.tempoBPM - 0.1, 20)
+            }
+            .keyboardShortcut(.downArrow, modifiers: .option)
+
+            Divider()
+
+            Button("All Notes Off") {
+                audioEngine.allNotesOff()
+            }
+            .keyboardShortcut(".", modifiers: .command)
+        }
+
+        // Sequencer menu commands
+        CommandMenu("Sequencer") {
+            Button("Mute Track 1") {
+                sequencer.setTrackMuted(0, !sequencer.tracks[0].muted)
+            }
+            .keyboardShortcut("m", modifiers: .command)
+
+            Button("Mute Track 2") {
+                sequencer.setTrackMuted(1, !sequencer.tracks[1].muted)
+            }
+            .keyboardShortcut("m", modifiers: [.command, .shift])
+
+            Divider()
+
+            Button("Direction: Forward") {
+                let track = appState.focusedVoice < 2 ? appState.focusedVoice : 0
+                sequencer.tracks[track].direction = .forward
+            }
+
+            Button("Direction: Reverse") {
+                let track = appState.focusedVoice < 2 ? appState.focusedVoice : 0
+                sequencer.tracks[track].direction = .reverse
+            }
+
+            Button("Direction: Alternate") {
+                let track = appState.focusedVoice < 2 ? appState.focusedVoice : 0
+                sequencer.tracks[track].direction = .alternate
+            }
+
+            Button("Direction: Random") {
+                let track = appState.focusedVoice < 2 ? appState.focusedVoice : 0
+                sequencer.tracks[track].direction = .random
+            }
+
+            Button("Direction: Skip 2") {
+                let track = appState.focusedVoice < 2 ? appState.focusedVoice : 0
+                sequencer.tracks[track].direction = .skip2
+            }
+
+            Button("Direction: Skip 3") {
+                let track = appState.focusedVoice < 2 ? appState.focusedVoice : 0
+                sequencer.tracks[track].direction = .skip3
+            }
+
+            Button("Direction: Climb 2") {
+                let track = appState.focusedVoice < 2 ? appState.focusedVoice : 0
+                sequencer.tracks[track].direction = .climb2
+            }
+
+            Button("Direction: Climb 3") {
+                let track = appState.focusedVoice < 2 ? appState.focusedVoice : 0
+                sequencer.tracks[track].direction = .climb3
+            }
+
+            Button("Direction: Drunk") {
+                let track = appState.focusedVoice < 2 ? appState.focusedVoice : 0
+                sequencer.tracks[track].direction = .drunk
+            }
+
+            Button("Direction: Random No Repeat") {
+                let track = appState.focusedVoice < 2 ? appState.focusedVoice : 0
+                sequencer.tracks[track].direction = .randomNoRepeat
+            }
+
+            Button("Direction: Converge") {
+                let track = appState.focusedVoice < 2 ? appState.focusedVoice : 0
+                sequencer.tracks[track].direction = .converge
+            }
+
+            Button("Direction: Diverge") {
+                let track = appState.focusedVoice < 2 ? appState.focusedVoice : 0
+                sequencer.tracks[track].direction = .diverge
+            }
+        }
+
         // View menu commands
         CommandMenu("View") {
+            Button("Sequencer Tab") {
+                appState.pendingTab = .sequencer
+            }
+            .keyboardShortcut("1", modifiers: [.command, .shift])
+
+            Button("Synths Tab") {
+                appState.pendingTab = .synths
+            }
+            .keyboardShortcut("2", modifiers: [.command, .shift])
+
+            Button("Granular Tab") {
+                appState.pendingTab = .granular
+            }
+            .keyboardShortcut("3", modifiers: [.command, .shift])
+
+            Button("Drums Tab") {
+                appState.pendingTab = .drums
+            }
+            .keyboardShortcut("4", modifiers: [.command, .shift])
+
+            Divider()
+
             Button("Multi-Voice View") {
                 // TODO: Switch to multi-voice
             }
@@ -53,22 +208,22 @@ struct GrainulatorCommands: Commands {
             Divider()
 
             Button("Focus Granular 1") {
-                // TODO: Focus granular voice 1
+                appState.focusVoice(0)
             }
             .keyboardShortcut("1", modifiers: .command)
 
             Button("Focus Granular 2") {
-                // TODO: Focus granular voice 2
+                appState.focusVoice(1)
             }
             .keyboardShortcut("2", modifiers: .command)
 
             Button("Focus Granular 3") {
-                // TODO: Focus granular voice 3
+                appState.focusVoice(2)
             }
             .keyboardShortcut("3", modifiers: .command)
 
             Button("Focus Granular 4") {
-                // TODO: Focus granular voice 4
+                appState.focusVoice(3)
             }
             .keyboardShortcut("4", modifiers: .command)
 
@@ -77,7 +232,27 @@ struct GrainulatorCommands: Commands {
             }
             .keyboardShortcut("5", modifiers: .command)
 
+            Button("Focus Rings") {
+                // TODO: Focus Rings voice
+            }
+            .keyboardShortcut("6", modifiers: .command)
+
+            Button("Focus Sampler") {
+                // TODO: Focus Sampler
+            }
+            .keyboardShortcut("7", modifiers: .command)
+
+            Button("Focus Drums") {
+                // TODO: Focus Drums
+            }
+            .keyboardShortcut("8", modifiers: .command)
+
             Divider()
+
+            Button("Toggle Mixer") {
+                appState.pendingMixerToggle = true
+            }
+            .keyboardShortcut("x", modifiers: [])
 
             Button("Performance View") {
                 // TODO: Switch to performance view
@@ -88,6 +263,24 @@ struct GrainulatorCommands: Commands {
                 // TODO: Cycle through focus views
             }
             .keyboardShortcut("f", modifiers: .command)
+        }
+
+        // Effects menu commands
+        CommandMenu("Effects") {
+            Button("Toggle Delay Bypass") {
+                // TODO: Toggle delay bypass
+            }
+            .keyboardShortcut("d", modifiers: [.command, .shift])
+
+            Button("Toggle Reverb Bypass") {
+                // TODO: Toggle reverb bypass
+            }
+            .keyboardShortcut("r", modifiers: [.command, .shift])
+
+            Button("Toggle Master Filter Bypass") {
+                // TODO: Toggle master filter bypass
+            }
+            .keyboardShortcut("f", modifiers: [.command, .shift])
         }
 
         // Audio menu commands

@@ -222,14 +222,19 @@ struct TransportBarView: View {
                     layoutState: layoutState
                 )
             }) {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 14))
-                    .foregroundColor(layoutState.isMixerWindowOpen ? ColorPalette.accentMaster : ColorPalette.textMuted)
-                    .frame(width: 28, height: 28)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(layoutState.isMixerWindowOpen ? ColorPalette.accentMaster.opacity(0.2) : ColorPalette.backgroundTertiary)
-                    )
+                HStack(spacing: 4) {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 12))
+                    Text("MIXER")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                }
+                .foregroundColor(layoutState.isMixerWindowOpen ? ColorPalette.accentMaster : ColorPalette.textMuted)
+                .padding(.horizontal, 8)
+                .frame(height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(layoutState.isMixerWindowOpen ? ColorPalette.accentMaster.opacity(0.2) : ColorPalette.backgroundTertiary)
+                )
             }
             .buttonStyle(.plain)
             .help(layoutState.isMixerWindowOpen ? "Close mixer window" : "Open mixer window")

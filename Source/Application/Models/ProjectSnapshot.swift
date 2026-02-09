@@ -199,6 +199,7 @@ struct SequencerStageSnapshot: Codable {
     var noteSlot: Int
     var octave: Int
     var stepType: String        // SequencerStepType raw value
+    var gateLength: Double?     // 0.0-1.0, nil for backward compat (defaults to 0.65)
     var slide: Bool
 }
 

@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct PlaitsView: View {
     @EnvironmentObject var audioEngine: AudioEngineWrapper
@@ -33,7 +34,7 @@ struct PlaitsView: View {
     // Timer for polling modulation values
     let modulationTimer = Timer.publish(every: 1.0/30.0, on: .main, in: .common).autoconnect()
 
-    // Real Plaits engine names (16 models)
+    // Plaits engine names (17 models)
     let engineNames = [
         "Virtual Analog",    // 0: Two detuned oscillators
         "Waveshaper",        // 1: Triangle through waveshaper/folder
@@ -50,7 +51,8 @@ struct PlaitsView: View {
         "Modal",             // 12: Modal resonator (TRIGGERED)
         "Bass Drum",         // 13: Analog kick (TRIGGERED)
         "Snare Drum",        // 14: Analog snare (TRIGGERED)
-        "Hi-Hat"             // 15: Analog hihat (TRIGGERED)
+        "Hi-Hat",            // 15: Analog hihat (TRIGGERED)
+        "Six-Op FM"          // 16: DX7-style 6-operator FM
     ]
 
     // Dynamic parameter labels per engine (full names for knob labels)
@@ -71,11 +73,12 @@ struct PlaitsView: View {
         ["PUNCH", "DECAY", "TONE"],        // 13: Bass Drum
         ["SNARE", "TONE", "DECAY"],        // 14: Snare Drum
         ["METAL", "DECAY", "DECAY+"],      // 15: Hi-Hat
+        ["ALGO", "DEPTH", "BALANCE"],      // 16: Six-Op FM
     ]
 
-    // Whether engine uses LPG (engines 0-10) or has internal envelope (11-15)
+    // Whether engine uses LPG (engines 0-10 and 16) or has internal envelope (11-15)
     var usesLPG: Bool {
-        selectedEngine < 11
+        selectedEngine < 11 || selectedEngine == 16
     }
 
     var body: some View {
@@ -101,6 +104,12 @@ struct PlaitsView: View {
                 // LPG knobs + bypass
                 lpgSection
                     .opacity(usesLPG ? 1.0 : 0.35)
+
+                // Load wavetable button (only shown for Wavetable engine)
+                if selectedEngine == 5 {
+                    loadWavetableButton
+                        .padding(.horizontal, 16)
+                }
 
                 // Trigger button
                 triggerButton
@@ -300,6 +309,47 @@ struct PlaitsView: View {
         .onChange(of: lpgAttack) { audioEngine.setParameter(id: .plaitsLPGAttack, value: $0) }
         .onChange(of: lpgDecay) { audioEngine.setParameter(id: .plaitsLPGDecay, value: $0) }
         .onChange(of: lpgColor) { audioEngine.setParameter(id: .plaitsLPGColor, value: $0) }
+    }
+
+    // MARK: - Load Wavetable Button
+
+    @State private var showWavetableFilePicker = false
+
+    private var loadWavetableButton: some View {
+        Button(action: {
+            showWavetableFilePicker = true
+        }) {
+            HStack(spacing: 6) {
+                Image(systemName: "waveform")
+                    .font(.system(size: 10, weight: .bold))
+                Text("LOAD WAVETABLE")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+            }
+            .foregroundColor(ColorPalette.synthPanelLabel)
+            .frame(maxWidth: .infinity)
+            .frame(height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.black.opacity(0.3))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(ColorPalette.synthPanelDivider, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .fileImporter(
+            isPresented: $showWavetableFilePicker,
+            allowedContentTypes: [.wav, .aiff, .audio],
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                audioEngine.loadUserWavetable(url: url)
+                // Switch to user bank (harmonics ~0.9)
+                harmonics = 0.9
+                audioEngine.setParameter(id: .plaitsHarmonics, value: 0.9)
+            }
+        }
     }
 
     // MARK: - Trigger Button

@@ -86,8 +86,12 @@ void AudioEngine_UnloadSoundFont(AudioEngineHandle handle);
 int AudioEngine_GetSoundFontPresetCount(AudioEngineHandle handle);
 const char* AudioEngine_GetSoundFontPresetName(AudioEngineHandle handle, int index);
 
+// Plaits wavetable loading
+void AudioEngine_LoadUserWavetable(AudioEngineHandle handle, const float* data, int numSamples, int frameSize);
+
 // WAV sampler control (mx.samples)
 bool AudioEngine_LoadWavSampler(AudioEngineHandle handle, const char* dirPath);
+bool AudioEngine_LoadSfzFile(AudioEngineHandle handle, const char* sfzPath);
 void AudioEngine_UnloadWavSampler(AudioEngineHandle handle);
 const char* AudioEngine_GetWavSamplerInstrumentName(AudioEngineHandle handle);
 void AudioEngine_SetSamplerMode(AudioEngineHandle handle, int mode);

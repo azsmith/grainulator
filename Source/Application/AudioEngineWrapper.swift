@@ -231,8 +231,14 @@ func AudioEngine_GetSoundFontPresetCount(_ handle: OpaquePointer) -> Int32
 func AudioEngine_GetSoundFontPresetName(_ handle: OpaquePointer, _ index: Int32) -> UnsafePointer<CChar>?
 
 // WAV sampler bridge functions (mx.samples)
+@_silgen_name("AudioEngine_LoadUserWavetable")
+func AudioEngine_LoadUserWavetable(_ handle: OpaquePointer, _ data: UnsafePointer<Float>?, _ numSamples: Int32, _ frameSize: Int32)
+
 @_silgen_name("AudioEngine_LoadWavSampler")
 func AudioEngine_LoadWavSampler(_ handle: OpaquePointer, _ dirPath: UnsafePointer<CChar>?) -> Bool
+
+@_silgen_name("AudioEngine_LoadSfzFile")
+func AudioEngine_LoadSfzFile(_ handle: OpaquePointer, _ sfzPath: UnsafePointer<CChar>?) -> Bool
 
 @_silgen_name("AudioEngine_UnloadWavSampler")
 func AudioEngine_UnloadWavSampler(_ handle: OpaquePointer)
@@ -299,12 +305,20 @@ class AudioEngineWrapper: ObservableObject {
 
     enum SamplerMode: Int, Sendable {
         case soundFont = 0
-        case wavSampler = 1
+        case sfz = 1
+        case wavSampler = 2
     }
 
     @Published var wavSamplerLoaded: Bool = false
     @Published var wavSamplerInstrumentName: String = ""
     @Published var wavSamplerDirectoryPath: URL? = nil
+
+    // MARK: - SFZ Sampler
+
+    @Published var sfzLoaded: Bool = false
+    @Published var sfzInstrumentName: String = ""
+    @Published var sfzFilePath: URL? = nil
+
     @Published var activeSamplerMode: SamplerMode = .soundFont
 
     // MARK: - Recording
@@ -1562,6 +1576,12 @@ class AudioEngineWrapper: ObservableObject {
         case .samplerTuning: return 76
         case .samplerLevel: return 77
         case .samplerMode: return 78
+
+        // Rings extended parameters (79-82)
+        case .ringsPolyphony: return 79
+        case .ringsChord: return 80
+        case .ringsFM: return 81
+        case .ringsExciterSource: return 82
         }
     }
 
@@ -1916,6 +1936,37 @@ class AudioEngineWrapper: ObservableObject {
         setParameter(id: .samplerPreset, value: normalized)
     }
 
+    // MARK: - Plaits User Wavetable
+
+    /// Load a WAV file as a custom wavetable for the Plaits Wavetable engine.
+    /// The file is sliced into 256-sample frames and distributed across an 8x8 grid.
+    /// Set Harmonics to ~0.9 to access the user bank.
+    func loadUserWavetable(url: URL) {
+        guard let handle = cppEngineHandle else { return }
+        Task.detached(priority: .userInitiated) {
+            guard let audioFile = try? AVAudioFile(forReading: url) else { return }
+            let format = audioFile.processingFormat
+            let frameCount = AVAudioFrameCount(audioFile.length)
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { return }
+            try? audioFile.read(into: buffer)
+
+            guard let floatData = buffer.floatChannelData else { return }
+            let samples = floatData[0]  // mono or left channel
+            let count = Int(buffer.frameLength)
+
+            // Detect frame size: common wavetable sizes are 256, 512, 1024, 2048
+            var frameSize: Int32 = 256
+            for candidate in [2048, 1024, 512, 256] {
+                if count >= candidate * 2 && count % candidate == 0 {
+                    frameSize = Int32(candidate)
+                    break
+                }
+            }
+
+            AudioEngine_LoadUserWavetable(handle, samples, Int32(count), frameSize)
+        }
+    }
+
     // MARK: - WAV Sampler (mx.samples)
 
     /// Load a WAV instrument from a directory of mx.samples format WAV files
@@ -1940,6 +1991,32 @@ class AudioEngineWrapper: ObservableObject {
                     self.wavSamplerLoaded = false
                     self.wavSamplerInstrumentName = ""
                     self.wavSamplerDirectoryPath = nil
+                }
+            }
+        }
+    }
+
+    /// Load an SFZ instrument file on a background thread
+    func loadSfzFile(url: URL) {
+        let path = url.path
+        Task.detached(priority: .userInitiated) {
+            let handle = await MainActor.run { self.cppEngineHandle }
+            guard let handle else { return }
+            let success = AudioEngine_LoadSfzFile(handle, path)
+            if success {
+                let namePtr = AudioEngine_GetWavSamplerInstrumentName(handle)
+                let name = namePtr.map { String(cString: $0) } ?? "SFZ Instrument"
+                await MainActor.run {
+                    self.sfzLoaded = true
+                    self.sfzInstrumentName = name
+                    self.sfzFilePath = url
+                    self.setSamplerMode(.sfz)
+                }
+            } else {
+                await MainActor.run {
+                    self.sfzLoaded = false
+                    self.sfzInstrumentName = ""
+                    self.sfzFilePath = nil
                 }
             }
         }
@@ -2302,6 +2379,12 @@ enum ParameterID {
     case samplerTuning
     case samplerLevel
     case samplerMode
+
+    // Rings extended parameters
+    case ringsPolyphony
+    case ringsChord
+    case ringsFM
+    case ringsExciterSource
 }
 
 // MARK: - Insert Slot Data (Value Type)

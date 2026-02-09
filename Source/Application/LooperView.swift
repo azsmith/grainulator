@@ -84,11 +84,18 @@ struct LooperView: View {
                         }
                     }
                 } label: {
-                    Text(recordSourceType == .external ? "MIC" : channelShortName(recordSourceChannel))
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                        .foregroundColor(ColorPalette.textMuted)
-                        .frame(width: 40, height: 32)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(ColorPalette.backgroundTertiary))
+                    HStack(spacing: 2) {
+                        Text("IN:")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(ColorPalette.textDimmed)
+                        Text(recordSourceType == .external ? "MIC" : channelShortName(recordSourceChannel))
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundColor(ColorPalette.textMuted)
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(height: 32)
+                    .padding(.horizontal, 6)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(ColorPalette.backgroundTertiary))
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
@@ -114,12 +121,16 @@ struct LooperView: View {
 
                 Button(action: openFilePicker) {
                     Image(systemName: "folder")
-                        .font(.system(size: 14))
+                        .font(.system(size: 12))
                         .foregroundColor(ColorPalette.textMuted)
                         .frame(width: 32, height: 32)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(ColorPalette.backgroundTertiary))
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(ColorPalette.backgroundTertiary)
+                        )
                 }
                 .buttonStyle(.plain)
+                .help("Load audio file")
 
                 // Record button
                 Button(action: {

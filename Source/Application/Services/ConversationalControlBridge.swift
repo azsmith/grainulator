@@ -891,6 +891,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                     "sequencer.track<1|2>.step<1-8>.probability",
                     "sequencer.track<1|2>.step<1-8>.ratchets",
                     "sequencer.track<1|2>.step<1-8>.gateMode",
+                    "sequencer.track<1|2>.step<1-8>.gateLength",
                     "sequencer.track<1|2>.step<1-8>.stepType",
                 ],
             ],
@@ -1159,11 +1160,13 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
         if Thread.isMainThread {
             MainActor.assumeIsolated { [weak self] in
                 guard let self, let engine = self.audioEngine else { return }
-                result["mode"] = engine.activeSamplerMode == .wavSampler ? "wavsampler" : "soundfont"
+                result["mode"] = engine.activeSamplerMode == .wavSampler ? "wavsampler" : engine.activeSamplerMode == .sfz ? "sfz" : "soundfont"
                 result["loaded"] = engine.soundFontLoaded
                 result["preset"] = engine.soundFontCurrentPreset
                 result["wavSamplerLoaded"] = engine.wavSamplerLoaded
                 result["wavInstrumentName"] = engine.wavSamplerInstrumentName
+                result["sfzLoaded"] = engine.sfzLoaded
+                result["sfzInstrumentName"] = engine.sfzInstrumentName
                 if engine.soundFontLoaded {
                     let names = engine.soundFontPresetNames
                     let idx = engine.soundFontCurrentPreset
@@ -1176,7 +1179,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             DispatchQueue.main.sync {
                 MainActor.assumeIsolated { [weak self] in
                     guard let self, let engine = self.audioEngine else { return }
-                    result["mode"] = engine.activeSamplerMode == .wavSampler ? "wavsampler" : "soundfont"
+                    result["mode"] = engine.activeSamplerMode == .wavSampler ? "wavsampler" : engine.activeSamplerMode == .sfz ? "sfz" : "soundfont"
                     result["loaded"] = engine.soundFontLoaded
                     result["preset"] = engine.soundFontCurrentPreset
                     result["wavSamplerLoaded"] = engine.wavSamplerLoaded
@@ -1205,6 +1208,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                 "probability": stage.probability,
                 "ratchets": stage.ratchets,
                 "gateMode": stage.gateMode.rawValue.lowercased(),
+                "gateLength": stage.gateLength,
                 "stepType": stage.stepType.rawValue.lowercased(),
             ])
         }
@@ -2033,8 +2037,8 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
         // Sampler targets
         if target == "synth.sampler.mode" {
             guard let value = modeTextFromAction(action),
-                  value == "soundfont" || value == "wavsampler" else {
-                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Sampler mode must be \"soundfont\" or \"wavsampler\""))
+                  value == "soundfont" || value == "sfz" || value == "wavsampler" else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Sampler mode must be \"soundfont\", \"sfz\", or \"wavsampler\""))
             }
             return (true, nil)
         }
@@ -2099,6 +2103,11 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             case "gateMode":
                 guard let text = modeTextFromAction(action), gateModeFromText(text) != nil else {
                     return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Unsupported step gateMode"))
+                }
+                return (true, nil)
+            case "gateLength":
+                guard let gl = feedbackValueFromAction(action), gl >= 0.01, gl <= 1.0 else {
+                    return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Step gateLength must be within [0.01, 1.0]"))
                 }
                 return (true, nil)
             case "stepType":
@@ -2510,7 +2519,12 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let modeStr = modeTextFromAction(action) else {
                 return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Missing mode value"))
             }
-            let mode: AudioEngineWrapper.SamplerMode = modeStr == "wavsampler" ? .wavSampler : .soundFont
+            let mode: AudioEngineWrapper.SamplerMode
+            switch modeStr {
+            case "sfz": mode = .sfz
+            case "wavsampler": mode = .wavSampler
+            default: mode = .soundFont
+            }
             DispatchQueue.main.sync {
                 MainActor.assumeIsolated { [weak self] in
                     self?.audioEngine?.setSamplerMode(mode)
@@ -2672,6 +2686,26 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                                 "step": stepProperty.stageIndex + 1,
                                 "field": "stepType",
                                 "value": stepType.rawValue,
+                            ]
+                        ),
+                    ]
+                )
+                return (true, nil)
+            case "gateLength":
+                guard let gl = feedbackValueFromAction(action), gl >= 0.01, gl <= 1.0 else {
+                    return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Step gateLength must be within [0.01, 1.0]"))
+                }
+                writeTrackStageGateLength(trackIndex: trackIndex, stage: stepProperty.stageIndex, gateLength: gl)
+                recordMutation(
+                    changedPaths: ["\(trackPathPrefix).step\(stepProperty.stageIndex + 1).gateLength"],
+                    additionalEvents: [
+                        (
+                            type: "sequencer.step_updated",
+                            payload: [
+                                "track": trackIndex + 1,
+                                "step": stepProperty.stageIndex + 1,
+                                "field": "gateLength",
+                                "value": gl,
                             ]
                         ),
                     ]
@@ -3237,12 +3271,16 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             ("harmonic", 4), ("wavetable", 5), ("chords", 6), ("speech", 7),
             ("granular cloud", 8), ("filtered noise", 9), ("particle noise", 10), ("string", 11),
             ("modal", 12), ("bass drum", 13), ("snare drum", 14), ("hi hat", 15),
+            ("six op fm", 16), ("sixop fm", 16), ("dx7", 16), ("6 op fm", 16),
         ]
         if let exact = names.first(where: { $0.0 == normalized }) {
-            return Float(exact.1) / 15.0
+            return Float(exact.1) / 16.0
         }
         if normalized.contains("string") {
-            return Float(11) / 15.0
+            return Float(11) / 16.0
+        }
+        if normalized.contains("six op") || normalized.contains("6op") || normalized.contains("dx7") {
+            return Float(16) / 16.0
         }
         return nil
     }
@@ -3615,6 +3653,20 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
         }
     }
 
+    private func writeTrackStageGateLength(trackIndex: Int, stage: Int, gateLength: Double) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { [weak self] in
+                self?.sequencer?.setStageGateLength(track: trackIndex, stage: stage, value: gateLength)
+            }
+            return
+        }
+        DispatchQueue.main.sync {
+            MainActor.assumeIsolated { [weak self] in
+                self?.sequencer?.setStageGateLength(track: trackIndex, stage: stage, value: gateLength)
+            }
+        }
+    }
+
     private func writeTrackStepGroup(trackIndex: Int, stageRange: ClosedRange<Int>, noteSlot: Int) {
         if Thread.isMainThread {
             MainActor.assumeIsolated { [weak self] in
@@ -3737,9 +3789,10 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             "bass drum",
             "snare drum",
             "hi hat",
+            "six op fm",
         ]
         let clamped = clamp01(Double(normalized))
-        let index = min(max(Int((clamped * 15.0).rounded()), 0), names.count - 1)
+        let index = min(max(Int((clamped * 16.0).rounded()), 0), names.count - 1)
         return names[index]
     }
 
@@ -4062,8 +4115,10 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             var mode = "soundfont"
             DispatchQueue.main.sync {
                 MainActor.assumeIsolated { [weak self] in
-                    if self?.audioEngine?.activeSamplerMode == .wavSampler {
-                        mode = "wavsampler"
+                    switch self?.audioEngine?.activeSamplerMode {
+                    case .sfz: mode = "sfz"
+                    case .wavSampler: mode = "wavsampler"
+                    default: mode = "soundfont"
                     }
                 }
             }
@@ -4073,12 +4128,17 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             DispatchQueue.main.sync {
                 MainActor.assumeIsolated { [weak self] in
                     guard let engine = self?.audioEngine else { return }
-                    if engine.activeSamplerMode == .wavSampler {
+                    switch engine.activeSamplerMode {
+                    case .sfz:
+                        name = engine.sfzInstrumentName
+                    case .wavSampler:
                         name = engine.wavSamplerInstrumentName
-                    } else if engine.soundFontLoaded {
-                        let names = engine.soundFontPresetNames
-                        let idx = engine.soundFontCurrentPreset
-                        name = idx < names.count ? names[idx] : ""
+                    case .soundFont:
+                        if engine.soundFontLoaded {
+                            let names = engine.soundFontPresetNames
+                            let idx = engine.soundFontCurrentPreset
+                            name = idx < names.count ? names[idx] : ""
+                        }
                     }
                 }
             }
@@ -4131,6 +4191,8 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                         return stage.ratchets
                     case "gateMode":
                         return stage.gateMode.rawValue.lowercased()
+                    case "gateLength":
+                        return stage.gateLength
                     case "stepType":
                         return stage.stepType.rawValue.lowercased()
                     default:

@@ -10,6 +10,7 @@
 #include "dr_wav.h"
 
 #include "WavSamplerVoice.h"
+#include "SfzParser.h"
 #include <cstring>
 #include <cmath>
 #include <algorithm>
@@ -168,6 +169,7 @@ WavSamplerVoice::WavSamplerVoice()
     , m_filterCutoff(1.0f)
     , m_filterResonance(0.0f)
     , m_tuning(0.0f)
+    , m_useSfzEnvelopes(false)
     , m_filterStateL(0.0f)
     , m_filterStateR(0.0f)
 {
@@ -278,6 +280,34 @@ bool WavSamplerVoice::LoadFromDirectory(const char* dirPath) {
         sample.variation = parsed.variation;
         sample.isRelease = parsed.isRelease;
 
+        // SFZ fields: backward-compatible defaults for mx.samples
+        sample.lokey = parsed.midiNote;
+        sample.hikey = parsed.midiNote;
+        sample.lovel = 0;
+        sample.hivel = 127;
+        sample.loopMode = WavSample::NoLoop;
+        sample.loopStart = 0;
+        sample.loopEnd = totalFrames > 0 ? totalFrames - 1 : 0;
+        sample.offset = 0;
+        sample.volume = 0.0f;
+        sample.pan = 0.0f;
+        sample.tune = 0;
+        sample.transpose = 0;
+
+        // SFZ extended: sentinel values (not specified)
+        sample.ampeg_attack = -1.0f;
+        sample.ampeg_hold = -1.0f;
+        sample.ampeg_decay = -1.0f;
+        sample.ampeg_sustain = -1.0f;
+        sample.ampeg_release = -1.0f;
+        sample.amp_veltrack = -1.0f;
+        sample.group = 0;
+        sample.off_by = 0;
+        sample.cutoff = 0.0f;
+        sample.resonance = 0.0f;
+        sample.fil_type = 0;
+        sample.pitch_keytrack = -1.0f;
+
         totalBytes += totalFrames * 2 * sizeof(float);
         loadedSamples.push_back(sample);
     }
@@ -300,6 +330,7 @@ bool WavSamplerVoice::LoadFromDirectory(const char* dirPath) {
     map->samples = new WavSample[map->sampleCount];
     std::memcpy(map->samples, loadedSamples.data(), map->sampleCount * sizeof(WavSample));
     map->totalMemoryBytes = totalBytes;
+    map->useSfzVelocity = false;
 
     // Build note lookup table
     for (int n = 0; n < 128; ++n) {
@@ -336,6 +367,43 @@ bool WavSamplerVoice::LoadFromDirectory(const char* dirPath) {
     return true;
 }
 
+bool WavSamplerVoice::LoadFromSfzFile(const char* sfzPath) {
+    SfzParseResult result = ParseSfzFile(sfzPath);
+    if (!result.success || result.samples.empty()) return false;
+
+    // Sort by lokey, then lovel for consistent ordering
+    std::sort(result.samples.begin(), result.samples.end(),
+        [](const WavSample& a, const WavSample& b) {
+            if (a.lokey != b.lokey) return a.lokey < b.lokey;
+            if (a.lovel != b.lovel) return a.lovel < b.lovel;
+            return a.variation < b.variation;
+        });
+
+    // Build SampleMap
+    SampleMap* map = new SampleMap{};
+    map->sampleCount = static_cast<int>(result.samples.size());
+    map->samples = new WavSample[map->sampleCount];
+    std::memcpy(map->samples, result.samples.data(), map->sampleCount * sizeof(WavSample));
+    map->totalMemoryBytes = result.totalMemoryBytes;
+    map->useSfzVelocity = true;
+
+    // Note table left empty — FindSample does linear scan for SFZ mode
+    for (int n = 0; n < 128; ++n) {
+        map->noteTable[n].firstSampleIndex = -1;
+        map->noteTable[n].sampleCount = 0;
+    }
+
+    // Instrument name from SFZ filename
+    std::strncpy(map->instrumentName, result.instrumentName.c_str(),
+                 sizeof(map->instrumentName) - 1);
+    map->instrumentName[sizeof(map->instrumentName) - 1] = '\0';
+
+    // Signal audio thread to swap
+    m_mapLoading = map;
+    m_swapPending.store(true, std::memory_order_release);
+    return true;
+}
+
 void WavSamplerVoice::Unload() {
     m_mapLoading = nullptr;
     m_swapPending.store(true, std::memory_order_release);
@@ -356,9 +424,32 @@ const WavSample* WavSamplerVoice::FindSample(int note, float velocity) {
     SampleMap* map = m_mapActive;
     if (!map || note < 0 || note > 127) return nullptr;
 
-    // First try exact note match
-    int searchNote = note;
-    int bestDist = 128;
+    // SFZ mode: direct key+velocity range matching
+    if (map->useSfzVelocity) {
+        int vel127 = static_cast<int>(velocity * 127.0f);
+        if (vel127 < 0) vel127 = 0;
+        if (vel127 > 127) vel127 = 127;
+
+        // Linear scan: collect samples matching key range and velocity range
+        std::vector<const WavSample*> candidates;
+        candidates.reserve(16);
+        for (int i = 0; i < map->sampleCount; ++i) {
+            const WavSample& s = map->samples[i];
+            if (note >= s.lokey && note <= s.hikey &&
+                vel127 >= s.lovel && vel127 <= s.hivel &&
+                !s.isRelease) {
+                candidates.push_back(&s);
+            }
+        }
+        if (candidates.empty()) return nullptr;
+
+        // Round-robin among matching candidates
+        int rr = m_roundRobin[note] % static_cast<int>(candidates.size());
+        m_roundRobin[note] = rr + 1;
+        return candidates[rr];
+    }
+
+    // mx.samples mode: nearest note + velocity layer lookup
 
     // Search for nearest note that has samples
     int closestNote = -1;
@@ -459,9 +550,19 @@ int WavSamplerVoice::AllocateVoice() {
     return oldest;
 }
 
-float WavSamplerVoice::ComputePlaybackRate(int targetNote, int rootNote, int sampleRate) const {
-    float pitchShift = std::pow(2.0f, (static_cast<float>(targetNote - rootNote) + m_tuning) / 12.0f);
-    float rateAdj = m_sampleRate / static_cast<float>(sampleRate);
+float WavSamplerVoice::ComputePlaybackRate(int targetNote, const WavSample* smp) const {
+    // SFZ pitch_keytrack: cents per key, default 100 (standard keyboard tracking)
+    // pitch_keytrack=0 makes all keys play at the root note pitch (useful for drums)
+    float keytrack = 100.0f;
+    if (m_useSfzEnvelopes && smp->pitch_keytrack >= 0) {
+        keytrack = smp->pitch_keytrack;
+    }
+    float semitoneDelta = static_cast<float>(targetNote - smp->rootNote) * (keytrack / 100.0f)
+                        + m_tuning
+                        + static_cast<float>(smp->transpose)
+                        + static_cast<float>(smp->tune) / 100.0f;
+    float pitchShift = std::pow(2.0f, semitoneDelta / 12.0f);
+    float rateAdj = static_cast<float>(smp->sampleRate) / m_sampleRate;
     return pitchShift * rateAdj;
 }
 
@@ -478,10 +579,28 @@ float WavSamplerVoice::AdvanceEnvelope(SamplerVoiceSlot& voice, float dt) {
         return 0.001f + p * maxTime;
     };
 
-    float attackTime  = paramToTime(m_attack, 2.0f);
-    float decayTime   = paramToTime(m_decay, 2.0f);
-    float sustainLevel = m_sustain;
-    float releaseTime = paramToTime(m_release, 3.0f);
+    // Use per-region SFZ values if available, else global knob values
+    float attackTime, holdTime, decayTime, sustainLevel, releaseTime;
+
+    if (m_useSfzEnvelopes && voice.sample) {
+        const auto& s = *voice.sample;
+        attackTime   = (s.ampeg_attack >= 0)  ? s.ampeg_attack  : paramToTime(m_attack, 2.0f);
+        holdTime     = (s.ampeg_hold >= 0)    ? s.ampeg_hold    : 0.0f;
+        decayTime    = (s.ampeg_decay >= 0)   ? s.ampeg_decay   : paramToTime(m_decay, 2.0f);
+        sustainLevel = (s.ampeg_sustain >= 0) ? s.ampeg_sustain / 100.0f : m_sustain;
+        releaseTime  = (s.ampeg_release >= 0) ? s.ampeg_release : paramToTime(m_release, 3.0f);
+    } else {
+        attackTime   = paramToTime(m_attack, 2.0f);
+        holdTime     = 0.0f;
+        decayTime    = paramToTime(m_decay, 2.0f);
+        sustainLevel = m_sustain;
+        releaseTime  = paramToTime(m_release, 3.0f);
+    }
+
+    // Clamp minimum times to avoid division by zero
+    if (attackTime < 0.0001f) attackTime = 0.0001f;
+    if (decayTime < 0.0001f) decayTime = 0.0001f;
+    if (releaseTime < 0.0001f) releaseTime = 0.0001f;
 
     voice.envPhase += dt;
 
@@ -490,10 +609,22 @@ float WavSamplerVoice::AdvanceEnvelope(SamplerVoiceSlot& voice, float dt) {
             float t = voice.envPhase / attackTime;
             if (t >= 1.0f) {
                 voice.envLevel = 1.0f;
-                voice.state = SamplerVoiceSlot::State::Decay;
                 voice.envPhase = 0.0f;
+                if (holdTime > 0.0f) {
+                    voice.state = SamplerVoiceSlot::State::Hold;
+                } else {
+                    voice.state = SamplerVoiceSlot::State::Decay;
+                }
             } else {
                 voice.envLevel = t;
+            }
+            break;
+        }
+        case SamplerVoiceSlot::State::Hold: {
+            voice.envLevel = 1.0f;
+            if (voice.envPhase >= holdTime) {
+                voice.state = SamplerVoiceSlot::State::Decay;
+                voice.envPhase = 0.0f;
             }
             break;
         }
@@ -538,17 +669,33 @@ void WavSamplerVoice::NoteOn(int note, float velocity) {
     const WavSample* sample = FindSample(note, velocity);
     if (!sample) return;
 
+    // Mute groups: if the new sample has a group, kill active voices whose off_by matches
+    if (m_useSfzEnvelopes && sample->group > 0) {
+        for (int i = 0; i < m_maxPolyphony; ++i) {
+            auto& slot = m_voices[i];
+            if (slot.state != SamplerVoiceSlot::State::Off &&
+                slot.sample && slot.sample->off_by == sample->group) {
+                slot.state = SamplerVoiceSlot::State::Off;
+                slot.envLevel = 0.0f;
+            }
+        }
+    }
+
     int slot = AllocateVoice();
     auto& v = m_voices[slot];
 
     v.state = SamplerVoiceSlot::State::Attack;
     v.note = note;
     v.velocity = velocity;
-    v.playbackRate = ComputePlaybackRate(note, sample->rootNote, sample->sampleRate);
-    v.playhead = 0.0;
+    v.playbackRate = ComputePlaybackRate(note, sample);
+    v.playhead = static_cast<double>(sample->offset);
     v.sample = sample;
     v.envLevel = 0.0f;
     v.envPhase = 0.0f;
+    v.svfIc1eqL = 0.0f;
+    v.svfIc2eqL = 0.0f;
+    v.svfIc1eqR = 0.0f;
+    v.svfIc2eqR = 0.0f;
     v.startTime = ++m_voiceCounter;
 }
 
@@ -557,8 +704,13 @@ void WavSamplerVoice::NoteOff(int note) {
         auto& v = m_voices[i];
         if (v.note == note && v.state != SamplerVoiceSlot::State::Off &&
             v.state != SamplerVoiceSlot::State::Release) {
+            // OneShot samples ignore note-off — play to completion
+            if (v.sample && v.sample->loopMode == WavSample::OneShot) continue;
+            // Store current level before transitioning so release can fade from it
+            float currentLevel = v.envLevel;
             v.state = SamplerVoiceSlot::State::Release;
             v.envPhase = 0.0f;
+            v.envLevel = currentLevel;
         }
     }
 }
@@ -593,6 +745,8 @@ void WavSamplerVoice::SetFilterResonance(float value) { m_filterResonance = std:
 void WavSamplerVoice::SetTuning(float semitones) {
     m_tuning = std::clamp(semitones, -24.0f, 24.0f);
 }
+
+void WavSamplerVoice::SetUseSfzEnvelopes(bool use) { m_useSfzEnvelopes = use; }
 
 void WavSamplerVoice::SetMaxPolyphony(int voices) {
     m_maxPolyphony = std::clamp(voices, 1, kMaxVoices);
@@ -630,6 +784,35 @@ void WavSamplerVoice::Render(float* out_left, float* out_right, size_t size) {
         const float* data = smp->data;   // Interleaved stereo
         const size_t frames = smp->frameCount;
 
+        // Per-sample volume (dB to linear) and pan (-100..+100)
+        const float volGain = std::pow(10.0f, smp->volume / 20.0f);
+        const float panNorm = smp->pan / 100.0f;  // -1 to +1
+        const float gainL = volGain * std::min(1.0f, 1.0f - panNorm);
+        const float gainR = volGain * std::min(1.0f, 1.0f + panNorm);
+
+        // Velocity tracking: amp_veltrack controls how much velocity affects volume
+        float veltrack = 1.0f;
+        if (m_useSfzEnvelopes && smp->amp_veltrack >= 0) {
+            veltrack = smp->amp_veltrack / 100.0f;
+        }
+        // velGain: when veltrack=100%, equals velocity; when veltrack=0%, equals 1.0
+        float velGain = 1.0f - veltrack + veltrack * voice.velocity;
+
+        // Per-voice SVF filter coefficients (computed once per voice per block)
+        bool hasSvf = m_useSfzEnvelopes && smp->cutoff > 0.0f;
+        float svfG = 0.0f, svfK = 0.0f, svfA1 = 0.0f, svfA2 = 0.0f, svfA3 = 0.0f;
+        if (hasSvf) {
+            float cutHz = smp->cutoff;
+            if (cutHz > m_sampleRate * 0.49f) cutHz = m_sampleRate * 0.49f;
+            svfG = std::tan(3.14159265f * cutHz / m_sampleRate);
+            // resonance in dB (0-40 range typical) → damping factor
+            svfK = 2.0f - 2.0f * std::min(smp->resonance, 40.0f) / 40.0f;
+            if (svfK < 0.01f) svfK = 0.01f;
+            svfA1 = 1.0f / (1.0f + svfG * (svfG + svfK));
+            svfA2 = svfG * svfA1;
+            svfA3 = svfG * svfA2;
+        }
+
         for (size_t i = 0; i < size; ++i) {
             // Advance envelope
             float env = AdvanceEnvelope(voice, dt);
@@ -637,16 +820,38 @@ void WavSamplerVoice::Render(float* out_left, float* out_right, size_t size) {
 
             // Get sample position
             double pos = voice.playhead;
+
+            // Loop handling
+            if (smp->loopMode == WavSample::LoopContinuous) {
+                double loopS = static_cast<double>(smp->loopStart);
+                double loopE = static_cast<double>(smp->loopEnd);
+                double loopLen = loopE - loopS;
+                if (loopLen > 0.0 && pos >= loopE) {
+                    pos = loopS + std::fmod(pos - loopS, loopLen);
+                    voice.playhead = pos;
+                }
+            } else if (smp->loopMode == WavSample::LoopSustain) {
+                // Loop only during Attack/Hold/Decay/Sustain — release plays through to end
+                if (voice.state != SamplerVoiceSlot::State::Release) {
+                    double loopS = static_cast<double>(smp->loopStart);
+                    double loopE = static_cast<double>(smp->loopEnd);
+                    double loopLen = loopE - loopS;
+                    if (loopLen > 0.0 && pos >= loopE) {
+                        pos = loopS + std::fmod(pos - loopS, loopLen);
+                        voice.playhead = pos;
+                    }
+                }
+            }
+            // NoLoop and OneShot: no loop wrapping
+
+            // End-of-sample check
             if (pos >= static_cast<double>(frames - 1)) {
-                // Sample ended — go to release if still playing
                 if (voice.state != SamplerVoiceSlot::State::Release) {
                     voice.state = SamplerVoiceSlot::State::Release;
                     voice.envPhase = 0.0f;
                 }
-                // Fade out remaining envelope
                 env = AdvanceEnvelope(voice, dt);
                 if (voice.state == SamplerVoiceSlot::State::Off) break;
-                // Output silence while envelope fades
                 continue;
             }
 
@@ -659,10 +864,39 @@ void WavSamplerVoice::Render(float* out_left, float* out_right, size_t size) {
             float sampleL = data[idx0 * 2]     * (1.0f - frac) + data[idx1 * 2]     * frac;
             float sampleR = data[idx0 * 2 + 1] * (1.0f - frac) + data[idx1 * 2 + 1] * frac;
 
-            // Apply envelope and velocity scaling
-            float gain = env * voice.velocity * m_level;
-            out_left[i]  += sampleL * gain;
-            out_right[i] += sampleR * gain;
+            // Per-voice SVF filter (Cytomic/Zavalishin topology)
+            if (hasSvf) {
+                // Left channel
+                float v3L = sampleL - voice.svfIc2eqL;
+                float v1L = svfA1 * voice.svfIc1eqL + svfA2 * v3L;
+                float v2L = voice.svfIc2eqL + svfA2 * voice.svfIc1eqL + svfA3 * v3L;
+                voice.svfIc1eqL = 2.0f * v1L - voice.svfIc1eqL;
+                voice.svfIc2eqL = 2.0f * v2L - voice.svfIc2eqL;
+
+                // Right channel (independent state for true stereo)
+                float v3R = sampleR - voice.svfIc2eqR;
+                float v1R = svfA1 * voice.svfIc1eqR + svfA2 * v3R;
+                float v2R = voice.svfIc2eqR + svfA2 * voice.svfIc1eqR + svfA3 * v3R;
+                voice.svfIc1eqR = 2.0f * v1R - voice.svfIc1eqR;
+                voice.svfIc2eqR = 2.0f * v2R - voice.svfIc2eqR;
+
+                // Select output based on fil_type: 0=lpf, 1=hpf, 2=bpf
+                if (smp->fil_type == 1) {
+                    sampleL = v3L - svfK * v1L;  // HPF
+                    sampleR = v3R - svfK * v1R;
+                } else if (smp->fil_type == 2) {
+                    sampleL = v1L;  // BPF
+                    sampleR = v1R;
+                } else {
+                    sampleL = v2L;  // LPF
+                    sampleR = v2R;
+                }
+            }
+
+            // Apply envelope, velocity tracking, level, and per-sample volume/pan
+            float baseGain = env * velGain * m_level;
+            out_left[i]  += sampleL * baseGain * gainL;
+            out_right[i] += sampleR * baseGain * gainR;
 
             // Advance playhead
             voice.playhead += voice.playbackRate;

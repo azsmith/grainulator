@@ -12,7 +12,6 @@
 #include "ReelBuffer.h"
 #include "Grain.h"
 #include "MoogLadders/LadderFilterBase.h"
-#include "MoogLadders/SimplifiedModel.h"
 #include "MoogLadders/HuovilainenModel.h"
 #include "MoogLadders/StilsonModel.h"
 #include "MoogLadders/MicrotrackerModel.h"
@@ -46,8 +45,7 @@ static constexpr size_t kMaxGrainsPerVoice = 64;
 class GranularVoice {
 public:
     enum class FilterModel {
-        Simplified = 0,
-        Huovilainen,
+        Huovilainen = 0,
         Stilson,
         Microtracker,
         Krajeski,
@@ -710,7 +708,6 @@ private:
 
     std::unique_ptr<LadderFilterBase> CreateFilterInstance(FilterModel model) const {
         switch (model) {
-            case FilterModel::Simplified: return std::make_unique<SimplifiedMoog>(sample_rate_);
             case FilterModel::Huovilainen: return std::make_unique<HuovilainenMoog>(sample_rate_);
             case FilterModel::Stilson: return std::make_unique<StilsonMoog>(sample_rate_);
             case FilterModel::Microtracker: return std::make_unique<MicrotrackerMoog>(sample_rate_);
@@ -738,7 +735,6 @@ private:
         float cutoffLimit = 0.45f;
         float resonanceMax = 1.0f;
         switch (filter_model_) {
-            case FilterModel::Simplified:         cutoffLimit = 0.40f; resonanceMax = 0.88f; break;
             case FilterModel::Huovilainen:        cutoffLimit = 0.38f; resonanceMax = 0.74f; break;
             case FilterModel::Stilson:            cutoffLimit = 0.45f; resonanceMax = 0.95f; break;
             case FilterModel::Microtracker:       cutoffLimit = 0.45f; resonanceMax = 0.92f; break;
@@ -771,7 +767,6 @@ private:
         // Model-specific stability limits
         float cutoffLimit = 0.45f;
         switch (filter_model_) {
-            case FilterModel::Simplified:         cutoffLimit = 0.40f; break;
             case FilterModel::Huovilainen:        cutoffLimit = 0.38f; break;
             case FilterModel::Stilson:            cutoffLimit = 0.45f; break;
             case FilterModel::Microtracker:       cutoffLimit = 0.45f; break;

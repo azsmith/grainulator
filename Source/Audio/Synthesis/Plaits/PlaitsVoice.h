@@ -32,7 +32,7 @@ public:
     // size: number of samples to render
     void Render(float* out, float* aux, size_t size);
 
-    // Engine selection (0-15 for the 16 models)
+    // Engine selection (0-16 for the 17 models)
     void SetEngine(int engine);
     int GetEngine() const { return current_engine_; }
 
@@ -63,6 +63,9 @@ public:
     // LPG Bypass (for testing) - when true, audio passes through without LPG processing
     void SetLPGBypass(bool bypass);
     bool GetLPGBypass() const { return lpg_bypass_; }
+
+    // Custom wavetable loading (passed through to WavetableEngine)
+    void LoadUserWavetable(const float* data, int numSamples, int frameSize = 0);
 
 private:
     float sample_rate_;
@@ -96,6 +99,12 @@ private:
     // LPG filter state
     float lpg_filter_state_;
 
+    // Engine crossfade state
+    int previous_engine_;           // Engine we're fading from (-1 = none)
+    float crossfade_position_;      // 0.0 = old engine, 1.0 = new engine
+    float crossfade_increment_;     // Per-sample crossfade speed
+    static constexpr float kCrossfadeDurationMs = 30.0f;
+
     // Engine instances (using void* to avoid header dependencies)
     void* va_engine_;         // VirtualAnalogEngine (0)
     void* ws_engine_;         // WaveshapingEngine (1)
@@ -109,9 +118,11 @@ private:
     void* noise_engine_;      // NoiseEngine (9, 10)
     void* string_engine_;     // StringEngine (11, 12)
     void* percussion_engine_; // PercussionEngine (13, 14, 15)
+    void* sixop_fm_engine_;   // SixOpFMEngine (16)
 
-    // Internal render helper
+    // Internal render helpers
     void RenderEngine(float* out, float* aux, size_t size);
+    void RenderSpecificEngine(int engine, float* out, float* aux, size_t size);
 
     // Check if current engine is percussion (kick, snare, hihat)
     bool IsPercussionEngine() const;

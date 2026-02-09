@@ -225,11 +225,17 @@ public:
         SamplerFilterResonance, // 0–1
         SamplerTuning,          // 0–1 maps to –24..+24 semitones
         SamplerLevel,           // 0–1 output level
-        SamplerMode             // 0=SoundFont, 1=WavSampler
+        SamplerMode,            // 0=SoundFont, 1=WavSampler
+
+        // Rings extended parameters
+        RingsPolyphony,         // 0=1, 0.5=2, 1.0=4
+        RingsChord,             // 0-1 maps to 0-10 chord index
+        RingsFM,                // 0-1 maps to ±24 semitones
+        RingsExciterSource      // 0=internal, >0 maps to source channels
     };
 
-    // Sampler engine mode: SoundFont (.sf2) or WAV-based (mx.samples)
-    enum class SamplerMode { SoundFont = 0, WavSampler = 1 };
+    // Sampler engine mode: SoundFont (.sf2), SFZ, or WAV-based (mx.samples)
+    enum class SamplerMode { SoundFont = 0, Sfz = 1, WavSampler = 2 };
 
     // Clock output waveform types
     enum class ClockWaveform {
@@ -312,6 +318,7 @@ public:
 
     // WAV sampler control (mx.samples)
     bool loadWavSampler(const char* dirPath);
+    bool loadSfzFile(const char* sfzPath);
     void unloadWavSampler();
     const char* getWavSamplerInstrumentName() const;
     void setSamplerMode(SamplerMode mode);
@@ -333,6 +340,9 @@ public:
     void clearReel(int reelIndex);
     size_t getReelLength(int reelIndex) const;
     void getWaveformOverview(int reelIndex, float* output, size_t outputSize) const;
+
+    // Wavetable loading
+    void loadUserWavetable(const float* data, int numSamples, int frameSize = 0);
 
     // Granular playback control
     void setGranularPlaying(int voiceIndex, bool playing);
@@ -476,6 +486,14 @@ private:
     float m_lpgDecay;
     float m_lpgAttack;
     bool m_lpgBypass;
+
+    // Rings extended parameters
+    int m_ringsPolyphony;         // 1, 2, or 4
+    int m_ringsChord;             // 0-10
+    float m_ringsFM;              // 0-1
+    int m_ringsExciterSource;     // -1=internal, 0-11=channel index
+    float m_ringsExciterBufferL[kMaxBufferSize];
+    float m_ringsExciterBufferR[kMaxBufferSize];
 
     // DaisyDrum shared parameters
     int m_currentDaisyDrumEngine;

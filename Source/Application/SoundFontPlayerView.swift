@@ -56,6 +56,7 @@ struct SoundFontPlayerView: View {
     private var modeToggle: some View {
         HStack(spacing: 0) {
             modeButton("SF2", mode: .soundFont)
+            modeButton("SFZ", mode: .sfz)
             modeButton("WAV", mode: .wavSampler)
         }
         .background(
@@ -84,7 +85,8 @@ struct SoundFontPlayerView: View {
 
     private var sourcePickerSection: some View {
         VStack(spacing: 4) {
-            if audioEngine.activeSamplerMode == .soundFont {
+            switch audioEngine.activeSamplerMode {
+            case .soundFont:
                 Button(action: openSoundFontFile) {
                     HStack(spacing: 4) {
                         Image(systemName: "doc.badge.plus")
@@ -111,7 +113,36 @@ struct SoundFontPlayerView: View {
                     )
                 }
                 .buttonStyle(.plain)
-            } else {
+
+            case .sfz:
+                Button(action: openSfzFile) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "doc.text")
+                            .font(.system(size: 9))
+                            .foregroundColor(ColorPalette.accentSampler)
+                        Text(audioEngine.sfzLoaded
+                             ? (audioEngine.sfzFilePath?.lastPathComponent ?? "Loaded")
+                             : "Open SFZ...")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundColor(ColorPalette.synthPanelLabel)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.black.opacity(0.3))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(ColorPalette.synthPanelDivider, lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+
+            case .wavSampler:
                 Button(action: { showLibraryBrowser = true }) {
                     HStack(spacing: 4) {
                         Image(systemName: "music.note.list")
@@ -147,9 +178,12 @@ struct SoundFontPlayerView: View {
 
     private var presetOrInstrumentSection: some View {
         Group {
-            if audioEngine.activeSamplerMode == .soundFont {
+            switch audioEngine.activeSamplerMode {
+            case .soundFont:
                 presetSelector
-            } else {
+            case .sfz:
+                sfzInstrumentDisplay
+            case .wavSampler:
                 wavInstrumentDisplay
             }
         }
@@ -198,6 +232,33 @@ struct SoundFontPlayerView: View {
                 .buttonStyle(.plain)
             } else {
                 Text("No SoundFont loaded")
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundColor(ColorPalette.synthPanelLabelDim)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    private var sfzInstrumentDisplay: some View {
+        VStack(spacing: 2) {
+            if audioEngine.sfzLoaded {
+                Text(audioEngine.sfzInstrumentName)
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(ColorPalette.synthPanelLabel)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.black.opacity(0.3))
+                    )
+                Text("Per-region envelopes from SFZ take priority")
+                    .font(.system(size: 8, weight: .regular, design: .monospaced))
+                    .foregroundColor(ColorPalette.synthPanelLabelDim)
+            } else {
+                Text("No SFZ loaded")
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .foregroundColor(ColorPalette.synthPanelLabelDim)
                     .frame(maxWidth: .infinity)
@@ -335,6 +396,18 @@ struct SoundFontPlayerView: View {
 
         if panel.runModal() == .OK, let url = panel.url {
             audioEngine.loadSoundFont(url: url)
+        }
+    }
+
+    private func openSfzFile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.init(filenameExtension: "sfz")!]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.title = "Open SFZ Instrument"
+
+        if panel.runModal() == .OK, let url = panel.url {
+            audioEngine.loadSfzFile(url: url)
         }
     }
 }

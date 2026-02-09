@@ -16,7 +16,6 @@
 #include "SoundFont/WavSamplerVoice.h"
 // Moog ladder filter models for master filter
 #include "Granular/MoogLadders/LadderFilterBase.h"
-#include "Granular/MoogLadders/SimplifiedModel.h"
 #include "Granular/MoogLadders/HuovilainenModel.h"
 #include "Granular/MoogLadders/StilsonModel.h"
 #include "Granular/MoogLadders/MicrotrackerModel.h"
@@ -67,6 +66,10 @@ AudioEngine::AudioEngine()
     , m_lpgDecay(0.5f)
     , m_lpgAttack(0.0f)
     , m_lpgBypass(false)
+    , m_ringsPolyphony(1)
+    , m_ringsChord(0)
+    , m_ringsFM(0.0f)
+    , m_ringsExciterSource(-1)
     , m_currentDaisyDrumEngine(0)
     , m_daisyDrumHarmonics(0.5f)
     , m_daisyDrumTimbre(0.5f)
@@ -130,6 +133,10 @@ AudioEngine::AudioEngine()
     m_processingBuffer[1] = nullptr;
     m_voiceBuffer[0] = nullptr;
     m_voiceBuffer[1] = nullptr;
+
+    // Zero exciter buffers
+    std::memset(m_ringsExciterBufferL, 0, sizeof(m_ringsExciterBufferL));
+    std::memset(m_ringsExciterBufferR, 0, sizeof(m_ringsExciterBufferR));
 
     // Initialize effects buffers to nullptr
     for (size_t i = 0; i < kNumCombs; ++i) {
@@ -483,7 +490,7 @@ void AudioEngine::noteOnTarget(int note, int velocity, uint8_t targetMask) {
     // Sampler (bit 7) — routes to active sampler mode
     if ((targetMask & static_cast<uint8_t>(NoteTarget::TargetSampler)) != 0) {
         float vel = static_cast<float>(velocity) / 127.0f;
-        if (m_samplerMode == SamplerMode::WavSampler && m_wavSamplerVoice) {
+        if ((m_samplerMode == SamplerMode::WavSampler || m_samplerMode == SamplerMode::Sfz) && m_wavSamplerVoice) {
             m_wavSamplerVoice->NoteOn(note, vel);
         } else if (m_soundFontVoice) {
             m_soundFontVoice->NoteOn(note, vel);
@@ -512,7 +519,7 @@ void AudioEngine::noteOffTarget(int note, uint8_t targetMask) {
 
     // Sampler (bit 7) — routes to active sampler mode
     if ((targetMask & static_cast<uint8_t>(NoteTarget::TargetSampler)) != 0) {
-        if (m_samplerMode == SamplerMode::WavSampler && m_wavSamplerVoice) {
+        if ((m_samplerMode == SamplerMode::WavSampler || m_samplerMode == SamplerMode::Sfz) && m_wavSamplerVoice) {
             m_wavSamplerVoice->NoteOff(note);
         } else if (m_soundFontVoice) {
             m_soundFontVoice->NoteOff(note);
@@ -757,6 +764,12 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
             // Record from Plaits (channel 0) pre-mixer
             processRecordingForChannel(0, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
 
+            // Capture for Rings exciter if Plaits is the source (channel 0)
+            if (m_ringsExciterSource == 0) {
+                std::memcpy(m_ringsExciterBufferL, m_voiceBuffer[0], frameCount * sizeof(float));
+                std::memcpy(m_ringsExciterBufferR, m_voiceBuffer[1], frameCount * sizeof(float));
+            }
+
             float gain = m_channelGain[ch];
             float pan = m_channelPan[ch];
             float sendA = m_channelSendA[ch];
@@ -803,7 +816,16 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
             std::memset(m_voiceBuffer[0], 0, frameCount * sizeof(float));
             std::memset(m_voiceBuffer[1], 0, frameCount * sizeof(float));
             if (m_ringsVoice) {
-                m_ringsVoice->Render(m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+                // Mix exciter buffer to mono for Rings input (Part expects mono in)
+                float exciterMono[kMaxBufferSize];
+                if (m_ringsExciterSource >= 0) {
+                    for (int i = 0; i < frameCount; ++i) {
+                        exciterMono[i] = (m_ringsExciterBufferL[i] + m_ringsExciterBufferR[i]) * 0.5f;
+                    }
+                } else {
+                    std::memset(exciterMono, 0, frameCount * sizeof(float));
+                }
+                m_ringsVoice->Render(exciterMono, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
             }
 
             // Record from Rings (channel 1) pre-mixer
@@ -870,6 +892,12 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
 
             // Record from track voice (channel ch) pre-mixer
             processRecordingForChannel(ch, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+
+            // Capture for Rings exciter (ch maps to exciter source: 2=Gran1, 3=Loop1, 4=Loop2, 5=Gran4)
+            if (m_ringsExciterSource == ch) {
+                std::memcpy(m_ringsExciterBufferL, m_voiceBuffer[0], frameCount * sizeof(float));
+                std::memcpy(m_ringsExciterBufferR, m_voiceBuffer[1], frameCount * sizeof(float));
+            }
 
             float gain = m_channelGain[ch];
             float pan = m_channelPan[ch];
@@ -942,6 +970,12 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
             // Record from DaisyDrum + all drum lanes mixed (channel 6) pre-mixer
             processRecordingForChannel(6, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
 
+            // Capture for Rings exciter (channel 6 = Drums)
+            if (m_ringsExciterSource == 6) {
+                std::memcpy(m_ringsExciterBufferL, m_voiceBuffer[0], frameCount * sizeof(float));
+                std::memcpy(m_ringsExciterBufferR, m_voiceBuffer[1], frameCount * sizeof(float));
+            }
+
             float gain = m_channelGain[ch];
             float pan = m_channelPan[ch];
             float sendA = m_channelSendA[ch];
@@ -988,7 +1022,7 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
 
             std::memset(m_voiceBuffer[0], 0, frameCount * sizeof(float));
             std::memset(m_voiceBuffer[1], 0, frameCount * sizeof(float));
-            if (m_samplerMode == SamplerMode::WavSampler) {
+            if (m_samplerMode == SamplerMode::WavSampler || m_samplerMode == SamplerMode::Sfz) {
                 if (m_wavSamplerVoice) {
                     // Always call Render — it handles CheckSwap internally
                     m_wavSamplerVoice->Render(m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
@@ -1003,6 +1037,12 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
 
             // Record from Sampler (channel 11) pre-mixer
             processRecordingForChannel(11, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+
+            // Capture for Rings exciter (source 11 = Sampler)
+            if (m_ringsExciterSource == 11) {
+                std::memcpy(m_ringsExciterBufferL, m_voiceBuffer[0], frameCount * sizeof(float));
+                std::memcpy(m_ringsExciterBufferR, m_voiceBuffer[1], frameCount * sizeof(float));
+            }
 
             float gain = m_channelGain[ch];
             float pan = m_channelPan[ch];
@@ -1249,6 +1289,12 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
             // Record from Plaits (channel 0) pre-output
             processRecordingForChannel(0, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
 
+            // Capture for Rings exciter if Plaits is the source (channel 0)
+            if (m_ringsExciterSource == 0) {
+                std::memcpy(m_ringsExciterBufferL, m_voiceBuffer[0], frameCount * sizeof(float));
+                std::memcpy(m_ringsExciterBufferR, m_voiceBuffer[1], frameCount * sizeof(float));
+            }
+
             // Copy to output buffers (no mixing/effects)
             if (channelBuffers[0]) {
                 std::memcpy(channelBuffers[0] + frameOffset, m_voiceBuffer[0], frameCount * sizeof(float));
@@ -1270,7 +1316,16 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
             std::memset(m_voiceBuffer[1], 0, frameCount * sizeof(float));
 
             if (m_ringsVoice) {
-                m_ringsVoice->Render(m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+                // Mix exciter buffer to mono for Rings input (Part expects mono in)
+                float exciterMono[kMaxBufferSize];
+                if (m_ringsExciterSource >= 0) {
+                    for (int i = 0; i < frameCount; ++i) {
+                        exciterMono[i] = (m_ringsExciterBufferL[i] + m_ringsExciterBufferR[i]) * 0.5f;
+                    }
+                } else {
+                    std::memset(exciterMono, 0, frameCount * sizeof(float));
+                }
+                m_ringsVoice->Render(exciterMono, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
             }
 
             // Record from Rings (channel 1) pre-output
@@ -1309,6 +1364,12 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
 
             // Record from track voice (channel trackIndex+2) pre-output
             processRecordingForChannel(trackIndex + 2, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+
+            // Capture for Rings exciter (ch maps to exciter source: 2=Gran1, 3=Loop1, 4=Loop2, 5=Gran4)
+            if (m_ringsExciterSource == trackIndex + 2) {
+                std::memcpy(m_ringsExciterBufferL, m_voiceBuffer[0], frameCount * sizeof(float));
+                std::memcpy(m_ringsExciterBufferR, m_voiceBuffer[1], frameCount * sizeof(float));
+            }
 
             if (channelBuffers[bufferBaseIndex]) {
                 std::memcpy(channelBuffers[bufferBaseIndex] + frameOffset, m_voiceBuffer[0], frameCount * sizeof(float));
@@ -1354,6 +1415,12 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
             // Record from DaisyDrum + all drum lanes mixed (channel 6) pre-output
             processRecordingForChannel(6, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
 
+            // Capture for Rings exciter (channel 6 = Drums)
+            if (m_ringsExciterSource == 6) {
+                std::memcpy(m_ringsExciterBufferL, m_voiceBuffer[0], frameCount * sizeof(float));
+                std::memcpy(m_ringsExciterBufferR, m_voiceBuffer[1], frameCount * sizeof(float));
+            }
+
             if (channelBuffers[12]) {
                 std::memcpy(channelBuffers[12] + frameOffset, m_voiceBuffer[0], frameCount * sizeof(float));
             }
@@ -1372,7 +1439,7 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
             std::memset(m_voiceBuffer[0], 0, frameCount * sizeof(float));
             std::memset(m_voiceBuffer[1], 0, frameCount * sizeof(float));
 
-            if (m_samplerMode == SamplerMode::WavSampler) {
+            if (m_samplerMode == SamplerMode::WavSampler || m_samplerMode == SamplerMode::Sfz) {
                 if (m_wavSamplerVoice) {
                     // Always call Render — it handles CheckSwap internally
                     // and outputs silence if no map is active yet
@@ -1388,6 +1455,12 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
 
             // Record from Sampler (channel 11) pre-output
             processRecordingForChannel(11, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+
+            // Capture for Rings exciter (source 11 = Sampler)
+            if (m_ringsExciterSource == 11) {
+                std::memcpy(m_ringsExciterBufferL, m_voiceBuffer[0], frameCount * sizeof(float));
+                std::memcpy(m_ringsExciterBufferR, m_voiceBuffer[1], frameCount * sizeof(float));
+            }
 
             if (channelBuffers[14]) {
                 std::memcpy(channelBuffers[14] + frameOffset, m_voiceBuffer[0], frameCount * sizeof(float));
@@ -1843,6 +1916,45 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
             }
             break;
 
+        case ParameterID::RingsPolyphony:
+            if (m_ringsVoice) {
+                int poly;
+                if (clampedValue < 0.33f) poly = 1;
+                else if (clampedValue < 0.67f) poly = 2;
+                else poly = 4;
+                m_ringsPolyphony = poly;
+                m_ringsVoice->SetPolyphony(poly);
+            }
+            break;
+
+        case ParameterID::RingsChord:
+            if (m_ringsVoice) {
+                m_ringsChord = std::clamp(static_cast<int>(clampedValue * 10.0f + 0.5f), 0, 10);
+                m_ringsVoice->SetChord(m_ringsChord);
+            }
+            break;
+
+        case ParameterID::RingsFM:
+            if (m_ringsVoice) {
+                m_ringsFM = clampedValue;
+                m_ringsVoice->SetFM(clampedValue);
+            }
+            break;
+
+        case ParameterID::RingsExciterSource:
+        {
+            // 0.0 = internal, >0 maps linearly to channel indices 0-11
+            if (clampedValue < 0.01f) {
+                m_ringsExciterSource = -1;  // internal
+            } else {
+                m_ringsExciterSource = std::clamp(static_cast<int>(clampedValue * 12.0f - 0.5f), 0, 11);
+            }
+            if (m_ringsVoice) {
+                m_ringsVoice->SetInternalExciter(m_ringsExciterSource < 0);
+            }
+            break;
+        }
+
         // ========== Looper Parameters (tracks 2 & 3) ==========
         case ParameterID::LooperRate:
             if (looperVoice >= 0 && looperVoice < kNumLooperVoices && m_looperVoices[looperVoice]) {
@@ -1879,7 +1991,7 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
 
         // ========== Plaits Parameters ==========
         case ParameterID::PlaitsModel:
-            m_currentEngine = static_cast<int>(value * 15.0f + 0.5f);
+            m_currentEngine = static_cast<int>(value * 16.0f + 0.5f);
             // Apply to all voices
             for (int i = 0; i < kNumPlaitsVoices; ++i) {
                 if (m_plaitsVoices[i]) {
@@ -2165,7 +2277,14 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
             if (m_wavSamplerVoice) m_wavSamplerVoice->SetLevel(clampedValue);
             break;
         case ParameterID::SamplerMode:
-            m_samplerMode = (clampedValue >= 0.5f) ? SamplerMode::WavSampler : SamplerMode::SoundFont;
+            if (clampedValue < 0.33f)
+                m_samplerMode = SamplerMode::SoundFont;
+            else if (clampedValue < 0.67f)
+                m_samplerMode = SamplerMode::Sfz;
+            else
+                m_samplerMode = SamplerMode::WavSampler;
+            if (m_wavSamplerVoice)
+                m_wavSamplerVoice->SetUseSfzEnvelopes(m_samplerMode == SamplerMode::Sfz);
             break;
 
         default:
@@ -2278,7 +2397,18 @@ float AudioEngine::getParameter(ParameterID id, int voiceIndex) const {
             if (maxModel <= 0) { return 0.0f; }
             return clamp01(static_cast<float>(m_currentRingsModel) / static_cast<float>(maxModel));
         }
-        case ParameterID::PlaitsModel: return clamp01(static_cast<float>(m_currentEngine) / 15.0f);
+        case ParameterID::RingsPolyphony: {
+            if (m_ringsPolyphony >= 4) return 1.0f;
+            if (m_ringsPolyphony >= 2) return 0.5f;
+            return 0.0f;
+        }
+        case ParameterID::RingsChord: return clamp01(static_cast<float>(m_ringsChord) / 10.0f);
+        case ParameterID::RingsFM: return clamp01(m_ringsFM);
+        case ParameterID::RingsExciterSource: {
+            if (m_ringsExciterSource < 0) return 0.0f;
+            return clamp01((static_cast<float>(m_ringsExciterSource) + 0.5f) / 12.0f);
+        }
+        case ParameterID::PlaitsModel: return clamp01(static_cast<float>(m_currentEngine) / 16.0f);
         case ParameterID::PlaitsHarmonics: return clamp01(m_harmonics);
         case ParameterID::PlaitsTimbre: return clamp01(m_timbre);
         case ParameterID::PlaitsMorph: return clamp01(m_morph);
@@ -2354,7 +2484,10 @@ float AudioEngine::getParameter(ParameterID id, int voiceIndex) const {
         case ParameterID::SamplerFilterResonance: return 0.0f;
         case ParameterID::SamplerTuning: return 0.5f;  // Center = 0 semitones
         case ParameterID::SamplerLevel: return 0.8f;
-        case ParameterID::SamplerMode: return (m_samplerMode == SamplerMode::WavSampler) ? 1.0f : 0.0f;
+        case ParameterID::SamplerMode:
+            if (m_samplerMode == SamplerMode::SoundFont) return 0.0f;
+            if (m_samplerMode == SamplerMode::Sfz) return 0.5f;
+            return 1.0f;  // WavSampler
 
         default:
             return 0.0f;
@@ -2416,6 +2549,18 @@ bool AudioEngine::loadWavSampler(const char* dirPath) {
     return false;
 }
 
+bool AudioEngine::loadSfzFile(const char* sfzPath) {
+    if (m_wavSamplerVoice) {
+        bool ok = m_wavSamplerVoice->LoadFromSfzFile(sfzPath);
+        if (ok) {
+            m_samplerMode = SamplerMode::Sfz;
+            m_wavSamplerVoice->SetUseSfzEnvelopes(true);
+        }
+        return ok;
+    }
+    return false;
+}
+
 void AudioEngine::unloadWavSampler() {
     if (m_wavSamplerVoice) {
         m_wavSamplerVoice->Unload();
@@ -2431,6 +2576,9 @@ const char* AudioEngine::getWavSamplerInstrumentName() const {
 
 void AudioEngine::setSamplerMode(SamplerMode mode) {
     m_samplerMode = mode;
+    if (m_wavSamplerVoice) {
+        m_wavSamplerVoice->SetUseSfzEnvelopes(mode == SamplerMode::Sfz);
+    }
 }
 
 void AudioEngine::triggerDrumSeqLane(int laneIndex, bool state) {
@@ -2464,6 +2612,14 @@ void AudioEngine::setDrumSeqLaneTimbre(int laneIndex, float value) {
 void AudioEngine::setDrumSeqLaneMorph(int laneIndex, float value) {
     if (laneIndex < 0 || laneIndex >= kNumDrumSeqLanes) return;
     m_drumSeqMorph[laneIndex] = value;
+}
+
+void AudioEngine::loadUserWavetable(const float* data, int numSamples, int frameSize) {
+    for (int i = 0; i < kNumPlaitsVoices; ++i) {
+        if (m_plaitsVoices[i]) {
+            m_plaitsVoices[i]->LoadUserWavetable(data, numSamples, frameSize);
+        }
+    }
 }
 
 bool AudioEngine::loadAudioFile(const char* filePath, int reelIndex) {
@@ -3259,16 +3415,15 @@ void AudioEngine::initMasterFilter() {
     // Create filter instances based on selected model
     auto createFilter = [this](int model) -> std::unique_ptr<LadderFilterBase> {
         switch (model) {
-            case 0: return std::make_unique<SimplifiedMoog>(static_cast<float>(m_sampleRate));
-            case 1: return std::make_unique<HuovilainenMoog>(static_cast<float>(m_sampleRate));
-            case 2: return std::make_unique<StilsonMoog>(static_cast<float>(m_sampleRate));
-            case 3: return std::make_unique<MicrotrackerMoog>(static_cast<float>(m_sampleRate));
-            case 4: return std::make_unique<KrajeskiMoog>(static_cast<float>(m_sampleRate));
-            case 5: return std::make_unique<MusicDSPMoog>(static_cast<float>(m_sampleRate));
-            case 6: return std::make_unique<OberheimVariationMoog>(static_cast<float>(m_sampleRate));
-            case 7: return std::make_unique<ImprovedMoog>(static_cast<float>(m_sampleRate));
-            case 8: return std::make_unique<RKSimulationMoog>(static_cast<float>(m_sampleRate));
-            case 9: return std::make_unique<HyperionMoog>(static_cast<float>(m_sampleRate));
+            case 0: return std::make_unique<HuovilainenMoog>(static_cast<float>(m_sampleRate));
+            case 1: return std::make_unique<StilsonMoog>(static_cast<float>(m_sampleRate));
+            case 2: return std::make_unique<MicrotrackerMoog>(static_cast<float>(m_sampleRate));
+            case 3: return std::make_unique<KrajeskiMoog>(static_cast<float>(m_sampleRate));
+            case 4: return std::make_unique<MusicDSPMoog>(static_cast<float>(m_sampleRate));
+            case 5: return std::make_unique<OberheimVariationMoog>(static_cast<float>(m_sampleRate));
+            case 6: return std::make_unique<ImprovedMoog>(static_cast<float>(m_sampleRate));
+            case 7: return std::make_unique<RKSimulationMoog>(static_cast<float>(m_sampleRate));
+            case 8: return std::make_unique<HyperionMoog>(static_cast<float>(m_sampleRate));
             default: return std::make_unique<StilsonMoog>(static_cast<float>(m_sampleRate));
         }
     };
@@ -3287,16 +3442,15 @@ void AudioEngine::updateMasterFilterParameters() {
     float resonanceMax = 1.0f;
 
     switch (m_masterFilterModel) {
-        case 0:  cutoffLimit = 0.40f; resonanceMax = 0.88f; break;  // Simplified
-        case 1:  cutoffLimit = 0.38f; resonanceMax = 0.74f; break;  // Huovilainen
-        case 2:  cutoffLimit = 0.45f; resonanceMax = 0.95f; break;  // Stilson
-        case 3:  cutoffLimit = 0.45f; resonanceMax = 0.92f; break;  // Microtracker
-        case 4:  cutoffLimit = 0.45f; resonanceMax = 0.93f; break;  // Krajeski
-        case 5:  cutoffLimit = 0.42f; resonanceMax = 0.88f; break;  // MusicDSP
-        case 6:  cutoffLimit = 0.40f; resonanceMax = 0.86f; break;  // OberheimVariation
-        case 7:  cutoffLimit = 0.40f; resonanceMax = 0.82f; break;  // Improved
-        case 8:  cutoffLimit = 0.35f; resonanceMax = 0.55f; break;  // RKSimulation
-        case 9:  cutoffLimit = 0.42f; resonanceMax = 0.88f; break;  // Hyperion
+        case 0:  cutoffLimit = 0.38f; resonanceMax = 0.74f; break;  // Huovilainen
+        case 1:  cutoffLimit = 0.45f; resonanceMax = 0.95f; break;  // Stilson
+        case 2:  cutoffLimit = 0.45f; resonanceMax = 0.92f; break;  // Microtracker
+        case 3:  cutoffLimit = 0.45f; resonanceMax = 0.93f; break;  // Krajeski
+        case 4:  cutoffLimit = 0.42f; resonanceMax = 0.88f; break;  // MusicDSP
+        case 5:  cutoffLimit = 0.40f; resonanceMax = 0.86f; break;  // OberheimVariation
+        case 6:  cutoffLimit = 0.40f; resonanceMax = 0.82f; break;  // Improved
+        case 7:  cutoffLimit = 0.35f; resonanceMax = 0.55f; break;  // RKSimulation
+        case 8:  cutoffLimit = 0.42f; resonanceMax = 0.88f; break;  // Hyperion
         default: break;
     }
 

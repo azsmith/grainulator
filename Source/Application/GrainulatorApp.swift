@@ -86,7 +86,14 @@ struct GrainulatorApp: App {
         }
         .windowResizability(.contentMinSize)
         .commands {
-            GrainulatorCommands(projectManager: projectManager)
+            GrainulatorCommands(
+                projectManager: projectManager,
+                sequencer: sequencer,
+                audioEngine: audioEngine,
+                masterClock: masterClock,
+                mixerState: mixerState,
+                appState: appState
+            )
         }
 
         Settings {
@@ -148,6 +155,8 @@ class AppState: ObservableObject {
     @Published var selectedGranularVoice: Int = 0
     @Published var cpuUsage: Double = 0.0
     @Published var latency: Double = 0.0
+    @Published var pendingTab: WorkspaceTab?
+    @Published var pendingMixerToggle: Bool = false
 
     init() {
         // Initialize application state

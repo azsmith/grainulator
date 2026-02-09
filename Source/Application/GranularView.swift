@@ -54,7 +54,6 @@ struct GranularView: View {
     // Envelope type names
     let envelopeNames = ["Hann", "Gauss", "Trap", "Tri", "Tukey", "Pluck", "Soft", "Decay"]
     let filterModelNames = [
-        "Simplified",
         "Huovilainen",
         "Stilson",
         "Microtracker",
@@ -117,11 +116,18 @@ struct GranularView: View {
                         }
                     }
                 } label: {
-                    Text(recordSourceType == .external ? "MIC" : channelShortName(recordSourceChannel))
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                        .foregroundColor(ColorPalette.textMuted)
-                        .frame(width: 40, height: 32)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(ColorPalette.backgroundTertiary))
+                    HStack(spacing: 2) {
+                        Text("IN:")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(ColorPalette.textDimmed)
+                        Text(recordSourceType == .external ? "MIC" : channelShortName(recordSourceChannel))
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundColor(ColorPalette.textMuted)
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(height: 32)
+                    .padding(.horizontal, 6)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(ColorPalette.backgroundTertiary))
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
@@ -150,7 +156,7 @@ struct GranularView: View {
                     openFilePicker()
                 }) {
                     Image(systemName: "folder")
-                        .font(.system(size: 14))
+                        .font(.system(size: 12))
                         .foregroundColor(ColorPalette.textMuted)
                         .frame(width: 32, height: 32)
                         .background(
@@ -256,7 +262,7 @@ struct GranularView: View {
                     defaultValue: 0.5,
                     isBipolar: true,
                     valueFormatter: { value in
-                        let semitones = Int((Double(value) - 0.5) * 48)
+                        let semitones = Int(round((Double(value) - 0.5) * 48))
                         if semitones == 0 { return "0st" }
                         return semitones > 0 ? "+\(semitones)st" : "\(semitones)st"
                     }
