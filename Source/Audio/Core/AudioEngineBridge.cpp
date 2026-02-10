@@ -202,6 +202,19 @@ float AudioEngine_GetMasterLevel(AudioEngineHandle handle, int channel) {
     return static_cast<AudioEngine*>(handle)->getMasterLevel(channel);
 }
 
+// ========== Scope Buffer ==========
+
+void AudioEngine_ReadScopeBuffer(AudioEngineHandle handle, int sourceIndex, float* output, int numFrames) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->readScopeBuffer(sourceIndex, output, numFrames);
+    }
+}
+
+size_t AudioEngine_GetScopeWriteIndex(AudioEngineHandle handle) {
+    if (!handle) return 0;
+    return static_cast<AudioEngine*>(handle)->getScopeWriteIndex();
+}
+
 // ========== Master Clock ==========
 
 void AudioEngine_SetClockBPM(AudioEngineHandle handle, float bpm) {

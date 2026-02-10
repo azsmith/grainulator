@@ -138,6 +138,9 @@ AudioEngine::AudioEngine()
     std::memset(m_ringsExciterBufferL, 0, sizeof(m_ringsExciterBufferL));
     std::memset(m_ringsExciterBufferR, 0, sizeof(m_ringsExciterBufferR));
 
+    // Zero scope buffers
+    std::memset(m_scopeBuffer, 0, sizeof(m_scopeBuffer));
+
     // Initialize effects buffers to nullptr
     for (size_t i = 0; i < kNumCombs; ++i) {
         m_combBuffersL[i] = nullptr;
@@ -764,6 +767,14 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
             // Record from Plaits (channel 0) pre-mixer
             processRecordingForChannel(0, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
 
+            // Scope capture: Channel 0 (Plaits) — mono mix
+            {
+                size_t wi = m_scopeWriteIndex.load(std::memory_order_relaxed);
+                for (int i = 0; i < frameCount; ++i) {
+                    m_scopeBuffer[0][(wi + i) % kScopeBufferSize] = (m_voiceBuffer[0][i] + m_voiceBuffer[1][i]) * 0.5f;
+                }
+            }
+
             // Capture for Rings exciter if Plaits is the source (channel 0)
             if (m_ringsExciterSource == 0) {
                 std::memcpy(m_ringsExciterBufferL, m_voiceBuffer[0], frameCount * sizeof(float));
@@ -831,6 +842,14 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
             // Record from Rings (channel 1) pre-mixer
             processRecordingForChannel(1, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
 
+            // Scope capture: Channel 1 (Rings) — mono mix
+            {
+                size_t wi = m_scopeWriteIndex.load(std::memory_order_relaxed);
+                for (int i = 0; i < frameCount; ++i) {
+                    m_scopeBuffer[1][(wi + i) % kScopeBufferSize] = (m_voiceBuffer[0][i] + m_voiceBuffer[1][i]) * 0.5f;
+                }
+            }
+
             float gain = m_channelGain[ch];
             float pan = m_channelPan[ch];
             float sendA = m_channelSendA[ch];
@@ -892,6 +911,14 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
 
             // Record from track voice (channel ch) pre-mixer
             processRecordingForChannel(ch, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+
+            // Scope capture: Channels 2-5 (track voices) — mono mix
+            {
+                size_t wi = m_scopeWriteIndex.load(std::memory_order_relaxed);
+                for (int i = 0; i < frameCount; ++i) {
+                    m_scopeBuffer[ch][(wi + i) % kScopeBufferSize] = (m_voiceBuffer[0][i] + m_voiceBuffer[1][i]) * 0.5f;
+                }
+            }
 
             // Capture for Rings exciter (ch maps to exciter source: 2=Gran1, 3=Loop1, 4=Loop2, 5=Gran4)
             if (m_ringsExciterSource == ch) {
@@ -970,6 +997,14 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
             // Record from DaisyDrum + all drum lanes mixed (channel 6) pre-mixer
             processRecordingForChannel(6, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
 
+            // Scope capture: Channel 6 (DaisyDrum) — mono mix
+            {
+                size_t wi = m_scopeWriteIndex.load(std::memory_order_relaxed);
+                for (int i = 0; i < frameCount; ++i) {
+                    m_scopeBuffer[6][(wi + i) % kScopeBufferSize] = (m_voiceBuffer[0][i] + m_voiceBuffer[1][i]) * 0.5f;
+                }
+            }
+
             // Capture for Rings exciter (channel 6 = Drums)
             if (m_ringsExciterSource == 6) {
                 std::memcpy(m_ringsExciterBufferL, m_voiceBuffer[0], frameCount * sizeof(float));
@@ -1037,6 +1072,14 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
 
             // Record from Sampler (channel 11) pre-mixer
             processRecordingForChannel(11, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+
+            // Scope capture: Channel 7 (Sampler) — mono mix
+            {
+                size_t wi = m_scopeWriteIndex.load(std::memory_order_relaxed);
+                for (int i = 0; i < frameCount; ++i) {
+                    m_scopeBuffer[7][(wi + i) % kScopeBufferSize] = (m_voiceBuffer[0][i] + m_voiceBuffer[1][i]) * 0.5f;
+                }
+            }
 
             // Capture for Rings exciter (source 11 = Sampler)
             if (m_ringsExciterSource == 11) {
@@ -1122,6 +1165,22 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
 
             masterPeakL = std::max(masterPeakL, std::abs(m_processingBuffer[0][i]));
             masterPeakR = std::max(masterPeakR, std::abs(m_processingBuffer[1][i]));
+        }
+
+        // Scope capture: Channel 8 (Master) — mono mix of final output
+        {
+            size_t wi = m_scopeWriteIndex.load(std::memory_order_relaxed);
+            for (int i = 0; i < frameCount; ++i) {
+                m_scopeBuffer[8][(wi + i) % kScopeBufferSize] = (m_processingBuffer[0][i] + m_processingBuffer[1][i]) * 0.5f;
+            }
+        }
+
+        // Note: Clock scope capture is done per-sample in processClockOutputs()
+
+        // Advance scope write index
+        {
+            size_t wi = m_scopeWriteIndex.load(std::memory_order_relaxed);
+            m_scopeWriteIndex.store((wi + frameCount) % kScopeBufferSize, std::memory_order_release);
         }
 
         for (int ch = 0; ch < numChannels; ++ch) {
@@ -2749,6 +2808,21 @@ float AudioEngine::getMasterLevel(int channel) const {
     return 0.0f;
 }
 
+void AudioEngine::readScopeBuffer(int sourceIndex, float* output, int numFrames) const {
+    if (sourceIndex < 0 || sourceIndex >= kScopeNumSources || !output || numFrames <= 0) return;
+    const int frames = std::min(numFrames, kScopeBufferSize);
+    const size_t wi = m_scopeWriteIndex.load(std::memory_order_acquire);
+    // Read the most recent 'frames' samples ending at the current write position
+    for (int i = 0; i < frames; ++i) {
+        size_t idx = (wi + kScopeBufferSize - frames + i) % kScopeBufferSize;
+        output[i] = m_scopeBuffer[sourceIndex][idx];
+    }
+}
+
+size_t AudioEngine::getScopeWriteIndex() const {
+    return m_scopeWriteIndex.load(std::memory_order_acquire);
+}
+
 void AudioEngine::setChannelSendLevel(int channelIndex, int sendIndex, float level) {
     if (channelIndex < 0 || channelIndex >= kNumMixerChannels) {
         return;
@@ -3303,6 +3377,8 @@ void AudioEngine::processClockOutputs(int numFrames) {
         m_modulationValues[i] = 0.0f;
     }
 
+    const size_t scopeWi = m_scopeWriteIndex.load(std::memory_order_relaxed);
+
     // Process each clock output
     for (int i = 0; i < kNumClockOutputs; ++i) {
         ClockOutputState& out = m_clockOutputs[i];
@@ -3310,6 +3386,10 @@ void AudioEngine::processClockOutputs(int numFrames) {
         if (out.muted) {
             out.currentValue = 0.0f;
             m_clockOutputValues[i].store(0.0f);
+            // Zero scope buffer for muted outputs
+            for (int s = 0; s < numFrames; ++s) {
+                m_scopeBuffer[9 + i][(scopeWi + s) % kScopeBufferSize] = 0.0f;
+            }
             continue;
         }
 
@@ -3324,7 +3404,10 @@ void AudioEngine::processClockOutputs(int numFrames) {
 
         const double cyclesPerSample = (beatsPerSecond * static_cast<double>(multiplier)) / static_cast<double>(m_sampleRate);
 
-        // Advance phase for this buffer (use end of buffer value for simplicity)
+        // Save starting phase for per-sample scope rendering
+        const double startPhase = out.phaseAccumulator;
+
+        // Advance phase for this buffer
         out.phaseAccumulator += cyclesPerSample * static_cast<double>(numFrames);
 
         // Wrap phase to 0-1
@@ -3332,22 +3415,57 @@ void AudioEngine::processClockOutputs(int numFrames) {
             out.phaseAccumulator -= 1.0;
         }
 
-        // Generate waveform value
+        // Generate waveform value (end of buffer — used for modulation and UI readback)
         float rawValue = generateWaveform(out.waveform, out.phaseAccumulator, out.width, out);
 
         // Apply level and offset
-        // Output range: offset + level * raw (raw is -1 to +1)
-        // Final range clamped to -1 to +1
         float scaledValue = rawValue * out.level;
         float finalValue = std::clamp(scaledValue + out.offset, -1.0f, 1.0f);
 
         out.currentValue = finalValue;
         m_clockOutputValues[i].store(finalValue);
 
+        // Fill scope buffer with per-sample waveform values for smooth display
+        // For stateless waveforms, compute from interpolated phase.
+        // For S&H/Random, repeat the final value (state-dependent).
+        const bool isStateless = out.waveform != static_cast<int>(ClockWaveform::Random) &&
+                                  out.waveform != static_cast<int>(ClockWaveform::SampleHold);
+        if (isStateless) {
+            for (int s = 0; s < numFrames; ++s) {
+                double samplePhase = startPhase + cyclesPerSample * static_cast<double>(s);
+                // Wrap to 0-1
+                samplePhase -= static_cast<double>(static_cast<long long>(samplePhase));
+                if (samplePhase < 0.0) samplePhase += 1.0;
+
+                // Inline stateless waveform generation (avoids touching ClockOutputState)
+                const float p = static_cast<float>(samplePhase);
+                float raw = 0.0f;
+                switch (static_cast<ClockWaveform>(out.waveform)) {
+                    case ClockWaveform::Gate:    raw = (p < out.width) ? 1.0f : -1.0f; break;
+                    case ClockWaveform::Sine:    raw = std::sin(p * 2.0f * 3.14159265359f); break;
+                    case ClockWaveform::Triangle:
+                        if (p < out.width)
+                            raw = (out.width > 0.0f) ? (-1.0f + 2.0f * p / out.width) : 0.0f;
+                        else
+                            raw = (out.width < 1.0f) ? (1.0f - 2.0f * (p - out.width) / (1.0f - out.width)) : 0.0f;
+                        break;
+                    case ClockWaveform::Saw:     raw = 1.0f - 2.0f * p; break;
+                    case ClockWaveform::Ramp:    raw = -1.0f + 2.0f * p; break;
+                    case ClockWaveform::Square:  raw = (p < 0.5f) ? 1.0f : -1.0f; break;
+                    default: break;
+                }
+                m_scopeBuffer[9 + i][(scopeWi + s) % kScopeBufferSize] =
+                    std::clamp(raw * out.level + out.offset, -1.0f, 1.0f);
+            }
+        } else {
+            // S&H and Random: repeat the final computed value
+            for (int s = 0; s < numFrames; ++s) {
+                m_scopeBuffer[9 + i][(scopeWi + s) % kScopeBufferSize] = finalValue;
+            }
+        }
+
         // Route to modulation destination
         if (out.destination > 0 && out.destination < static_cast<int>(ModulationDestination::NumDestinations)) {
-            // Keep bipolar range (-1 to +1), scale by mod amount
-            // This allows LFO to sweep the parameter both up and down from its base value
             float modValue = finalValue * out.modulationAmount;
             m_modulationValues[out.destination] += modValue;
         }

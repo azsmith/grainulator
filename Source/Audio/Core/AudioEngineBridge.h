@@ -63,6 +63,10 @@ float AudioEngine_GetGranularPosition(AudioEngineHandle handle, int voiceIndex);
 // Level metering
 float AudioEngine_GetChannelLevel(AudioEngineHandle handle, int channelIndex);
 float AudioEngine_GetMasterLevel(AudioEngineHandle handle, int channel);
+
+// Scope buffer access (for oscilloscope visualization)
+void AudioEngine_ReadScopeBuffer(AudioEngineHandle handle, int sourceIndex, float* output, int numFrames);
+size_t AudioEngine_GetScopeWriteIndex(AudioEngineHandle handle);
 void AudioEngine_RenderAndReadLegacyBus(AudioEngineHandle handle, int busIndex, int64_t sampleTime, float* left, float* right, int numFrames);
 
 // Recording control

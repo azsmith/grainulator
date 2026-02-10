@@ -190,29 +190,7 @@ struct TransportBarView: View {
     // MARK: - Status Section
 
     private var statusSection: some View {
-        HStack(spacing: 12) {
-            // CPU/Latency
-            VStack(alignment: .trailing, spacing: 0) {
-                HStack(spacing: 4) {
-                    Text("CPU")
-                        .font(Typography.parameterLabelSmall)
-                        .foregroundColor(ColorPalette.textDimmed)
-                    Text(String(format: "%.0f%%", appState.cpuUsage))
-                        .font(Typography.valueSmall)
-                        .foregroundColor(appState.cpuUsage > 80 ? ColorPalette.ledRed : ColorPalette.textSecondary)
-                        .monospacedDigit()
-                }
-                HStack(spacing: 4) {
-                    Text("LAT")
-                        .font(Typography.parameterLabelSmall)
-                        .foregroundColor(ColorPalette.textDimmed)
-                    Text(String(format: "%.1fms", appState.latency))
-                        .font(Typography.valueSmall)
-                        .foregroundColor(ColorPalette.textSecondary)
-                        .monospacedDigit()
-                }
-            }
-
+        HStack(spacing: 8) {
             // Mixer window toggle button
             Button(action: {
                 MixerWindowManager.shared.toggle(
@@ -238,6 +216,30 @@ struct TransportBarView: View {
             }
             .buttonStyle(.plain)
             .help(layoutState.isMixerWindowOpen ? "Close mixer window" : "Open mixer window")
+
+            // Scope window toggle button
+            Button(action: {
+                OscilloscopeWindowManager.shared.toggle(
+                    audioEngine: audioEngine,
+                    layoutState: layoutState
+                )
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "waveform.path")
+                        .font(.system(size: 12))
+                    Text("SCOPE")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                }
+                .foregroundColor(layoutState.isScopeWindowOpen ? ColorPalette.accentGranular1 : ColorPalette.textMuted)
+                .padding(.horizontal, 8)
+                .frame(height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(layoutState.isScopeWindowOpen ? ColorPalette.accentGranular1.opacity(0.2) : ColorPalette.backgroundTertiary)
+                )
+            }
+            .buttonStyle(.plain)
+            .help(layoutState.isScopeWindowOpen ? "Close oscilloscope" : "Open oscilloscope")
         }
         .padding(.horizontal, 12)
     }

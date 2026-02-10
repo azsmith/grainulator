@@ -312,12 +312,19 @@ class MasterClock: ObservableObject {
     }
 
     private func outputSlowModeDidChange(index: Int) {
-        guard let engine = audioEngine, index < outputs.count else { return }
-        engine.setClockOutputSlowMode(index: index, slow: outputs[index].slowMode)
+        // Defer to next run loop iteration so the @Published value is fully stored
+        // (Combine's sink fires on willSet, before the new value is committed)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let engine = self.audioEngine, index < self.outputs.count else { return }
+            engine.setClockOutputSlowMode(index: index, slow: self.outputs[index].slowMode)
+        }
     }
 
     private func outputDidChange(index: Int) {
-        sendOutputParametersToEngine(outputIndex: index)
+        // Defer to next run loop iteration so the @Published value is fully stored
+        DispatchQueue.main.async { [weak self] in
+            self?.sendOutputParametersToEngine(outputIndex: index)
+        }
     }
 
     // MARK: - Transport Control

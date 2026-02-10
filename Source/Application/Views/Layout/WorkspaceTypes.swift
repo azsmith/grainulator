@@ -50,6 +50,7 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
 class WorkspaceLayoutState: ObservableObject {
     @Published var currentTab: WorkspaceTab = .synths
     @Published var isMixerWindowOpen: Bool = false
+    @Published var isScopeWindowOpen: Bool = false
 
     func selectTab(_ tab: WorkspaceTab) {
         withAnimation(.easeInOut(duration: 0.2)) {

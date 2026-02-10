@@ -104,6 +104,10 @@ void AudioEngine_RenderAndReadMultiChannel(AudioEngineHandle handle, int channel
 // Bus mapping: 0=dry mix, 1=send A, 2=send B.
 void AudioEngine_RenderAndReadLegacyBus(AudioEngineHandle handle, int busIndex, int64_t sampleTime, float* left, float* right, int numFrames);
 
+// Scope buffer access (for oscilloscope visualization)
+void AudioEngine_ReadScopeBuffer(AudioEngineHandle handle, int sourceIndex, float* output, int numFrames);
+size_t AudioEngine_GetScopeWriteIndex(AudioEngineHandle handle);
+
 // Recording control
 // mode: 0=OneShot, 1=LiveLoop
 // sourceType: 0=external (mic/line), 1=internal voice

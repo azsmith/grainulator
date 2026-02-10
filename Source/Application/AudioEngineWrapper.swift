@@ -182,6 +182,13 @@ func AudioEngine_RenderAndReadMultiChannel(_ handle: OpaquePointer, _ channelInd
 @_silgen_name("AudioEngine_RenderAndReadLegacyBus")
 func AudioEngine_RenderAndReadLegacyBus(_ handle: OpaquePointer, _ busIndex: Int32, _ sampleTime: Int64, _ left: UnsafeMutablePointer<Float>?, _ right: UnsafeMutablePointer<Float>?, _ numFrames: Int32)
 
+// Scope buffer access (for oscilloscope visualization)
+@_silgen_name("AudioEngine_ReadScopeBuffer")
+func AudioEngine_ReadScopeBuffer(_ handle: OpaquePointer, _ sourceIndex: Int32, _ output: UnsafeMutablePointer<Float>?, _ numFrames: Int32)
+
+@_silgen_name("AudioEngine_GetScopeWriteIndex")
+func AudioEngine_GetScopeWriteIndex(_ handle: OpaquePointer) -> Int
+
 // Recording control
 @_silgen_name("AudioEngine_StartRecording")
 func AudioEngine_StartRecording(_ handle: OpaquePointer, _ reelIndex: Int32, _ mode: Int32, _ sourceType: Int32, _ sourceChannel: Int32)
@@ -294,6 +301,31 @@ class AudioEngineWrapper: ObservableObject {
     @Published var masterLevelL: Float = 0
     @Published var masterLevelR: Float = 0
 
+    // Oscilloscope
+    @Published var scopeWaveform: [Float] = []
+    @Published var scopeWaveformB: [Float] = []
+    @Published var scopeSource: Int = 8     // Default to master output
+    @Published var scopeSourceB: Int = -1   // -1 = off (no overlay)
+    @Published var scopeTimeNorm: Double = 0.5  // 0...1 log-mapped → 32...24000 samples
+    @Published var scopeGain: Double = 1.0      // Y-axis sensitivity multiplier
+
+    /// Compute sample count from normalized slider (log scale: 32 → 24000)
+    var scopeTimeScale: Int {
+        // 0.0 → 32 samples (~0.7ms), 1.0 → 24000 samples (~500ms)
+        let logMin = log2(32.0)
+        let logMax = log2(24000.0)
+        let logVal = logMin + scopeTimeNorm * (logMax - logMin)
+        return max(32, min(24000, Int(pow(2.0, logVal).rounded())))
+    }
+
+    static let scopeSourceNames: [String] = [
+        "Plaits", "Rings", "Granular 1", "Looper 1",
+        "Looper 2", "Granular 4", "DaisyDrum", "Sampler",
+        "Master",
+        "Clock 1", "Clock 2", "Clock 3", "Clock 4",
+        "Clock 5", "Clock 6", "Clock 7", "Clock 8"
+    ]
+
     // MARK: - SoundFont Sampler
 
     @Published var soundFontLoaded: Bool = false
@@ -386,6 +418,7 @@ class AudioEngineWrapper: ObservableObject {
 
     // Performance monitoring
     private var performanceTimer: Timer?
+    private var scopeTimer: Timer?
     private var lastCPUCheckTime: Date = Date()
     private var multiChannelHealthCheckPending = false
     private let multiChannelRenderTimeLock = NSLock()
@@ -437,6 +470,7 @@ class AudioEngineWrapper: ObservableObject {
         setupAudioEngine()
         enumerateAudioDevices()
         setupPerformanceMonitoring()
+        setupScopeTimer()
 
         // Initialize C++ engine
         if let handle = cppEngineHandle {
@@ -1492,6 +1526,37 @@ class AudioEngineWrapper: ObservableObject {
         recordingPositions = newRecordingPositions
     }
 
+    // MARK: - Scope Timer
+
+    private func setupScopeTimer() {
+        scopeTimer = Timer.scheduledTimer(withTimeInterval: 1.0/30.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateScopeWaveform()
+            }
+        }
+    }
+
+    private func updateScopeWaveform() {
+        guard let handle = cppEngineHandle else { return }
+        let numFrames = Int32(scopeTimeScale)
+
+        var buffer = [Float](repeating: 0, count: Int(numFrames))
+        buffer.withUnsafeMutableBufferPointer { ptr in
+            AudioEngine_ReadScopeBuffer(handle, Int32(scopeSource), ptr.baseAddress, numFrames)
+        }
+        scopeWaveform = buffer
+
+        if scopeSourceB >= 0 {
+            var bufferB = [Float](repeating: 0, count: Int(numFrames))
+            bufferB.withUnsafeMutableBufferPointer { ptr in
+                AudioEngine_ReadScopeBuffer(handle, Int32(scopeSourceB), ptr.baseAddress, numFrames)
+            }
+            scopeWaveformB = bufferB
+        } else if !scopeWaveformB.isEmpty {
+            scopeWaveformB = []
+        }
+    }
+
     // MARK: - Parameter Control
 
     /// Maps a Swift ParameterID to the corresponding C++ parameter ID
@@ -2208,6 +2273,7 @@ class AudioEngineWrapper: ObservableObject {
 
     deinit {
         performanceTimer?.invalidate()
+        scopeTimer?.invalidate()
         audioEngine?.stop()
 
         // Cleanup C++ engine

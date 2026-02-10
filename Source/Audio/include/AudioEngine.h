@@ -26,6 +26,10 @@ class DaisyDrumVoice;
 class SoundFontVoice;
 class WavSamplerVoice;
 
+// Scope buffer constants (for oscilloscope visualization)
+constexpr int kScopeBufferSize = 32768;  // ~682ms @ 48kHz
+constexpr int kScopeNumSources = 17;     // 8 voices + master + 8 clocks
+
 // Multi-channel ring buffer constants
 constexpr int kMultiChannelRingBufferSize = 4096;  // ~85ms @ 48kHz
 constexpr int kNumMixerChannelsForRing = 8;
@@ -602,6 +606,10 @@ private:
     std::atomic<float> m_masterLevelL;
     std::atomic<float> m_masterLevelR;
 
+    // Scope buffer for oscilloscope visualization (lock-free, audio thread writes, UI reads)
+    float m_scopeBuffer[kScopeNumSources][kScopeBufferSize];
+    std::atomic<size_t> m_scopeWriteIndex{0};
+
     // Effects processing helpers
     void processDelay(float& left, float& right);
     void processReverb(float& left, float& right);
@@ -705,6 +713,10 @@ private:
     void multiChannelProcessingLoop();
 
 public:
+    // Scope buffer access (called from UI thread, lock-free)
+    void readScopeBuffer(int sourceIndex, float* output, int numFrames) const;
+    size_t getScopeWriteIndex() const;
+
     // Ring buffer control (called from Swift)
     void startMultiChannelProcessing();
     void stopMultiChannelProcessing();
