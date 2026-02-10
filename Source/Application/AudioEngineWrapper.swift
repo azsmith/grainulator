@@ -380,6 +380,10 @@ class AudioEngineWrapper: ObservableObject {
     private var audioFormat: AVAudioFormat?
     private let processingQueue = DispatchQueue(label: "com.grainulator.audio", qos: .userInteractive)
 
+    // Startup silence: counts down render frames to suppress initial audio burst.
+    // Accessed only from the audio render thread — no lock needed.
+    private var startupSilenceFrames: Int32 = 0
+
     // Performance monitoring
     private var performanceTimer: Timer?
     private var lastCPUCheckTime: Date = Date()
@@ -416,6 +420,9 @@ class AudioEngineWrapper: ObservableObject {
     // Send effects (AU plugins for delay/reverb)
     private var sendDelaySlot: AUSendSlot?
     private var sendReverbSlot: AUSendSlot?
+
+    // Musical context for AU plugins (tempo, transport, beat position)
+    let auHostContext = AUHostContext()
 
     // Channel names for debugging
     private let channelNames = ["Plaits", "Rings", "Granular1", "Looper1", "Looper2", "Granular4"]
@@ -490,6 +497,12 @@ class AudioEngineWrapper: ObservableObject {
                     rightPtr,
                     Int32(frameCount)
                 )
+                // Suppress startup burst by zeroing output while counter is active
+                if self.startupSilenceFrames > 0 {
+                    self.startupSilenceFrames -= Int32(frameCount)
+                    memset(leftPtr, 0, Int(frameCount) * MemoryLayout<Float>.size)
+                    memset(rightPtr, 0, Int(frameCount) * MemoryLayout<Float>.size)
+                }
             }
             return noErr
         }
@@ -538,6 +551,7 @@ class AudioEngineWrapper: ObservableObject {
     private func ensureLegacySendSlots() {
         if sendDelaySlot == nil {
             let slot = AUSendSlot(busIndex: 0, busName: "Delay")
+            slot.hostContext = auHostContext
             slot.onParameterChanged = { [weak self] in
                 Task { @MainActor in
                     self?.updateLegacySendReturnGain(0)
@@ -548,6 +562,7 @@ class AudioEngineWrapper: ObservableObject {
 
         if sendReverbSlot == nil {
             let slot = AUSendSlot(busIndex: 1, busName: "Reverb")
+            slot.hostContext = auHostContext
             slot.onParameterChanged = { [weak self] in
                 Task { @MainActor in
                     self?.updateLegacySendReturnGain(1)
@@ -897,7 +912,9 @@ class AudioEngineWrapper: ObservableObject {
 
         // Initialize send effect slots
         sendDelaySlot = AUSendSlot(busIndex: 0, busName: "Delay")
+        sendDelaySlot?.hostContext = auHostContext
         sendReverbSlot = AUSendSlot(busIndex: 1, busName: "Reverb")
+        sendReverbSlot?.hostContext = auHostContext
 
         // Create 6 channel source nodes.
         // Each render quantum is generated once by whichever callback arrives first
@@ -938,7 +955,9 @@ class AudioEngineWrapper: ObservableObject {
 
             // Initialize insert slots for this channel
             let slot1 = AUInsertSlot(slotIndex: 0)
+            slot1.hostContext = auHostContext
             let slot2 = AUInsertSlot(slotIndex: 1)
+            slot2.hostContext = auHostContext
 
             // Set up callbacks for audio graph rebuild when plugins change
             slot1.onAudioUnitChanged = { [weak self] _ in
@@ -1089,7 +1108,7 @@ class AudioEngineWrapper: ObservableObject {
         return InsertSlotData(
             hasPlugin: slot.hasPluginSafe,
             pluginName: slot.pluginNameSafe,
-            pluginInfo: slot.pluginInfo,  // Only accessed on MainActor anyway
+            pluginInfo: slot.pluginInfoSafe,
             isBypassed: slot.isBypassedSafe,
             isLoading: slot.isLoadingSafe
         )
@@ -1341,6 +1360,10 @@ class AudioEngineWrapper: ObservableObject {
 
     func start() {
         guard let engine = audioEngine, !isRunning else { return }
+
+        // Suppress initial audio burst: render callbacks output silence
+        // for the first ~100ms until the C++ engine settles.
+        startupSilenceFrames = Int32(sampleRate * 0.1)
 
         do {
             try engine.start()

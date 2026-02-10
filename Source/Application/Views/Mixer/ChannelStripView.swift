@@ -14,17 +14,23 @@ struct ProChannelStripView: View {
     @ObservedObject var channel: MixerChannelState
     let isCompact: Bool
     let showInserts: Bool
+    let audioEngine: AudioEngineWrapper?
+    let pluginManager: AUPluginManager?
 
     @State private var showInsertPopover: Bool = false
 
     init(
         channel: MixerChannelState,
         isCompact: Bool = false,
-        showInserts: Bool = true
+        showInserts: Bool = true,
+        audioEngine: AudioEngineWrapper? = nil,
+        pluginManager: AUPluginManager? = nil
     ) {
         self.channel = channel
         self.isCompact = isCompact
         self.showInserts = showInserts
+        self.audioEngine = audioEngine
+        self.pluginManager = pluginManager
     }
 
     var body: some View {
@@ -175,11 +181,16 @@ struct ProChannelStripView: View {
 
     // MARK: - Insert Section
 
+    @ViewBuilder
     private var insertSection: some View {
-        AUInsertSectionView(
-            channelIndex: channel.channelIndex,
-            accentColor: channel.accentColor
-        )
+        if let audioEngine = audioEngine, let pluginManager = pluginManager {
+            AUInsertSectionView(
+                channelIndex: channel.channelIndex,
+                accentColor: channel.accentColor,
+                audioEngine: audioEngine,
+                pluginManager: pluginManager
+            )
+        }
     }
 
     // MARK: - Pan Section

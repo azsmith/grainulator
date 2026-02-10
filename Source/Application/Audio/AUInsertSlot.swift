@@ -32,6 +32,9 @@ class AUInsertSlot: ObservableObject, Identifiable, @unchecked Sendable {
     private let _isBypassedLock = NSLock()
     private var _isBypassedShadow: Bool = false
 
+    private let _pluginInfoLock = NSLock()
+    private var _pluginInfoShadow: AUPluginInfo?
+
     private let _isLoadingLock = NSLock()
     private var _isLoadingShadow: Bool = false
 
@@ -47,6 +50,13 @@ class AUInsertSlot: ObservableObject, Identifiable, @unchecked Sendable {
         _pluginNameLock.lock()
         defer { _pluginNameLock.unlock() }
         return _pluginName
+    }
+
+    /// Thread-safe accessor for plugin info (can be called from any thread)
+    nonisolated var pluginInfoSafe: AUPluginInfo? {
+        _pluginInfoLock.lock()
+        defer { _pluginInfoLock.unlock() }
+        return _pluginInfoShadow
     }
 
     /// Thread-safe accessor for isBypassed state (can be called from any thread)
@@ -80,6 +90,10 @@ class AUInsertSlot: ObservableObject, Identifiable, @unchecked Sendable {
             _pluginNameLock.lock()
             _pluginName = pluginInfo?.name
             _pluginNameLock.unlock()
+
+            _pluginInfoLock.lock()
+            _pluginInfoShadow = pluginInfo
+            _pluginInfoLock.unlock()
         }
     }
 
@@ -109,6 +123,11 @@ class AUInsertSlot: ObservableObject, Identifiable, @unchecked Sendable {
 
     /// Whether the plugin's native UI is being loaded
     @MainActor @Published var isLoadingUI: Bool = false
+
+    // MARK: - Host Context
+
+    /// Shared musical context for tempo/transport sync with hosted AU plugins
+    weak var hostContext: AUHostContext?
 
     // MARK: - Callbacks
 
@@ -145,6 +164,9 @@ class AUInsertSlot: ObservableObject, Identifiable, @unchecked Sendable {
             self.audioUnit = au
             self.pluginInfo = info
             self.isLoading = false
+
+            // Attach host musical context so tempo-synced plugins can read BPM/transport
+            hostContext?.attachToAudioUnit(au.auAudioUnit)
 
             // Defer graph mutations until after the current gesture/action cycle.
             DispatchQueue.main.async { [weak self] in

@@ -5,9 +5,10 @@
 //  AU plugin insert section for channel strips
 //  Displays AU plugin slots with browser integration
 //
-//  NOTE: This file carefully avoids using @ObservedObject with AUInsertSlot
-//  to prevent crashes in SwiftUI's gesture handling during view hierarchy changes.
-//  All slot access goes through AudioEngineWrapper using channel/slot indices.
+//  NOTE: This file carefully avoids @EnvironmentObject and @ObservedObject to
+//  prevent crashes in SwiftUI's gesture handling (MainActor.assumeIsolated)
+//  when hosted inside an NSPanel via NSHostingController.
+//  All dependencies are passed as explicit properties from parent views.
 //
 
 import SwiftUI
@@ -15,44 +16,41 @@ import AVFoundation
 
 // MARK: - AU Insert Section View
 
-/// Insert section for channel strip that displays AU plugin slots
+/// Insert section for channel strip that displays AU plugin slots.
+/// Takes explicit references instead of @EnvironmentObject to avoid
+/// SwiftUI gesture crash in NSPanel-hosted views.
 struct AUInsertSectionView: View {
     let channelIndex: Int
     let accentColor: Color
-
-    @EnvironmentObject var audioEngine: AudioEngineWrapper
-    @EnvironmentObject var pluginManager: AUPluginManager
+    let audioEngine: AudioEngineWrapper
+    let pluginManager: AUPluginManager
 
     @State private var showInsertPopover = false
 
     var body: some View {
-        Button(action: {
+        HStack(spacing: 4) {
+            AUSlotIndicator(
+                slotData: audioEngine.getInsertSlotData(channelIndex: channelIndex, slotIndex: 0),
+                accentColor: accentColor
+            )
+            AUSlotIndicator(
+                slotData: audioEngine.getInsertSlotData(channelIndex: channelIndex, slotIndex: 1),
+                accentColor: accentColor
+            )
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 3)
+                .fill(ColorPalette.backgroundPrimary)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
             DispatchQueue.main.async {
                 showInsertPopover.toggle()
             }
-        }) {
-            HStack(spacing: 4) {
-                // Use index-based access to avoid holding slot references
-                AUSlotIndicatorByIndex(
-                    channelIndex: channelIndex,
-                    slotIndex: 0,
-                    accentColor: accentColor
-                )
-                AUSlotIndicatorByIndex(
-                    channelIndex: channelIndex,
-                    slotIndex: 1,
-                    accentColor: accentColor
-                )
-            }
-            .padding(.horizontal, 4)
-            .padding(.vertical, 4)
-            .frame(maxWidth: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(ColorPalette.backgroundPrimary)
-            )
         }
-        .buttonStyle(.plain)
         .popover(isPresented: $showInsertPopover, arrowEdge: .trailing) {
             AUInsertPopoverByIndex(
                 channelIndex: channelIndex,
@@ -62,83 +60,62 @@ struct AUInsertSectionView: View {
             .environmentObject(pluginManager)
         }
         .onDisappear {
-            // Close popover when view disappears to prevent crashes during tab switching
             showInsertPopover = false
         }
     }
 }
 
-// MARK: - AU Slot Indicator (Index-Based)
+// MARK: - AU Slot Indicator (Value-Based)
 
-/// Slot indicator that accesses slot data through audioEngine using indices
-/// This avoids holding any direct reference to the slot object
-struct AUSlotIndicatorByIndex: View {
-    let channelIndex: Int
-    let slotIndex: Int
+/// Slot indicator that takes pre-computed slot data — no environment objects needed.
+struct AUSlotIndicator: View {
+    let slotData: InsertSlotData
     let accentColor: Color
 
-    @EnvironmentObject var audioEngine: AudioEngineWrapper
-
     var body: some View {
-        // Read slot data through audioEngine - no @ObservedObject needed
-        let slotData = audioEngine.getInsertSlotData(channelIndex: channelIndex, slotIndex: slotIndex)
-
         ZStack {
-            // LED background
             RoundedRectangle(cornerRadius: 2)
-                .fill(slotColor(slotData))
+                .fill(slotColor)
                 .frame(width: 24, height: 16)
 
-            // Loading indicator
             if slotData.isLoading {
                 ProgressView()
                     .scaleEffect(0.4)
                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
             } else {
-                // Plugin abbreviation
-                Text(slotText(slotData))
+                Text(slotText)
                     .font(.system(size: 7, weight: .bold, design: .monospaced))
-                    .foregroundColor(textColor(slotData))
+                    .foregroundColor(textColor)
             }
         }
-        .shadow(color: shadowColor(slotData), radius: 2)
+        .shadow(color: shadowColor, radius: 2)
     }
 
-    private func slotColor(_ data: InsertSlotData) -> Color {
-        guard data.hasPlugin else {
-            return ColorPalette.ledOff
-        }
-        if data.isBypassed {
-            return ColorPalette.ledAmber
-        }
-        return accentColor
+    private var slotColor: Color {
+        guard slotData.hasPlugin else { return ColorPalette.ledOff }
+        return slotData.isBypassed ? ColorPalette.ledAmber : accentColor
     }
 
-    private func slotText(_ data: InsertSlotData) -> String {
-        guard let name = data.pluginName else {
-            return "—"
-        }
-        if name.count <= 3 {
-            return name.uppercased()
-        }
+    private var slotText: String {
+        guard let name = slotData.pluginName else { return "—" }
+        if name.count <= 3 { return name.uppercased() }
         return String(name.prefix(3)).uppercased()
     }
 
-    private func textColor(_ data: InsertSlotData) -> Color {
-        data.hasPlugin ? .white : ColorPalette.textDimmed
+    private var textColor: Color {
+        slotData.hasPlugin ? .white : ColorPalette.textDimmed
     }
 
-    private func shadowColor(_ data: InsertSlotData) -> Color {
-        guard data.hasPlugin, !data.isBypassed else {
-            return .clear
-        }
+    private var shadowColor: Color {
+        guard slotData.hasPlugin, !slotData.isBypassed else { return .clear }
         return accentColor.opacity(0.3)
     }
 }
 
 // MARK: - AU Insert Popover (Index-Based)
 
-/// Popover that accesses slot data through audioEngine using indices
+/// Popover that accesses slot data through audioEngine using indices.
+/// Uses @EnvironmentObject because popovers create their own window context.
 struct AUInsertPopoverByIndex: View {
     let channelIndex: Int
     let accentColor: Color
@@ -255,7 +232,6 @@ struct AUInsertPopoverByIndex: View {
             }
         }
         .onDisappear {
-            // Close all sheets when popover disappears to prevent crashes during tab switching
             showBrowserForSlot = nil
             showPluginUIForSlot = nil
         }
@@ -276,7 +252,6 @@ struct AUInsertPopoverByIndex: View {
                 .foregroundColor(ColorPalette.textDimmed)
 
             Button("ENABLE AU MODE") { [audioEngine] in
-                // Defer mode switch to avoid mutating view graph mid-gesture callback.
                 DispatchQueue.main.async {
                     audioEngine.enableMultiChannelMode()
                 }
@@ -321,8 +296,6 @@ struct AUSlotEditorByIndex: View {
     let onUnloadPlugin: () -> Void
 
     var body: some View {
-        // slotData is passed in from parent - no @EnvironmentObject needed here
-
         VStack(alignment: .leading, spacing: 8) {
             // Slot header
             HStack {
@@ -543,12 +516,10 @@ struct AUInsertSectionView_Previews: PreviewProvider {
 
         var body: some View {
             VStack(spacing: 20) {
-                AUInsertSectionView(channelIndex: 0, accentColor: ColorPalette.accentPlaits)
+                AUInsertSectionView(channelIndex: 0, accentColor: ColorPalette.accentPlaits, audioEngine: audioEngine, pluginManager: pluginManager)
             }
             .padding(20)
             .background(ColorPalette.backgroundPrimary)
-            .environmentObject(audioEngine)
-            .environmentObject(pluginManager)
             .onAppear {
                 pluginManager.refreshPluginList()
             }

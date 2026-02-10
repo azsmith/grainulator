@@ -56,6 +56,7 @@ struct AUSendEffectCardByIndex: View {
     @EnvironmentObject var pluginManager: AUPluginManager
 
     @State private var showBrowser = false
+    @State private var editFailed = false
 
     var body: some View {
         let slotData = audioEngine.getSendSlotData(busIndex: busIndex)
@@ -211,19 +212,20 @@ struct AUSendEffectCardByIndex: View {
             }
 
             // Edit button to open plugin's native UI
-            Text("Edit")
+            Text(editFailed ? "No AU reference" : "Edit")
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundColor(accentColor)
+                .foregroundColor(editFailed ? ColorPalette.ledRed : accentColor)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 4)
                 .frame(maxWidth: .infinity)
                 .background(
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(accentColor.opacity(0.15))
+                        .fill(editFailed ? ColorPalette.ledRed.opacity(0.15) : accentColor.opacity(0.15))
                 )
                 .contentShape(Rectangle())
                 .onTapGesture {
                     if let audioUnit = audioEngine.getSendAudioUnit(busIndex: busIndex) {
+                        editFailed = false
                         let slotData = audioEngine.getSendSlotData(busIndex: busIndex)
                         let pluginName = slotData.pluginInfo?.name ?? "Plugin"
                         let manufacturer = slotData.pluginInfo?.manufacturerName ?? ""
@@ -233,6 +235,13 @@ struct AUSendEffectCardByIndex: View {
                             subtitle: manufacturer,
                             key: "send-\(busIndex)"
                         )
+                    } else {
+                        let slotData = audioEngine.getSendSlotData(busIndex: busIndex)
+                        print("✗ Edit failed: getSendAudioUnit(\(busIndex)) returned nil — hasPlugin=\(slotData.hasPlugin), pluginName=\(slotData.pluginName ?? "nil")")
+                        editFailed = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            editFailed = false
+                        }
                     }
                 }
         }

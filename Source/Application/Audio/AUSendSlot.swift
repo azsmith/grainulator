@@ -144,6 +144,11 @@ class AUSendSlot: ObservableObject, Identifiable, @unchecked Sendable {
     /// Whether the plugin's native UI is being loaded
     @MainActor @Published var isLoadingUI: Bool = false
 
+    // MARK: - Host Context
+
+    /// Shared musical context for tempo/transport sync with hosted AU plugins
+    weak var hostContext: AUHostContext?
+
     // MARK: - Callbacks
 
     /// Called when the audio unit changes
@@ -194,6 +199,9 @@ class AUSendSlot: ObservableObject, Identifiable, @unchecked Sendable {
             self.audioUnit = au
             self.pluginInfo = info
             self.isLoading = false
+
+            // Attach host musical context so tempo-synced plugins can read BPM/transport
+            hostContext?.attachToAudioUnit(au.auAudioUnit)
 
             // Defer graph mutations until after the current gesture/action cycle.
             DispatchQueue.main.async { [weak self] in

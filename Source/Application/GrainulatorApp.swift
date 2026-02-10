@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 
 @main
 struct GrainulatorApp: App {
@@ -82,6 +83,9 @@ struct GrainulatorApp: App {
                     setupMIDICallbacks()
                     arcManager.connect(audioEngine: audioEngine, appState: appState)
                     gridManager.connect(sequencer: sequencer, chordSequencer: chordSequencer, masterClock: masterClock, audioEngine: audioEngine, appState: appState)
+
+                    // Wire sequencer tempo/transport to AU host context for plugin sync
+                    wireAUHostContext()
                 }
         }
         .windowResizability(.contentMinSize)
@@ -104,6 +108,26 @@ struct GrainulatorApp: App {
                 .environmentObject(sequencer)
                 .environmentObject(masterClock)
         }
+    }
+
+    private func wireAUHostContext() {
+        let ctx = audioEngine.auHostContext
+
+        // Sync initial values
+        ctx.setTempo(sequencer.tempoBPM)
+        ctx.setTransportState(isPlaying: sequencer.isPlaying)
+
+        // Observe tempo changes
+        sequencer.$tempoBPM
+            .removeDuplicates()
+            .sink { bpm in ctx.setTempo(bpm) }
+            .store(in: &appState.cancellables)
+
+        // Observe transport state changes
+        sequencer.$isPlaying
+            .removeDuplicates()
+            .sink { playing in ctx.setTransportState(isPlaying: playing) }
+            .store(in: &appState.cancellables)
     }
 
     private func setupMIDICallbacks() {
@@ -157,6 +181,7 @@ class AppState: ObservableObject {
     @Published var latency: Double = 0.0
     @Published var pendingTab: WorkspaceTab?
     @Published var pendingMixerToggle: Bool = false
+    var cancellables = Set<AnyCancellable>()
 
     init() {
         // Initialize application state
