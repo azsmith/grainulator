@@ -52,17 +52,17 @@ enum ClockOutputMode: String, CaseIterable, Identifiable {
 enum ModulationDestination: String, CaseIterable, Identifiable {
     case none = "NONE"
 
-    // Plaits destinations
-    case plaitsHarmonics = "PLT:HARM"
-    case plaitsTimbre = "PLT:TMBR"
-    case plaitsMorph = "PLT:MRPH"
-    case plaitsLPGDecay = "PLT:DCAY"
+    // Macro Osc destinations
+    case plaitsHarmonics = "MOS:HARM"
+    case plaitsTimbre = "MOS:TMBR"
+    case plaitsMorph = "MOS:MRPH"
+    case plaitsLPGDecay = "MOS:DCAY"
 
-    // Rings destinations
-    case ringsStructure = "RNG:STRC"
-    case ringsBrightness = "RNG:BRIT"
-    case ringsDamping = "RNG:DAMP"
-    case ringsPosition = "RNG:POS"
+    // Resonator destinations
+    case ringsStructure = "RES:STRC"
+    case ringsBrightness = "RES:BRIT"
+    case ringsDamping = "RES:DAMP"
+    case ringsPosition = "RES:POS"
 
     // Delay destinations
     case delayTime = "DLY:TIME"
@@ -94,14 +94,14 @@ enum ModulationDestination: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .none: return "None"
-        case .plaitsHarmonics: return "Plaits Harmonics"
-        case .plaitsTimbre: return "Plaits Timbre"
-        case .plaitsMorph: return "Plaits Morph"
-        case .plaitsLPGDecay: return "Plaits LPG Decay"
-        case .ringsStructure: return "Rings Structure"
-        case .ringsBrightness: return "Rings Brightness"
-        case .ringsDamping: return "Rings Damping"
-        case .ringsPosition: return "Rings Position"
+        case .plaitsHarmonics: return "Macro Osc Harmonics"
+        case .plaitsTimbre: return "Macro Osc Timbre"
+        case .plaitsMorph: return "Macro Osc Morph"
+        case .plaitsLPGDecay: return "Macro Osc LPG Decay"
+        case .ringsStructure: return "Resonator Structure"
+        case .ringsBrightness: return "Resonator Brightness"
+        case .ringsDamping: return "Resonator Damping"
+        case .ringsPosition: return "Resonator Position"
         case .delayTime: return "Delay Time"
         case .delayFeedback: return "Delay Feedback"
         case .delayWow: return "Delay Wow"
@@ -125,12 +125,56 @@ enum ModulationDestination: String, CaseIterable, Identifiable {
     var category: String {
         switch self {
         case .none: return "None"
-        case .plaitsHarmonics, .plaitsTimbre, .plaitsMorph, .plaitsLPGDecay: return "Plaits"
-        case .ringsStructure, .ringsBrightness, .ringsDamping, .ringsPosition: return "Rings"
+        case .plaitsHarmonics, .plaitsTimbre, .plaitsMorph, .plaitsLPGDecay: return "Macro Osc"
+        case .ringsStructure, .ringsBrightness, .ringsDamping, .ringsPosition: return "Resonator"
         case .delayTime, .delayFeedback, .delayWow, .delayFlutter: return "Delay"
         case .granular1Speed, .granular1Pitch, .granular1Size, .granular1Density, .granular1Filter: return "Granular 1"
         case .granular2Speed, .granular2Pitch, .granular2Size, .granular2Density, .granular2Filter: return "Granular 2"
         case .daisyDrumHarmonics, .daisyDrumTimbre, .daisyDrumMorph: return "Drums"
+        }
+    }
+
+    // Backward compat: accept old raw values from saved project files
+    init?(rawValue: String) {
+        switch rawValue {
+        case "NONE": self = .none
+        // New values
+        case "MOS:HARM": self = .plaitsHarmonics
+        case "MOS:TMBR": self = .plaitsTimbre
+        case "MOS:MRPH": self = .plaitsMorph
+        case "MOS:DCAY": self = .plaitsLPGDecay
+        case "RES:STRC": self = .ringsStructure
+        case "RES:BRIT": self = .ringsBrightness
+        case "RES:DAMP": self = .ringsDamping
+        case "RES:POS": self = .ringsPosition
+        // Old values (backward compat)
+        case "PLT:HARM": self = .plaitsHarmonics
+        case "PLT:TMBR": self = .plaitsTimbre
+        case "PLT:MRPH": self = .plaitsMorph
+        case "PLT:DCAY": self = .plaitsLPGDecay
+        case "RNG:STRC": self = .ringsStructure
+        case "RNG:BRIT": self = .ringsBrightness
+        case "RNG:DAMP": self = .ringsDamping
+        case "RNG:POS": self = .ringsPosition
+        // Other destinations
+        case "DLY:TIME": self = .delayTime
+        case "DLY:FDBK": self = .delayFeedback
+        case "DLY:WOW": self = .delayWow
+        case "DLY:FLTR": self = .delayFlutter
+        case "GR1:SPED": self = .granular1Speed
+        case "GR1:PTCH": self = .granular1Pitch
+        case "GR1:SIZE": self = .granular1Size
+        case "GR1:DENS": self = .granular1Density
+        case "GR1:FILT": self = .granular1Filter
+        case "GR2:SPED": self = .granular2Speed
+        case "GR2:PTCH": self = .granular2Pitch
+        case "GR2:SIZE": self = .granular2Size
+        case "GR2:DENS": self = .granular2Density
+        case "GR2:FILT": self = .granular2Filter
+        case "DRM:HARM": self = .daisyDrumHarmonics
+        case "DRM:TMBR": self = .daisyDrumTimbre
+        case "DRM:MRPH": self = .daisyDrumMorph
+        default: return nil
         }
     }
 }

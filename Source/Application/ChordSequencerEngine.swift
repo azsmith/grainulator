@@ -36,6 +36,7 @@ struct ChordStep: Identifiable {
 struct ChordPreset: Identifiable {
     let id: String
     let name: String
+    let category: String
     /// Each element is (degreeId, qualityId) or nil for empty
     let chords: [(String, String)?]
 }
@@ -52,6 +53,7 @@ final class ChordSequencer: ObservableObject {
     @Published var selectedStep: Int = 0
     @Published var playheadStep: Int = 0
     @Published var isEnabled: Bool = true
+    @Published var activePresetId: String?
 
     // MARK: - Static Data
 
@@ -90,22 +92,125 @@ final class ChordSequencer: ObservableObject {
         ChordQuality(id: "dom13", label: "Dom 13th",    suffix: "13",   intervals: [0, 4, 7, 10, 14, 21]),
     ]
 
+    static let presetCategories: [String] = [
+        "Pop/Rock", "Jazz", "Blues/Soul", "Folk/Country", "Minor/Dark", "Modal/Ambient"
+    ]
+
     static let presets: [ChordPreset] = [
-        ChordPreset(id: "pop", name: "I-V-vi-IV", chords: [
+        // MARK: Pop/Rock
+        ChordPreset(id: "pop", name: "I-V-vi-IV", category: "Pop/Rock", chords: [
             ("I","maj"), ("V","maj"), ("vi","min"), ("IV","maj"),
             ("I","maj"), ("V","maj"), ("vi","min"), ("IV","maj"),
         ]),
-        ChordPreset(id: "jazz", name: "ii-V-I", chords: [
+        ChordPreset(id: "emotional", name: "vi-IV-I-V", category: "Pop/Rock", chords: [
+            ("vi","min"), ("IV","maj"), ("I","maj"), ("V","maj"),
+            ("vi","min"), ("IV","maj"), ("I","maj"), ("V","maj"),
+        ]),
+        ChordPreset(id: "pop2", name: "I-IV-vi-V", category: "Pop/Rock", chords: [
+            ("I","maj"), ("IV","maj"), ("vi","min"), ("V","maj"),
+            ("I","maj"), ("IV","maj"), ("vi","min"), ("V","maj"),
+        ]),
+        ChordPreset(id: "doowop", name: "I-vi-IV-V", category: "Pop/Rock", chords: [
+            ("I","maj"), ("vi","min"), ("IV","maj"), ("V","maj"),
+            ("I","maj"), ("vi","min"), ("IV","maj"), ("V","maj"),
+        ]),
+        ChordPreset(id: "rock", name: "I-IV-V-IV", category: "Pop/Rock", chords: [
+            ("I","maj"), ("IV","maj"), ("V","maj"), ("IV","maj"),
+            ("I","maj"), ("IV","maj"), ("V","maj"), ("IV","maj"),
+        ]),
+
+        // MARK: Jazz
+        ChordPreset(id: "jazz", name: "ii-V-I", category: "Jazz", chords: [
             ("ii","min7"), ("V","dom7"), ("I","maj7"), nil,
             ("ii","min7"), ("V","dom7"), ("I","maj7"), nil,
         ]),
-        ChordPreset(id: "blues", name: "I-IV-V-I", chords: [
+        ChordPreset(id: "turnaround", name: "I-vi-ii-V", category: "Jazz", chords: [
+            ("I","maj7"), ("vi","min7"), ("ii","min7"), ("V","dom7"),
+            ("I","maj7"), ("vi","min7"), ("ii","min7"), ("V","dom7"),
+        ]),
+        ChordPreset(id: "circle4", name: "iii-vi-ii-V", category: "Jazz", chords: [
+            ("iii","min7"), ("vi","min7"), ("ii","min7"), ("V","dom7"),
+            ("iii","min7"), ("vi","min7"), ("ii","min7"), ("V","dom7"),
+        ]),
+        ChordPreset(id: "bossa", name: "I△7-IV△7-iii-vi", category: "Jazz", chords: [
+            ("I","maj7"), ("IV","maj7"), ("iii","min7"), ("vi","min7"),
+            ("I","maj7"), ("IV","maj7"), ("iii","min7"), ("vi","min7"),
+        ]),
+        ChordPreset(id: "jazzta", name: "ii7-V7-I△7-VI7", category: "Jazz", chords: [
+            ("ii","min7"), ("V","dom7"), ("I","maj7"), ("vi","dom7"),
+            ("ii","min7"), ("V","dom7"), ("I","maj7"), ("vi","dom7"),
+        ]),
+
+        // MARK: Blues/Soul
+        ChordPreset(id: "blues", name: "I-IV-V-I", category: "Blues/Soul", chords: [
             ("I","dom7"), ("I","dom7"), ("IV","dom7"), ("IV","dom7"),
             ("V","dom7"), ("IV","dom7"), ("I","dom7"), ("V","dom7"),
         ]),
-        ChordPreset(id: "emotional", name: "vi-IV-I-V", chords: [
-            ("vi","min"), ("IV","maj"), ("I","maj"), ("V","maj"),
-            ("vi","min"), ("IV","maj"), ("I","maj"), ("V","maj"),
+        ChordPreset(id: "blues8", name: "I7-IV7-I7-V7", category: "Blues/Soul", chords: [
+            ("I","dom7"), ("I","dom7"), ("IV","dom7"), ("IV","dom7"),
+            ("I","dom7"), ("V","dom7"), ("I","dom7"), ("V","dom7"),
+        ]),
+        ChordPreset(id: "minblues", name: "i-iv-i-V", category: "Blues/Soul", chords: [
+            ("I","min"), ("I","min"), ("IV","min"), ("IV","min"),
+            ("I","min"), ("V","dom7"), ("I","min"), ("V","dom7"),
+        ]),
+        ChordPreset(id: "soul", name: "i7-iv7-i7-V7", category: "Blues/Soul", chords: [
+            ("I","min7"), ("I","min7"), ("IV","min7"), ("IV","min7"),
+            ("I","min7"), ("V","dom7"), ("I","min7"), ("V","dom7"),
+        ]),
+
+        // MARK: Folk/Country
+        ChordPreset(id: "folk1", name: "I-IV-V-V", category: "Folk/Country", chords: [
+            ("I","maj"), ("IV","maj"), ("V","maj"), ("V","maj"),
+            ("I","maj"), ("IV","maj"), ("V","maj"), ("V","maj"),
+        ]),
+        ChordPreset(id: "folk2", name: "I-V-IV-V", category: "Folk/Country", chords: [
+            ("I","maj"), ("V","maj"), ("IV","maj"), ("V","maj"),
+            ("I","maj"), ("V","maj"), ("IV","maj"), ("V","maj"),
+        ]),
+        ChordPreset(id: "folk3", name: "I-ii-V-I", category: "Folk/Country", chords: [
+            ("I","maj"), ("ii","min"), ("V","maj"), ("I","maj"),
+            ("I","maj"), ("ii","min"), ("V","maj"), ("I","maj"),
+        ]),
+        ChordPreset(id: "country", name: "I-IV-I-V", category: "Folk/Country", chords: [
+            ("I","maj"), ("IV","maj"), ("I","maj"), ("V","maj"),
+            ("I","maj"), ("IV","maj"), ("I","maj"), ("V","maj"),
+        ]),
+
+        // MARK: Minor/Dark
+        ChordPreset(id: "andalusian", name: "i-♭VII-♭VI-V", category: "Minor/Dark", chords: [
+            ("I","min"), ("bVII","maj"), ("bVI","maj"), ("V","maj"),
+            ("I","min"), ("bVII","maj"), ("bVI","maj"), ("V","maj"),
+        ]),
+        ChordPreset(id: "epic", name: "i-♭VI-♭III-♭VII", category: "Minor/Dark", chords: [
+            ("I","min"), ("bVI","maj"), ("bIII","maj"), ("bVII","maj"),
+            ("I","min"), ("bVI","maj"), ("bIII","maj"), ("bVII","maj"),
+        ]),
+        ChordPreset(id: "darkmin", name: "i-iv-v-i", category: "Minor/Dark", chords: [
+            ("I","min"), ("IV","min"), ("V","min"), ("I","min"),
+            ("I","min"), ("IV","min"), ("V","min"), ("I","min"),
+        ]),
+        ChordPreset(id: "darkrock", name: "i-♭VII-♭VI-♭VII", category: "Minor/Dark", chords: [
+            ("I","min"), ("bVII","maj"), ("bVI","maj"), ("bVII","maj"),
+            ("I","min"), ("bVII","maj"), ("bVI","maj"), ("bVII","maj"),
+        ]),
+
+        // MARK: Modal/Ambient
+        ChordPreset(id: "mixolydian", name: "I-♭VII-IV-I", category: "Modal/Ambient", chords: [
+            ("I","maj"), ("bVII","maj"), ("IV","maj"), ("I","maj"),
+            ("I","maj"), ("bVII","maj"), ("IV","maj"), ("I","maj"),
+        ]),
+        ChordPreset(id: "dorian", name: "i-♭III-♭VII-IV", category: "Modal/Ambient", chords: [
+            ("I","min"), ("bIII","maj"), ("bVII","maj"), ("IV","maj"),
+            ("I","min"), ("bIII","maj"), ("bVII","maj"), ("IV","maj"),
+        ]),
+        ChordPreset(id: "lydian", name: "I-II-IV-I", category: "Modal/Ambient", chords: [
+            ("I","maj"), ("ii","maj"), ("IV","maj"), ("I","maj"),
+            ("I","maj"), ("ii","maj"), ("IV","maj"), ("I","maj"),
+        ]),
+        ChordPreset(id: "phrygian", name: "i-♭II-i-♭VII", category: "Modal/Ambient", chords: [
+            ("I","min"), ("bII","maj"), ("I","min"), ("bVII","maj"),
+            ("I","min"), ("bII","maj"), ("I","min"), ("bVII","maj"),
         ]),
     ]
 
@@ -145,6 +250,7 @@ final class ChordSequencer: ObservableObject {
     func clearAll() {
         steps = (0..<8).map { ChordStep(id: $0) }
         selectedStep = 0
+        activePresetId = nil
     }
 
     func loadPreset(_ preset: ChordPreset) {
@@ -158,6 +264,7 @@ final class ChordSequencer: ObservableObject {
         }
         steps = newSteps
         selectedStep = 0
+        activePresetId = preset.id
     }
 
     // MARK: - Chord Resolution

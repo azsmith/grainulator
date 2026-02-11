@@ -47,7 +47,7 @@ struct RingsView: View {
     ]
 
     private let exciterSourceNames = [
-        "Internal", "Plaits", "Granular 1", "Looper 1",
+        "Internal", "Macro Osc", "Granular 1", "Looper 1",
         "Looper 2", "Granular 4", "Drums", "Sampler"
     ]
 
@@ -58,7 +58,7 @@ struct RingsView: View {
 
     var body: some View {
         SynthPanelView(
-            title: "RINGS",
+            title: "RESONATOR",
             accentColor: ColorPalette.accentRings,
             width: 280
         ) {

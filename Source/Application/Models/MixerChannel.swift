@@ -24,8 +24,8 @@ enum ChannelType: Int, CaseIterable, Identifiable {
 
     var name: String {
         switch self {
-        case .plaits: return "PLAITS"
-        case .rings: return "RINGS"
+        case .plaits: return "MACRO OSC"
+        case .rings: return "RESONATOR"
         case .granular1: return "GRAN 1"
         case .looper1: return "LOOP 1"
         case .looper2: return "LOOP 2"
@@ -37,8 +37,8 @@ enum ChannelType: Int, CaseIterable, Identifiable {
 
     var shortName: String {
         switch self {
-        case .plaits: return "PLA"
-        case .rings: return "RNG"
+        case .plaits: return "MOS"
+        case .rings: return "RES"
         case .granular1: return "GR1"
         case .looper1: return "LP1"
         case .looper2: return "LP2"

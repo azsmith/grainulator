@@ -1,22 +1,22 @@
 //
-//  OscilloscopeWindowManager.swift
+//  TunerWindowManager.swift
 //  Grainulator
 //
-//  Manages a floating NSPanel window for the oscilloscope.
-//  Follows the same pattern as MixerWindowManager.
+//  Manages a floating NSPanel window for the chromatic tuner.
+//  Same pattern as OscilloscopeWindowManager.
 //
 
 import AppKit
 import SwiftUI
 
 @MainActor
-final class OscilloscopeWindowManager {
-    static let shared = OscilloscopeWindowManager()
+final class TunerWindowManager {
+    static let shared = TunerWindowManager()
 
-    private var scopePanel: NSPanel?
+    private var tunerPanel: NSPanel?
     private weak var layoutState: WorkspaceLayoutState?
     private weak var audioEngine: AudioEngineWrapper?
-    private var scopePollingRetained: Bool = false
+    private var tunerPollingRetained: Bool = false
 
     private init() {}
 
@@ -28,12 +28,12 @@ final class OscilloscopeWindowManager {
         self.audioEngine = audioEngine
 
         // If already open, bring to front
-        if let existing = scopePanel, existing.isVisible {
+        if let existing = tunerPanel, existing.isVisible {
             existing.makeKeyAndOrderFront(nil)
             return
         }
 
-        let contentSize = CGSize(width: 600, height: 300)
+        let contentSize = CGSize(width: 280, height: 200)
 
         let panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: contentSize),
@@ -41,25 +41,25 @@ final class OscilloscopeWindowManager {
             backing: .buffered,
             defer: false
         )
-        panel.title = "Oscilloscope"
+        panel.title = "Tuner"
         panel.isFloatingPanel = true
         panel.becomesKeyOnlyIfNeeded = false
         panel.level = .floating
         panel.isReleasedWhenClosed = false
-        panel.minSize = CGSize(width: 400, height: 200)
+        panel.minSize = CGSize(width: 240, height: 160)
         panel.setFrameAutosaveName("")
 
-        // Host SwiftUI oscilloscope view
-        let scopeView = OscilloscopeView(audioEngine: audioEngine)
-        let hostingController = NSHostingController(rootView: scopeView)
+        // Host SwiftUI tuner view
+        let tunerView = TunerView(audioEngine: audioEngine)
+        let hostingController = NSHostingController(rootView: tunerView)
         panel.contentViewController = hostingController
 
         // Explicitly set size and center
         panel.setContentSize(contentSize)
         panel.center()
 
-        scopePanel = panel
-        retainScopePollingIfNeeded()
+        tunerPanel = panel
+        retainTunerPollingIfNeeded()
 
         // Observe close to sync state
         NotificationCenter.default.addObserver(
@@ -68,28 +68,28 @@ final class OscilloscopeWindowManager {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.releaseScopePollingIfNeeded()
-                self?.layoutState?.isScopeWindowOpen = false
-                self?.scopePanel = nil
+                self?.releaseTunerPollingIfNeeded()
+                self?.layoutState?.isTunerWindowOpen = false
+                self?.tunerPanel = nil
             }
         }
 
         panel.makeKeyAndOrderFront(nil)
-        layoutState.isScopeWindowOpen = true
+        layoutState.isTunerWindowOpen = true
     }
 
     func close() {
-        scopePanel?.close()
-        releaseScopePollingIfNeeded()
-        scopePanel = nil
-        layoutState?.isScopeWindowOpen = false
+        tunerPanel?.close()
+        releaseTunerPollingIfNeeded()
+        tunerPanel = nil
+        layoutState?.isTunerWindowOpen = false
     }
 
     func toggle(
         audioEngine: AudioEngineWrapper,
         layoutState: WorkspaceLayoutState
     ) {
-        if scopePanel?.isVisible == true {
+        if tunerPanel?.isVisible == true {
             close()
         } else {
             open(
@@ -100,18 +100,18 @@ final class OscilloscopeWindowManager {
     }
 
     var isOpen: Bool {
-        scopePanel?.isVisible ?? false
+        tunerPanel?.isVisible ?? false
     }
 
-    private func retainScopePollingIfNeeded() {
-        guard !scopePollingRetained, let audioEngine else { return }
-        scopePollingRetained = true
-        audioEngine.retainScopeMonitoring()
+    private func retainTunerPollingIfNeeded() {
+        guard !tunerPollingRetained, let audioEngine else { return }
+        tunerPollingRetained = true
+        audioEngine.retainTunerMonitoring()
     }
 
-    private func releaseScopePollingIfNeeded() {
-        guard scopePollingRetained else { return }
-        scopePollingRetained = false
-        audioEngine?.releaseScopeMonitoring()
+    private func releaseTunerPollingIfNeeded() {
+        guard tunerPollingRetained else { return }
+        tunerPollingRetained = false
+        audioEngine?.releaseTunerMonitoring()
     }
 }

@@ -114,10 +114,13 @@ void StringMachineEngine::Render(
         size);
   }
   
-  // Pass through VCF.
-  const float cutoff = 2.2f * f0 * SemitonesToRatio(120.0f * parameters.timbre);
-  svf_[0].set_f_q<FREQUENCY_DIRTY>(cutoff, 1.0f);
-  svf_[1].set_f_q<FREQUENCY_DIRTY>(cutoff * 1.5f, 1.0f);
+  // Pass through VCF (trapezoidal Svf — unconditionally stable).
+  float cutoff = 2.2f * f0 * SemitonesToRatio(120.0f * timbre_lp_);
+  CONSTRAIN(cutoff, 0.0f, 0.497f);
+  svf_[0].set_f_q<FREQUENCY_EXACT>(cutoff, 1.0f);
+  float cutoff2 = cutoff * 1.5f;
+  CONSTRAIN(cutoff2, 0.0f, 0.497f);
+  svf_[1].set_f_q<FREQUENCY_EXACT>(cutoff2, 1.0f);
 
   // Mixdown.
   for (size_t i = 0; i < size; ++i) {
@@ -127,11 +130,9 @@ void StringMachineEngine::Render(
     aux[i] = 0.66f * r + 0.33f * l;
   }
 
-  // Ensemble FX.
-  const float amount = fabsf(parameters.timbre - 0.5f) * 2.0f;
-  const float depth = 0.35f + 0.65f * parameters.timbre;
-  ensemble_.set_amount(amount);
-  ensemble_.set_depth(depth);
+  // Ensemble chorus.
+  ensemble_.set_amount(timbre_lp_ * timbre_lp_ * 0.5f);
+  ensemble_.set_depth(0.2f + 0.8f * timbre_lp_);
   ensemble_.Process(out, aux, size);
 }
 

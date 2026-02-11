@@ -84,7 +84,7 @@ struct PlaitsView: View {
 
     var body: some View {
         SynthPanelView(
-            title: "PLAITS",
+            title: "MACRO OSC",
             accentColor: ColorPalette.accentPlaits,
             width: 300
         ) {

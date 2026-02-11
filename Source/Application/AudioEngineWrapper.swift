@@ -337,6 +337,11 @@ class AudioEngineWrapper: ObservableObject {
     @Published var scopeTimeNorm: Double = 0.5  // 0...1 log-mapped → 32...24000 samples
     @Published var scopeGain: Double = 1.0      // Y-axis sensitivity multiplier
 
+    // Tuner
+    @Published var tunerSource: Int = 8          // Default: master
+    @Published var tunerFrequency: Float = 0     // Detected Hz (0 = no pitch)
+    @Published var tunerConfidence: Float = 0    // YIN confidence (0-1)
+
     /// Compute sample count from normalized slider (log scale: 32 → 24000)
     var scopeTimeScale: Int {
         // 0.0 → 32 samples (~0.7ms), 1.0 → 24000 samples (~500ms)
@@ -347,7 +352,7 @@ class AudioEngineWrapper: ObservableObject {
     }
 
     static let scopeSourceNames: [String] = [
-        "Plaits", "Rings", "Granular 1", "Looper 1",
+        "Macro Osc", "Resonator", "Granular 1", "Looper 1",
         "Looper 2", "Granular 4", "DaisyDrum", "Sampler",
         "Master",
         "Clock 1", "Clock 2", "Clock 3", "Clock 4",
@@ -466,6 +471,11 @@ class AudioEngineWrapper: ObservableObject {
     // Performance monitoring
     private var performanceTimer: Timer?
     private var scopeTimer: Timer?
+    private var tunerTimer: Timer?
+    private var scopeMonitorRefCount: Int = 0
+    private var tunerMonitorRefCount: Int = 0
+    private var tunerRefreshInFlight = false
+    private let pitchDetector = PitchDetector()
     private var lastCPUCheckTime: Date = Date()
     private var multiChannelHealthCheckPending = false
     private let multiChannelRenderTimeLock = NSLock()
@@ -505,7 +515,7 @@ class AudioEngineWrapper: ObservableObject {
     let auHostContext = AUHostContext()
 
     // Channel names for debugging
-    private let channelNames = ["Plaits", "Rings", "Granular1", "Looper1", "Looper2", "Granular4"]
+    private let channelNames = ["Macro Osc", "Resonator", "Granular1", "Looper1", "Looper2", "Granular4"]
 
     // MARK: - Initialization
 
@@ -517,7 +527,6 @@ class AudioEngineWrapper: ObservableObject {
         setupAudioEngine()
         enumerateAudioDevices()
         setupPerformanceMonitoring()
-        setupScopeTimer()
 
         // Initialize C++ engine
         if let handle = cppEngineHandle {
@@ -543,7 +552,14 @@ class AudioEngineWrapper: ObservableObject {
 
         outputNode = engine.outputNode
 
-        // Configure audio format (48kHz, stereo, float)
+        // Use the hardware output sample rate so we avoid unnecessary resampling.
+        let hardwareRate = engine.outputNode.outputFormat(forBus: 0).sampleRate
+        if hardwareRate > 0 {
+            sampleRate = hardwareRate
+            print("Using hardware sample rate: \(hardwareRate) Hz")
+        }
+
+        // Configure audio format at the hardware rate
         audioFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: sampleRate,
@@ -1446,6 +1462,17 @@ class AudioEngineWrapper: ObservableObject {
         // for the first ~100ms until the C++ engine settles.
         startupSilenceFrames = Int32(sampleRate * 0.1)
 
+        // Observe configuration changes (device switch, sample rate change)
+        NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleAudioConfigurationChange()
+            }
+        }
+
         do {
             try engine.start()
             isRunning = true
@@ -1459,6 +1486,31 @@ class AudioEngineWrapper: ObservableObject {
             scheduleMultiChannelHealthCheckIfNeeded()
         } catch {
             print("✗ Failed to start audio engine: \(error)")
+        }
+    }
+
+    private func handleAudioConfigurationChange() {
+        guard let engine = audioEngine else { return }
+        let newRate = engine.outputNode.outputFormat(forBus: 0).sampleRate
+
+        if newRate > 0 && newRate != sampleRate {
+            print("⚡ Audio configuration changed: \(sampleRate) Hz → \(newRate) Hz")
+            print("  Note: C++ engine was initialized at \(sampleRate) Hz. Restart app for optimal quality at new rate.")
+            // Update the published property so the tuner uses the correct rate
+            // for pitch detection on the resampled output.
+            sampleRate = newRate
+        }
+
+        // AVAudioEngine stops on config change — restart it
+        if !engine.isRunning {
+            do {
+                try engine.start()
+                isRunning = true
+                print("✓ Audio engine restarted after configuration change")
+            } catch {
+                print("✗ Failed to restart audio engine: \(error)")
+                isRunning = false
+            }
         }
     }
 
@@ -1577,7 +1629,22 @@ class AudioEngineWrapper: ObservableObject {
 
     private var scopeRefreshInFlight = false
 
+    func retainScopeMonitoring() {
+        scopeMonitorRefCount += 1
+        if scopeMonitorRefCount == 1 {
+            setupScopeTimer()
+        }
+    }
+
+    func releaseScopeMonitoring() {
+        scopeMonitorRefCount = max(0, scopeMonitorRefCount - 1)
+        if scopeMonitorRefCount == 0 {
+            stopScopeTimer()
+        }
+    }
+
     private func setupScopeTimer() {
+        guard scopeTimer == nil else { return }
         scopeTimer = Timer.scheduledTimer(withTimeInterval: 1.0/30.0, repeats: true) { [weak self] _ in
             guard let self, !self.scopeRefreshInFlight else { return }
             self.scopeRefreshInFlight = true
@@ -1586,6 +1653,14 @@ class AudioEngineWrapper: ObservableObject {
                 self.updateScopeWaveform()
             }
         }
+    }
+
+    private func stopScopeTimer() {
+        scopeTimer?.invalidate()
+        scopeTimer = nil
+        scopeRefreshInFlight = false
+        if !scopeWaveform.isEmpty { scopeWaveform = [] }
+        if !scopeWaveformB.isEmpty { scopeWaveformB = [] }
     }
 
     private func updateScopeWaveform() {
@@ -1606,6 +1681,60 @@ class AudioEngineWrapper: ObservableObject {
             scopeWaveformB = bufferB
         } else if !scopeWaveformB.isEmpty {
             scopeWaveformB = []
+        }
+    }
+
+    // MARK: - Tuner Timer
+
+    func retainTunerMonitoring() {
+        tunerMonitorRefCount += 1
+        if tunerMonitorRefCount == 1 {
+            setupTunerTimer()
+        }
+    }
+
+    func releaseTunerMonitoring() {
+        tunerMonitorRefCount = max(0, tunerMonitorRefCount - 1)
+        if tunerMonitorRefCount == 0 {
+            stopTunerTimer()
+        }
+    }
+
+    private func setupTunerTimer() {
+        guard tunerTimer == nil else { return }
+        tunerTimer = Timer.scheduledTimer(withTimeInterval: 1.0/15.0, repeats: true) { [weak self] _ in
+            guard let self, !self.tunerRefreshInFlight else { return }
+            self.tunerRefreshInFlight = true
+            Task { @MainActor in
+                defer { self.tunerRefreshInFlight = false }
+                self.updateTunerPitch()
+            }
+        }
+    }
+
+    private func stopTunerTimer() {
+        tunerTimer?.invalidate()
+        tunerTimer = nil
+        tunerRefreshInFlight = false
+        if tunerFrequency != 0 { tunerFrequency = 0 }
+        if tunerConfidence != 0 { tunerConfidence = 0 }
+    }
+
+    private func updateTunerPitch() {
+        guard let handle = cppEngineHandle else { return }
+        let numFrames: Int32 = 4096
+
+        var buffer = [Float](repeating: 0, count: Int(numFrames))
+        buffer.withUnsafeMutableBufferPointer { ptr in
+            AudioEngine_ReadScopeBuffer(handle, Int32(tunerSource), ptr.baseAddress, numFrames)
+        }
+
+        if let result = pitchDetector.detectPitch(samples: buffer, sampleRate: Float(sampleRate)) {
+            tunerFrequency = result.frequency
+            tunerConfidence = result.confidence
+        } else {
+            tunerFrequency = 0
+            tunerConfidence = 0
         }
     }
 
@@ -2567,6 +2696,7 @@ class AudioEngineWrapper: ObservableObject {
     deinit {
         performanceTimer?.invalidate()
         scopeTimer?.invalidate()
+        tunerTimer?.invalidate()
         audioEngine?.stop()
 
         // Cleanup C++ engine

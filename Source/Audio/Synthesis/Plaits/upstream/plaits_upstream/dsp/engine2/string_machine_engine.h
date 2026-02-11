@@ -57,7 +57,7 @@ class StringMachineEngine : public Engine {
   
   Ensemble ensemble_;
   StringSynthOscillator divide_down_voice_[kChordNumNotes];
-  stmlib::NaiveSvf svf_[2];
+  stmlib::Svf svf_[2];
   
   float morph_lp_;
   float timbre_lp_;

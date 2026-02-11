@@ -145,6 +145,7 @@ struct OscilloscopeView: View {
         }
         .pickerStyle(.menu)
         .labelsHidden()
+        .colorScheme(.dark)
     }
 
     private func timescaleLabel(_ samples: Int) -> String {

@@ -44,7 +44,9 @@ static const float kSampleRate = 48000.0f;
 //
 // That's only 4.6 cts of error, but we care!
 
-static const float kCorrectedSampleRate = 47872.34f;
+// On the original STM32 hardware, I2S clock divider gives 47872.34 Hz.
+// On macOS / desktop, the sample rate is exactly 48000 Hz — no PLL correction needed.
+static const float kCorrectedSampleRate = 48000.0f;
 const float a0 = (440.0f / 8.0f) / kCorrectedSampleRate;
 
 const size_t kMaxBlockSize = 24;

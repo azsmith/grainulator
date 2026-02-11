@@ -51,6 +51,7 @@ class WorkspaceLayoutState: ObservableObject {
     @Published var currentTab: WorkspaceTab = .sequencer
     @Published var isMixerWindowOpen: Bool = false
     @Published var isScopeWindowOpen: Bool = false
+    @Published var isTunerWindowOpen: Bool = false
 
     func selectTab(_ tab: WorkspaceTab) {
         withAnimation(.easeInOut(duration: 0.2)) {

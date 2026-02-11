@@ -1061,7 +1061,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                 "chords": canonicalChordSequencerPayload(),
             ],
             "synth": [
-                "plaits": [
+                "macro_osc": [
                     "mode": readSynthModeName(parameter: .plaitsModel),
                     "harmonics": readGlobalParameter(id: .plaitsHarmonics),
                     "timbre": readGlobalParameter(id: .plaitsTimbre),
@@ -1072,7 +1072,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                     "lpgAttack": readGlobalParameter(id: .plaitsLPGAttack),
                     "lpgBypass": readGlobalParameter(id: .plaitsLPGBypass),
                 ] as [String: Any],
-                "rings": [
+                "resonator": [
                     "mode": readSynthModeName(parameter: .ringsModel),
                     "structure": readGlobalParameter(id: .ringsStructure),
                     "brightness": readGlobalParameter(id: .ringsBrightness),
@@ -2362,19 +2362,19 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return (true, nil)
         }
 
-        if target == "synth.plaits.mode" {
+        if target == "synth.macro_osc.mode" || target == "synth.plaits.mode" {
             guard let mode = modeTextFromAction(action),
                   let normalized = plaitsModelNormalized(modeText: mode) else {
-                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Unsupported plaits mode"))
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Unsupported macro_osc mode"))
             }
             writeSynthMode(parameter: .plaitsModel, normalizedValue: normalized)
             recordMutation(
-                changedPaths: ["synth.plaits.mode"],
+                changedPaths: ["synth.macro_osc.mode"],
                 additionalEvents: [
                     (
                         type: "synth.mode_changed",
                         payload: [
-                            "synth": "plaits",
+                            "synth": "macro_osc",
                             "mode": mode,
                         ]
                     ),
@@ -2383,8 +2383,17 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return (true, nil)
         }
 
-        // Plaits continuous parameters
-        let plaitsParamMap: [String: ParameterID] = [
+        // Macro Osc continuous parameters (accept both new and old path prefixes)
+        let macroOscParamMap: [String: ParameterID] = [
+            "synth.macro_osc.harmonics": .plaitsHarmonics,
+            "synth.macro_osc.timbre": .plaitsTimbre,
+            "synth.macro_osc.morph": .plaitsMorph,
+            "synth.macro_osc.level": .plaitsLevel,
+            "synth.macro_osc.lpgColor": .plaitsLPGColor,
+            "synth.macro_osc.lpgDecay": .plaitsLPGDecay,
+            "synth.macro_osc.lpgAttack": .plaitsLPGAttack,
+            "synth.macro_osc.lpgBypass": .plaitsLPGBypass,
+            // Backward compat: old paths
             "synth.plaits.harmonics": .plaitsHarmonics,
             "synth.plaits.timbre": .plaitsTimbre,
             "synth.plaits.morph": .plaitsMorph,
@@ -2394,33 +2403,33 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             "synth.plaits.lpgAttack": .plaitsLPGAttack,
             "synth.plaits.lpgBypass": .plaitsLPGBypass,
         ]
-        if let paramId = plaitsParamMap[target] {
+        if let paramId = macroOscParamMap[target] {
             guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
-                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Plaits \(target.split(separator: ".").last ?? "") must be within [0.0, 1.0]"))
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Macro Osc \(target.split(separator: ".").last ?? "") must be within [0.0, 1.0]"))
             }
             writeSynthMode(parameter: paramId, normalizedValue: Float(value))
             recordMutation(
                 changedPaths: [target],
                 additionalEvents: [
-                    (type: "synth.param_changed", payload: ["synth": "plaits", "param": String(target.split(separator: ".").last ?? ""), "value": value]),
+                    (type: "synth.param_changed", payload: ["synth": "macro_osc", "param": String(target.split(separator: ".").last ?? ""), "value": value]),
                 ]
             )
             return (true, nil)
         }
 
-        if target == "synth.rings.mode" {
+        if target == "synth.resonator.mode" || target == "synth.rings.mode" {
             guard let mode = modeTextFromAction(action),
                   let normalized = ringsModelNormalized(modeText: mode) else {
-                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Unsupported rings mode"))
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Unsupported resonator mode"))
             }
             writeSynthMode(parameter: .ringsModel, normalizedValue: normalized)
             recordMutation(
-                changedPaths: ["synth.rings.mode"],
+                changedPaths: ["synth.resonator.mode"],
                 additionalEvents: [
                     (
                         type: "synth.mode_changed",
                         payload: [
-                            "synth": "rings",
+                            "synth": "resonator",
                             "mode": mode,
                         ]
                     ),
@@ -2429,23 +2438,29 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return (true, nil)
         }
 
-        // Rings continuous parameters
-        let ringsParamMap: [String: ParameterID] = [
+        // Resonator continuous parameters (accept both new and old path prefixes)
+        let resonatorParamMap: [String: ParameterID] = [
+            "synth.resonator.structure": .ringsStructure,
+            "synth.resonator.brightness": .ringsBrightness,
+            "synth.resonator.damping": .ringsDamping,
+            "synth.resonator.position": .ringsPosition,
+            "synth.resonator.level": .ringsLevel,
+            // Backward compat: old paths
             "synth.rings.structure": .ringsStructure,
             "synth.rings.brightness": .ringsBrightness,
             "synth.rings.damping": .ringsDamping,
             "synth.rings.position": .ringsPosition,
             "synth.rings.level": .ringsLevel,
         ]
-        if let paramId = ringsParamMap[target] {
+        if let paramId = resonatorParamMap[target] {
             guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
-                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Rings \(target.split(separator: ".").last ?? "") must be within [0.0, 1.0]"))
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Resonator \(target.split(separator: ".").last ?? "") must be within [0.0, 1.0]"))
             }
             writeSynthMode(parameter: paramId, normalizedValue: Float(value))
             recordMutation(
                 changedPaths: [target],
                 additionalEvents: [
-                    (type: "synth.param_changed", payload: ["synth": "rings", "param": String(target.split(separator: ".").last ?? ""), "value": value]),
+                    (type: "synth.param_changed", payload: ["synth": "resonator", "param": String(target.split(separator: ".").last ?? ""), "value": value]),
                 ]
             )
             return (true, nil)
@@ -3212,9 +3227,9 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
 
     private func trackOutputFromText(_ text: String) -> SequencerTrackOutput? {
         switch text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "plaits":
+        case "macro_osc", "macro osc", "plaits":
             return .plaits
-        case "rings":
+        case "resonator", "rings":
             return .rings
         case "both":
             return .both
@@ -3267,20 +3282,85 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
     private func plaitsModelNormalized(modeText: String) -> Float? {
         let normalized = modeText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().replacingOccurrences(of: "_", with: " ")
         let names: [(String, Int)] = [
-            ("virtual analog", 0), ("waveshaper", 1), ("two op fm", 2), ("granular formant", 3),
-            ("harmonic", 4), ("wavetable", 5), ("chords", 6), ("speech", 7),
-            ("granular cloud", 8), ("filtered noise", 9), ("particle noise", 10), ("string", 11),
-            ("modal", 12), ("bass drum", 13), ("snare drum", 14), ("hi hat", 15),
-            ("six op fm", 16), ("sixop fm", 16), ("dx7", 16), ("6 op fm", 16),
+            ("va vcf", 0), ("virtual analog vcf", 0),
+            ("phase dist", 1), ("phase distortion", 1),
+            ("six op fm a", 2), ("six-op fm a", 2), ("dx7 a", 2),
+            ("six op fm b", 3), ("six-op fm b", 3), ("dx7 b", 3),
+            ("six op fm c", 4), ("six-op fm c", 4), ("dx7 c", 4),
+            ("wave terrain", 5),
+            ("string machine", 6),
+            ("chiptune", 7),
+            ("virtual analog", 8),
+            ("waveshaper", 9), ("waveshaping", 9),
+            ("two op fm", 10), ("two-op fm", 10),
+            ("granular formant", 11),
+            ("harmonic", 12),
+            ("wavetable", 13),
+            ("chords", 14),
+            ("speech", 15), ("vowel speech", 15),
+            ("granular cloud", 16), ("swarm", 16),
+            ("filtered noise", 17), ("noise", 17),
+            ("particle noise", 18), ("particle", 18),
+            ("string", 19),
+            ("modal", 20),
+            ("bass drum", 21), ("kick", 21),
+            ("snare drum", 22), ("snare", 22),
+            ("hi hat", 23), ("hihat", 23),
+            ("six op fm", 2), ("six-op fm", 2), ("sixop fm", 2), ("6 op fm", 2), ("dx7", 2),
         ]
         if let exact = names.first(where: { $0.0 == normalized }) {
-            return Float(exact.1) / 16.0
+            return Float(exact.1) / 23.0
+        }
+        if normalized.contains("phase") {
+            return Float(1) / 23.0
+        }
+        if normalized.contains("terrain") {
+            return Float(5) / 23.0
+        }
+        if normalized.contains("string machine") {
+            return Float(6) / 23.0
+        }
+        if normalized.contains("chiptune") {
+            return Float(7) / 23.0
+        }
+        if normalized.contains("virtual analog") && normalized.contains("vcf") {
+            return Float(0) / 23.0
+        }
+        if normalized.contains("virtual analog") {
+            return Float(8) / 23.0
+        }
+        if normalized.contains("wave") && normalized.contains("shape") {
+            return Float(9) / 23.0
+        }
+        if normalized.contains("granular") && normalized.contains("formant") {
+            return Float(11) / 23.0
+        }
+        if normalized.contains("granular") || normalized.contains("swarm") {
+            return Float(16) / 23.0
+        }
+        if normalized.contains("particle") {
+            return Float(18) / 23.0
+        }
+        if normalized.contains("noise") {
+            return Float(17) / 23.0
         }
         if normalized.contains("string") {
-            return Float(11) / 16.0
+            return Float(19) / 23.0
+        }
+        if normalized.contains("modal") {
+            return Float(20) / 23.0
+        }
+        if normalized.contains("bass") || normalized.contains("kick") {
+            return Float(21) / 23.0
+        }
+        if normalized.contains("snare") {
+            return Float(22) / 23.0
+        }
+        if normalized.contains("hat") {
+            return Float(23) / 23.0
         }
         if normalized.contains("six op") || normalized.contains("6op") || normalized.contains("dx7") {
-            return Float(16) / 16.0
+            return Float(2) / 23.0
         }
         return nil
     }
@@ -3773,8 +3853,16 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
 
     private func plaitsModeName(fromNormalized normalized: Float) -> String {
         let names = [
+            "va vcf",
+            "phase distortion",
+            "six op fm a",
+            "six op fm b",
+            "six op fm c",
+            "wave terrain",
+            "string machine",
+            "chiptune",
             "virtual analog",
-            "waveshaper",
+            "waveshaping",
             "two op fm",
             "granular formant",
             "harmonic",
@@ -3789,10 +3877,9 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             "bass drum",
             "snare drum",
             "hi hat",
-            "six op fm",
         ]
         let clamped = clamp01(Double(normalized))
-        let index = min(max(Int((clamped * 16.0).rounded()), 0), names.count - 1)
+        let index = min(max(Int((clamped * 23.0).rounded()), 0), names.count - 1)
         return names[index]
     }
 
@@ -4586,8 +4673,8 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
     private func recordingSourcesList() -> [[String: Any]] {
         [
             ["name": "external", "aliases": ["mic", "line"], "sourceType": "external"],
-            ["name": "plaits", "channel": 0, "sourceType": "internal"],
-            ["name": "rings", "channel": 1, "sourceType": "internal"],
+            ["name": "macro_osc", "aliases": ["plaits"], "channel": 0, "sourceType": "internal"],
+            ["name": "resonator", "aliases": ["rings"], "channel": 1, "sourceType": "internal"],
             ["name": "granular1", "channel": 2, "sourceType": "internal"],
             ["name": "looper1", "channel": 3, "sourceType": "internal"],
             ["name": "looper2", "channel": 4, "sourceType": "internal"],

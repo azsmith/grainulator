@@ -8,8 +8,8 @@
 enum MixerChannel {
     static func shortName(_ channel: Int) -> String {
         switch channel {
-        case 0: return "PLT"
-        case 1: return "RNG"
+        case 0: return "MOS"
+        case 1: return "RES"
         case 2: return "GR1"
         case 3: return "LP1"
         case 4: return "LP2"
@@ -26,8 +26,8 @@ enum MixerChannel {
 
     static func displayName(_ channel: Int) -> String {
         switch channel {
-        case 0: return "Plaits"
-        case 1: return "Rings"
+        case 0: return "Macro Osc"
+        case 1: return "Resonator"
         case 2: return "Gran 1"
         case 3: return "Loop 1"
         case 4: return "Loop 2"

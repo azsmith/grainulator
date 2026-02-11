@@ -120,13 +120,25 @@ enum AccumulatorMode: String, CaseIterable, Identifiable {
 }
 
 enum SequencerTrackOutput: String, CaseIterable, Identifiable {
-    case plaits = "PLAITS"
-    case rings = "RINGS"
+    case plaits = "MACRO OSC"
+    case rings = "RESONATOR"
     case both = "BOTH"
     case daisyDrum = "DRUMS"
     case sampler = "SAMPLER"
 
     var id: String { rawValue }
+
+    // Backward compat: accept old raw values from saved project files
+    init?(rawValue: String) {
+        switch rawValue {
+        case "MACRO OSC", "PLAITS": self = .plaits
+        case "RESONATOR", "RINGS": self = .rings
+        case "BOTH": self = .both
+        case "DRUMS": self = .daisyDrum
+        case "SAMPLER": self = .sampler
+        default: return nil
+        }
+    }
 }
 
 struct SequencerScaleDefinition: Identifiable, Hashable {
@@ -467,8 +479,8 @@ final class StepSequencer: ObservableObject {
             }
         }
 
-        // Debug voicing: Plaits String (11/15), Rings String (2/5).
-        audioEngine?.setParameter(id: .plaitsModel, value: Float(11.0 / 16.0))
+        // Debug voicing: Plaits String (19/23), Rings String (2/5).
+        audioEngine?.setParameter(id: .plaitsModel, value: Float(19.0 / 23.0))
         audioEngine?.setParameter(id: .ringsModel, value: Float(2.0 / 5.0))
     }
 
