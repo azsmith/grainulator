@@ -320,8 +320,8 @@ struct Typography_Previews: PreviewProvider {
                 Divider()
 
                 Group {
-                    ScribbleStripView("PLAITS", color: ColorPalette.accentPlaits)
-                    ScribbleStripView("RINGS", color: ColorPalette.accentRings, isActive: false)
+                    ScribbleStripView("MACRO OSC", color: ColorPalette.accentPlaits)
+                    ScribbleStripView("RESONATOR", color: ColorPalette.accentRings, isActive: false)
                 }
 
                 Divider()

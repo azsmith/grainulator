@@ -324,7 +324,7 @@ struct EurorackModuleView_Previews: PreviewProvider {
             // Eurorack-style modules
             HStack(spacing: 20) {
                 EurorackModuleView(
-                    title: "RINGS",
+                    title: "RESONATOR",
                     accentColor: ColorPalette.accentRings,
                     width: 200
                 ) {
@@ -348,7 +348,7 @@ struct EurorackModuleView_Previews: PreviewProvider {
                 }
 
                 EurorackModuleView(
-                    title: "PLAITS",
+                    title: "MACRO OSC",
                     accentColor: ColorPalette.accentPlaits,
                     width: 220
                 ) {

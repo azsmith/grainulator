@@ -90,8 +90,8 @@ struct GranularView: View {
                             }
                         }
                         Divider()
-                        inputSourceButton("Plaits", channel: 0)
-                        inputSourceButton("Rings", channel: 1)
+                        inputSourceButton("Macro Osc", channel: 0)
+                        inputSourceButton("Resonator", channel: 1)
                         if voiceIndex != 0 {
                             inputSourceButton("Granular 1", channel: 2)
                         }

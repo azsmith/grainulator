@@ -193,7 +193,7 @@ struct SynthPanelView_Previews: PreviewProvider {
         var body: some View {
             HStack(spacing: 20) {
                 SynthPanelView(
-                    title: "PLAITS",
+                    title: "MACRO OSC",
                     accentColor: ColorPalette.accentPlaits,
                     width: 300
                 ) {
@@ -265,7 +265,7 @@ struct SynthPanelView_Previews: PreviewProvider {
                 }
 
                 SynthPanelView(
-                    title: "RINGS",
+                    title: "RESONATOR",
                     accentColor: ColorPalette.accentRings,
                     width: 260
                 ) {

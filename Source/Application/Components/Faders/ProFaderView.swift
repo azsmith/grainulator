@@ -609,7 +609,7 @@ struct ProFaderView_Previews: PreviewProvider {
                         sendB: $sendB,
                         isMuted: $isMuted,
                         isSolo: $isSolo,
-                        channelName: "PLAITS",
+                        channelName: "MACRO OSC",
                         channelIndex: 0,
                         accentColor: ColorPalette.accentPlaits,
                         level: 0.6
@@ -622,7 +622,7 @@ struct ProFaderView_Previews: PreviewProvider {
                         sendB: .constant(0.4),
                         isMuted: .constant(false),
                         isSolo: .constant(true),
-                        channelName: "RINGS",
+                        channelName: "RESONATOR",
                         channelIndex: 1,
                         accentColor: ColorPalette.accentRings,
                         level: 0.4

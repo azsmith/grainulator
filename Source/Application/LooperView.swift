@@ -58,8 +58,8 @@ struct LooperView: View {
                             }
                         }
                         Divider()
-                        inputSourceButton("Plaits", channel: 0)
-                        inputSourceButton("Rings", channel: 1)
+                        inputSourceButton("Macro Osc", channel: 0)
+                        inputSourceButton("Resonator", channel: 1)
                         inputSourceButton("Granular 1", channel: 2)
                         if voiceIndex != 1 {
                             inputSourceButton("Looper 1", channel: 3)

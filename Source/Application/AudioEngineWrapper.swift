@@ -347,7 +347,7 @@ class AudioEngineWrapper: ObservableObject {
     }
 
     static let scopeSourceNames: [String] = [
-        "Plaits", "Rings", "Granular 1", "Looper 1",
+        "Macro Osc", "Resonator", "Granular 1", "Looper 1",
         "Looper 2", "Granular 4", "DaisyDrum", "Sampler",
         "Master",
         "Clock 1", "Clock 2", "Clock 3", "Clock 4",
@@ -505,7 +505,7 @@ class AudioEngineWrapper: ObservableObject {
     let auHostContext = AUHostContext()
 
     // Channel names for debugging
-    private let channelNames = ["Plaits", "Rings", "Granular1", "Looper1", "Looper2", "Granular4"]
+    private let channelNames = ["Macro Osc", "Resonator", "Granular1", "Looper1", "Looper2", "Granular4"]
 
     // MARK: - Initialization
 
