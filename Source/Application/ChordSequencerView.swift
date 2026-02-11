@@ -33,6 +33,10 @@ struct ChordSequencerView: View {
 
     // MARK: - Track Header
 
+    private var isChordScaleActive: Bool {
+        sequencer.scaleIndex == StepSequencer.chordSequencerScaleIndex
+    }
+
     private var chordTrackHeader: some View {
         HStack(spacing: 8) {
             Text("CHORDS")
@@ -69,6 +73,26 @@ struct ChordSequencerView: View {
             }
             .buttonStyle(.plain)
 
+            // Toggle chord-driven scale mode
+            Button(action: {
+                if isChordScaleActive {
+                    // Revert to Major (index 0)
+                    sequencer.setScaleIndex(0)
+                } else {
+                    sequencer.setScaleIndex(StepSequencer.chordSequencerScaleIndex)
+                }
+            }) {
+                Text("USE CHORDS")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundColor(isChordScaleActive ? .white : ColorPalette.metalSteel)
+                    .padding(.horizontal, 6)
+                    .frame(height: 18)
+                    .background(isChordScaleActive ? trackColor : ColorPalette.backgroundTertiary)
+                    .cornerRadius(3)
+            }
+            .buttonStyle(.plain)
+            .help(isChordScaleActive ? "Using chord progression as scale — click to revert" : "Use chord progression to drive sequencer scale")
+
             Spacer()
 
             Button(action: { chordSequencer.clearAll() }) {
@@ -86,24 +110,46 @@ struct ChordSequencerView: View {
 
     // MARK: - Preset Row
 
+    private var activePresetName: String {
+        if let id = chordSequencer.activePresetId,
+           let preset = ChordSequencer.presets.first(where: { $0.id == id }) {
+            return preset.name
+        }
+        return "Select..."
+    }
+
     private var presetRow: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             Text("PRESETS")
                 .font(.system(size: 7, weight: .medium, design: .monospaced))
                 .foregroundColor(ColorPalette.textDimmed)
 
-            ForEach(ChordSequencer.presets) { preset in
-                Button(action: { chordSequencer.loadPreset(preset) }) {
-                    Text(preset.name)
-                        .font(.system(size: 8, weight: .medium, design: .monospaced))
-                        .foregroundColor(ColorPalette.textMuted)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(ColorPalette.backgroundTertiary)
-                        .cornerRadius(3)
+            Menu {
+                ForEach(ChordSequencer.presetCategories, id: \.self) { category in
+                    Section(category) {
+                        ForEach(ChordSequencer.presets.filter { $0.category == category }) { preset in
+                            Button(action: { chordSequencer.loadPreset(preset) }) {
+                                Text(preset.name)
+                            }
+                        }
+                    }
                 }
-                .buttonStyle(.plain)
+            } label: {
+                HStack(spacing: 3) {
+                    Text(activePresetName)
+                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 6, weight: .bold))
+                        .foregroundColor(ColorPalette.textMuted)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(ColorPalette.backgroundTertiary)
+                .cornerRadius(3)
             }
+            .buttonStyle(.plain)
 
             Spacer()
         }
