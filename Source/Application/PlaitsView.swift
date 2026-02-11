@@ -13,7 +13,7 @@ struct PlaitsView: View {
     @EnvironmentObject var audioEngine: AudioEngineWrapper
     @EnvironmentObject var midiManager: MIDIManager
 
-    @State private var selectedEngine: Int = 3  // Granular Formant
+    @State private var selectedEngine: Int = 0  // Virtual Analog
     @State private var harmonics: Float = 0.35
     @State private var timbre: Float = 0.31
     @State private var morph: Float = 0.51
@@ -21,64 +21,65 @@ struct PlaitsView: View {
     @State private var isTriggered: Bool = false
 
     // LPG parameters
-    @State private var lpgColor: Float = 0.52
+    @State private var lpgColor: Float = 0.0
     @State private var lpgAttack: Float = 0.0
-    @State private var lpgDecay: Float = 0.18
+    @State private var lpgDecay: Float = 0.5
     @State private var lpgBypass: Bool = false
 
     // Modulation amounts (updated via timer)
     @State private var harmonicsMod: Float = 0.0
     @State private var timbreMod: Float = 0.0
     @State private var morphMod: Float = 0.0
+    @State private var showWavetableFilePicker = false
+    @State private var showSixOpBankFilePicker = false
 
     // Timer for polling modulation values
     let modulationTimer = Timer.publish(every: 1.0/30.0, on: .main, in: .common).autoconnect()
 
-    // Plaits engine names (17 models)
-    let engineNames = [
-        "Virtual Analog",    // 0: Two detuned oscillators
-        "Waveshaper",        // 1: Triangle through waveshaper/folder
-        "Two-Op FM",         // 2: Phase modulation + feedback
-        "Granular Formant",  // 3: VOSIM/Pulsar synthesis
-        "Harmonic",          // 4: Additive with 24 harmonics
-        "Wavetable",         // 5: 4 banks of 8x8 wavetables
-        "Chords",            // 6: Four-note chord generator
-        "Speech",            // 7: Formant/SAM/LPC speech
-        "Granular Cloud",    // 8: Swarm of enveloped grains
-        "Filtered Noise",    // 9: Clocked noise + resonant filter
-        "Particle Noise",    // 10: Dust through filters
-        "String",            // 11: Karplus-Strong (TRIGGERED)
-        "Modal",             // 12: Modal resonator (TRIGGERED)
-        "Bass Drum",         // 13: Analog kick (TRIGGERED)
-        "Snare Drum",        // 14: Analog snare (TRIGGERED)
-        "Hi-Hat",            // 15: Analog hihat (TRIGGERED)
-        "Six-Op FM"          // 16: DX7-style 6-operator FM
+    private struct EngineDescriptor {
+        let name: String
+        let internalIndex: Int
+        let labels: [String]
+        let usesLPG: Bool
+        let isSixOpCustom: Bool
+    }
+
+    // Hardware-first ordering in the UI:
+    // classic synth voices, then percussion, then alternate firmware engines.
+    private let engines: [EngineDescriptor] = [
+        EngineDescriptor(name: "Virtual Analog", internalIndex: 8, labels: ["DETUNE", "PULSE", "SAW"], usesLPG: true, isSixOpCustom: false),
+        EngineDescriptor(name: "Waveshaper", internalIndex: 9, labels: ["SHAPE", "FOLD", "ASYM"], usesLPG: true, isSixOpCustom: false),
+        EngineDescriptor(name: "Two-Op FM", internalIndex: 10, labels: ["RATIO", "MOD", "FDBK"], usesLPG: true, isSixOpCustom: false),
+        EngineDescriptor(name: "Granular Formant", internalIndex: 11, labels: ["FORMANT", "FREQ", "WIDTH"], usesLPG: true, isSixOpCustom: false),
+        EngineDescriptor(name: "Harmonic", internalIndex: 12, labels: ["BUMPS", "BRIGHT", "WIDTH"], usesLPG: true, isSixOpCustom: false),
+        EngineDescriptor(name: "Wavetable", internalIndex: 13, labels: ["BANK", "ROW", "COLUMN"], usesLPG: true, isSixOpCustom: false),
+        EngineDescriptor(name: "Chords", internalIndex: 14, labels: ["CHORD", "INVERT", "WAVE"], usesLPG: true, isSixOpCustom: false),
+        EngineDescriptor(name: "Speech", internalIndex: 15, labels: ["TYPE", "SPEC", "PHONEM"], usesLPG: true, isSixOpCustom: false),
+        EngineDescriptor(name: "Granular Cloud", internalIndex: 16, labels: ["PITCH", "DENS", "DUR"], usesLPG: true, isSixOpCustom: false),
+        EngineDescriptor(name: "Filtered Noise", internalIndex: 17, labels: ["FILTER", "CLOCK", "RES"], usesLPG: true, isSixOpCustom: false),
+        EngineDescriptor(name: "Particle Noise", internalIndex: 18, labels: ["FREQ", "DENS", "FILTER"], usesLPG: true, isSixOpCustom: false),
+        EngineDescriptor(name: "String", internalIndex: 19, labels: ["INHARM", "BRIGHT", "DECAY"], usesLPG: false, isSixOpCustom: false),
+        EngineDescriptor(name: "Modal", internalIndex: 20, labels: ["INHARM", "BRIGHT", "DECAY"], usesLPG: false, isSixOpCustom: false),
+        EngineDescriptor(name: "Bass Drum", internalIndex: 21, labels: ["PUNCH", "TONE", "DECAY"], usesLPG: false, isSixOpCustom: false),
+        EngineDescriptor(name: "Snare Drum", internalIndex: 22, labels: ["SNARE", "TONE", "DECAY"], usesLPG: false, isSixOpCustom: false),
+        EngineDescriptor(name: "Hi-Hat", internalIndex: 23, labels: ["METAL", "OPEN", "DECAY"], usesLPG: false, isSixOpCustom: false),
+        EngineDescriptor(name: "VA VCF", internalIndex: 0, labels: ["COLOR", "CUTOFF", "SHAPE"], usesLPG: true, isSixOpCustom: false),
+        EngineDescriptor(name: "Phase Dist", internalIndex: 1, labels: ["INDEX", "AMOUNT", "PW"], usesLPG: true, isSixOpCustom: false),
+        EngineDescriptor(name: "Six-Op FM A", internalIndex: 2, labels: ["PATCH", "BRIGHT", "ENV"], usesLPG: false, isSixOpCustom: false),
+        EngineDescriptor(name: "Six-Op FM B", internalIndex: 3, labels: ["PATCH", "BRIGHT", "ENV"], usesLPG: false, isSixOpCustom: false),
+        EngineDescriptor(name: "Six-Op FM C", internalIndex: 4, labels: ["PATCH", "BRIGHT", "ENV"], usesLPG: false, isSixOpCustom: false),
+        EngineDescriptor(name: "Six-Op FM Custom", internalIndex: 2, labels: ["PATCH", "BRIGHT", "ENV"], usesLPG: false, isSixOpCustom: true),
+        EngineDescriptor(name: "Wave Terrain", internalIndex: 5, labels: ["TERRAIN", "RADIUS", "OFFSET"], usesLPG: true, isSixOpCustom: false),
+        EngineDescriptor(name: "String Machine", internalIndex: 6, labels: ["CHORD", "TONE", "REG"], usesLPG: true, isSixOpCustom: false),
+        EngineDescriptor(name: "Chiptune", internalIndex: 7, labels: ["CHORD", "ARP", "SHAPE"], usesLPG: true, isSixOpCustom: false),
     ]
 
-    // Dynamic parameter labels per engine (full names for knob labels)
-    let parameterLabels: [[String]] = [
-        ["DETUNE", "PULSE", "SAW"],        // 0: Virtual Analog
-        ["SHAPE", "FOLD", "ASYM"],         // 1: Waveshaper
-        ["RATIO", "MOD", "FDBK"],          // 2: Two-Op FM
-        ["FORMANT", "FREQ", "WIDTH"],      // 3: Granular Formant
-        ["BUMPS", "BRIGHT", "WIDTH"],      // 4: Harmonic
-        ["BANK", "ROW", "COLUMN"],         // 5: Wavetable
-        ["CHORD", "INVERT", "WAVE"],       // 6: Chords
-        ["TYPE", "SPECTR", "PHONEM"],      // 7: Speech
-        ["PITCH", "DENSITY", "DURATN"],    // 8: Granular Cloud
-        ["FILTER", "CLOCK", "RESON"],      // 9: Filtered Noise
-        ["FREQ", "DENSITY", "FILTER"],     // 10: Particle Noise
-        ["INHARM", "BRIGHT", "DECAY"],     // 11: String
-        ["INHARM", "BRIGHT", "DECAY"],     // 12: Modal
-        ["PUNCH", "DECAY", "TONE"],        // 13: Bass Drum
-        ["SNARE", "TONE", "DECAY"],        // 14: Snare Drum
-        ["METAL", "DECAY", "DECAY+"],      // 15: Hi-Hat
-        ["ALGO", "DEPTH", "BALANCE"],      // 16: Six-Op FM
-    ]
+    private var selectedEngineDescriptor: EngineDescriptor {
+        engines.indices.contains(selectedEngine) ? engines[selectedEngine] : engines[0]
+    }
 
-    // Whether engine uses LPG (engines 0-10 and 16) or has internal envelope (11-15)
     var usesLPG: Bool {
-        selectedEngine < 11 || selectedEngine == 16
+        selectedEngineDescriptor.usesLPG
     }
 
     var body: some View {
@@ -106,8 +107,13 @@ struct PlaitsView: View {
                     .opacity(usesLPG ? 1.0 : 0.35)
 
                 // Load wavetable button (only shown for Wavetable engine)
-                if selectedEngine == 5 {
+                if selectedEngineDescriptor.internalIndex == 13 {
                     loadWavetableButton
+                        .padding(.horizontal, 16)
+                }
+
+                if selectedEngineDescriptor.isSixOpCustom {
+                    sixOpCustomSection
                         .padding(.horizontal, 16)
                 }
 
@@ -129,9 +135,22 @@ struct PlaitsView: View {
 
             // Sync engine mode (may be changed externally via API)
             let rawModel = audioEngine.getParameter(id: .plaitsModel)
-            let engineIndex = Int(round(rawModel * Float(engineNames.count - 1)))
-            if engineIndex != selectedEngine && engineIndex >= 0 && engineIndex < engineNames.count {
-                selectedEngine = engineIndex
+            guard rawModel.isFinite else { return }
+            let internalEngineIndex = Int(round(rawModel * 23.0))
+            if internalEngineIndex == 2 && audioEngine.plaitsSixOpCustomEnabled {
+                if let customIndex = engines.firstIndex(where: { $0.isSixOpCustom }),
+                   customIndex != selectedEngine {
+                    selectedEngine = customIndex
+                }
+            } else if let orderedIndex = engines.firstIndex(where: {
+                $0.internalIndex == internalEngineIndex && !$0.isSixOpCustom
+            }), orderedIndex != selectedEngine {
+                selectedEngine = orderedIndex
+            }
+        }
+        .onChange(of: audioEngine.plaitsSixOpCustomSelectedPatch) { patch in
+            if selectedEngineDescriptor.isSixOpCustom {
+                harmonics = Float(max(0, min(31, patch))) / 31.0
             }
         }
     }
@@ -142,13 +161,12 @@ struct PlaitsView: View {
         HStack(spacing: 8) {
             // Engine selector
             Menu {
-                ForEach(0..<engineNames.count, id: \.self) { index in
+                ForEach(0..<engines.count, id: \.self) { index in
                     Button(action: {
-                        selectedEngine = index
-                        audioEngine.setParameter(id: .plaitsModel, value: Float(index) / Float(engineNames.count - 1))
+                        selectEngine(index)
                     }) {
                         HStack {
-                            Text(engineNames[index])
+                            Text(engines[index].name)
                             if selectedEngine == index {
                                 Image(systemName: "checkmark")
                             }
@@ -157,7 +175,7 @@ struct PlaitsView: View {
                 }
             } label: {
                 HStack(spacing: 6) {
-                    Text(engineNames[selectedEngine])
+                    Text(selectedEngineDescriptor.name)
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
                         .foregroundColor(ColorPalette.synthPanelLabel)
                         .lineLimit(1)
@@ -209,7 +227,7 @@ struct PlaitsView: View {
             HStack(spacing: 16) {
                 ProKnobView(
                     value: $harmonics,
-                    label: parameterLabels[selectedEngine][0],
+                    label: selectedEngineDescriptor.labels[0],
                     accentColor: ColorPalette.accentPlaits,
                     size: .large,
                     style: .minimoog,
@@ -217,7 +235,7 @@ struct PlaitsView: View {
                 )
                 ProKnobView(
                     value: $timbre,
-                    label: parameterLabels[selectedEngine][1],
+                    label: selectedEngineDescriptor.labels[1],
                     accentColor: ColorPalette.accentPlaits,
                     size: .large,
                     style: .minimoog,
@@ -229,7 +247,7 @@ struct PlaitsView: View {
             HStack(spacing: 16) {
                 ProKnobView(
                     value: $morph,
-                    label: parameterLabels[selectedEngine][2],
+                    label: selectedEngineDescriptor.labels[2],
                     accentColor: ColorPalette.accentPlaits,
                     size: .large,
                     style: .minimoog,
@@ -246,7 +264,7 @@ struct PlaitsView: View {
             }
         }
         .padding(.horizontal, 12)
-        .onChange(of: harmonics) { audioEngine.setParameter(id: .plaitsHarmonics, value: $0) }
+        .onChange(of: harmonics) { applyHarmonics($0) }
         .onChange(of: timbre) { audioEngine.setParameter(id: .plaitsTimbre, value: $0) }
         .onChange(of: morph) { audioEngine.setParameter(id: .plaitsMorph, value: $0) }
         .onChange(of: level) { audioEngine.setParameter(id: .plaitsLevel, value: $0) }
@@ -313,8 +331,6 @@ struct PlaitsView: View {
 
     // MARK: - Load Wavetable Button
 
-    @State private var showWavetableFilePicker = false
-
     private var loadWavetableButton: some View {
         Button(action: {
             showWavetableFilePicker = true
@@ -352,16 +368,105 @@ struct PlaitsView: View {
         }
     }
 
+    // MARK: - Six-Op Custom Controls
+
+    private var sixOpPatchNames: [String] {
+        if audioEngine.plaitsSixOpCustomPatchNames.isEmpty {
+            return (1...32).map { "Patch \($0)" }
+        }
+        return audioEngine.plaitsSixOpCustomPatchNames
+    }
+
+    private var sixOpCustomSection: some View {
+        VStack(spacing: 6) {
+            Button(action: {
+                showSixOpBankFilePicker = true
+            }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "square.stack.3d.down.right")
+                        .font(.system(size: 10, weight: .bold))
+                    Text(audioEngine.plaitsSixOpCustomLoaded ? "RELOAD DX7 BANK" : "LOAD DX7 BANK")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                }
+                .foregroundColor(ColorPalette.synthPanelLabel)
+                .frame(maxWidth: .infinity)
+                .frame(height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.black.opacity(0.3))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(ColorPalette.synthPanelDivider, lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .fileImporter(
+                isPresented: $showSixOpBankFilePicker,
+                allowedContentTypes: [UTType(filenameExtension: "syx") ?? .data, .data],
+                allowsMultipleSelection: false
+            ) { result in
+                if case .success(let urls) = result, let url = urls.first {
+                    audioEngine.loadPlaitsSixOpCustomBank(url: url)
+                }
+            }
+
+            Menu {
+                ForEach(Array(sixOpPatchNames.enumerated()), id: \.offset) { index, name in
+                    Button(action: {
+                        audioEngine.setPlaitsSixOpCustomPatch(index)
+                        harmonics = Float(index) / 31.0
+                    }) {
+                        HStack {
+                            Text("\(index + 1). \(name)")
+                            if audioEngine.plaitsSixOpCustomSelectedPatch == index {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                let safePatchIndex = max(0, min(sixOpPatchNames.count - 1, audioEngine.plaitsSixOpCustomSelectedPatch))
+                HStack(spacing: 6) {
+                    Text("PATCH \(safePatchIndex + 1): \(sixOpPatchNames[safePatchIndex])")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(ColorPalette.synthPanelLabel)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundColor(ColorPalette.accentPlaits)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.black.opacity(0.3))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(ColorPalette.synthPanelDivider, lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(!audioEngine.plaitsSixOpCustomLoaded)
+            .opacity(audioEngine.plaitsSixOpCustomLoaded ? 1.0 : 0.5)
+        }
+    }
+
     // MARK: - Trigger Button
 
     private var triggerButton: some View {
         Button(action: {
-            DispatchQueue.main.async {
-                isTriggered.toggle()
-                audioEngine.triggerPlaits(isTriggered)
+            isTriggered = true
+            audioEngine.triggerPlaits(true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
+                isTriggered = false
+                audioEngine.triggerPlaits(false)
             }
         }) {
-            Text(isTriggered ? "GATE ON" : "TRIGGER")
+            Text(isTriggered ? "TRIG" : "TRIGGER")
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
                 .tracking(1.5)
                 .foregroundColor(isTriggered ? ColorPalette.synthPanelSurface : ColorPalette.synthPanelLabel)
@@ -392,9 +497,43 @@ struct PlaitsView: View {
         return "\(noteName)\(octave)"
     }
 
+    private func applyHarmonics(_ value: Float) {
+        if selectedEngineDescriptor.isSixOpCustom {
+            let patchIndex = max(0, min(31, Int(value * 31.0 + 0.5)))
+            let snapped = Float(patchIndex) / 31.0
+            if abs(snapped - harmonics) > 0.0001 {
+                harmonics = snapped
+                return
+            }
+            audioEngine.setPlaitsSixOpCustomPatch(patchIndex)
+            return
+        }
+        audioEngine.setParameter(id: .plaitsHarmonics, value: value)
+    }
+
+    private func selectEngine(_ index: Int) {
+        guard engines.indices.contains(index) else { return }
+        selectedEngine = index
+        let descriptor = engines[index]
+        if descriptor.isSixOpCustom {
+            audioEngine.setPlaitsSixOpCustomMode(true)
+            audioEngine.setParameter(id: .plaitsModel, value: Float(descriptor.internalIndex) / 23.0)
+            audioEngine.setPlaitsSixOpCustomPatch(audioEngine.plaitsSixOpCustomSelectedPatch)
+            harmonics = Float(audioEngine.plaitsSixOpCustomSelectedPatch) / 31.0
+        } else {
+            if audioEngine.plaitsSixOpCustomEnabled {
+                audioEngine.setPlaitsSixOpCustomMode(false)
+            }
+            audioEngine.setParameter(id: .plaitsModel, value: Float(descriptor.internalIndex) / 23.0)
+        }
+    }
+
     private func syncToEngine() {
-        audioEngine.setParameter(id: .plaitsModel, value: Float(selectedEngine) / Float(engineNames.count - 1))
-        audioEngine.setParameter(id: .plaitsHarmonics, value: harmonics)
+        if !engines.indices.contains(selectedEngine) {
+            selectedEngine = 0
+        }
+        selectEngine(selectedEngine)
+        applyHarmonics(harmonics)
         audioEngine.setParameter(id: .plaitsTimbre, value: timbre)
         audioEngine.setParameter(id: .plaitsMorph, value: morph)
         audioEngine.setParameter(id: .plaitsLevel, value: level)

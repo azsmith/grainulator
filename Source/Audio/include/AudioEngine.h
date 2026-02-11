@@ -100,7 +100,7 @@ constexpr int kMaxGrains = 128;
 constexpr int kNumGranularVoices = 4;
 constexpr int kNumLooperVoices = 2;
 constexpr int kMaxBufferSize = 2048;
-constexpr int kNumPlaitsVoices = 8;  // Polyphony
+constexpr int kNumPlaitsVoices = 1;  // Start with single canonical Plaits voice
 constexpr int kNumClockOutputs = 8;  // Master clock outputs (Pam's style)
 constexpr int kNumLegacyOutputBuses = 3; // 0=dry, 1=send A, 2=send B
 
@@ -368,6 +368,9 @@ public:
 
     // Wavetable loading
     void loadUserWavetable(const float* data, int numSamples, int frameSize = 0);
+    bool loadPlaitsSixOpCustomBank(const uint8_t* data, int numBytes);
+    void setPlaitsSixOpCustomMode(bool enabled);
+    void setPlaitsSixOpCustomPatch(int patchIndex);
 
     // Granular playback control
     void setGranularPlaying(int voiceIndex, bool playing);
@@ -519,6 +522,8 @@ private:
     float m_harmonics;
     float m_timbre;
     float m_morph;
+    bool m_plaitsSixOpCustomEnabled;
+    int m_plaitsSixOpCustomPatchIndex;
     float m_lpgColor;
     float m_lpgDecay;
     float m_lpgAttack;

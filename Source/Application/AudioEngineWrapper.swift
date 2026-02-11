@@ -260,6 +260,15 @@ func AudioEngine_GetSoundFontPresetName(_ handle: OpaquePointer, _ index: Int32)
 @_silgen_name("AudioEngine_LoadUserWavetable")
 func AudioEngine_LoadUserWavetable(_ handle: OpaquePointer, _ data: UnsafePointer<Float>?, _ numSamples: Int32, _ frameSize: Int32)
 
+@_silgen_name("AudioEngine_LoadPlaitsSixOpCustomBank")
+func AudioEngine_LoadPlaitsSixOpCustomBank(_ handle: OpaquePointer, _ data: UnsafePointer<UInt8>?, _ numBytes: Int32) -> Bool
+
+@_silgen_name("AudioEngine_SetPlaitsSixOpCustomMode")
+func AudioEngine_SetPlaitsSixOpCustomMode(_ handle: OpaquePointer, _ enabled: Bool)
+
+@_silgen_name("AudioEngine_SetPlaitsSixOpCustomPatch")
+func AudioEngine_SetPlaitsSixOpCustomPatch(_ handle: OpaquePointer, _ patchIndex: Int32)
+
 @_silgen_name("AudioEngine_LoadWavSampler")
 func AudioEngine_LoadWavSampler(_ handle: OpaquePointer, _ dirPath: UnsafePointer<CChar>?) -> Bool
 
@@ -351,6 +360,14 @@ class AudioEngineWrapper: ObservableObject {
     @Published var soundFontPresetNames: [String] = []
     @Published var soundFontFilePath: URL? = nil
     @Published var soundFontCurrentPreset: Int = 0
+
+    // MARK: - Plaits Six-Op Custom
+
+    @Published var plaitsSixOpCustomEnabled: Bool = false
+    @Published var plaitsSixOpCustomLoaded: Bool = false
+    @Published var plaitsSixOpCustomPatchNames: [String] = []
+    @Published var plaitsSixOpCustomSelectedPatch: Int = 0
+    @Published var plaitsSixOpCustomBankPath: URL? = nil
 
     // MARK: - WAV Sampler (mx.samples)
 
@@ -2231,6 +2248,104 @@ class AudioEngineWrapper: ObservableObject {
 
             AudioEngine_LoadUserWavetable(handle, samples, Int32(count), frameSize)
         }
+    }
+
+    /// Enable or disable the custom six-op DX7 bank path for Plaits engines A/B/C.
+    func setPlaitsSixOpCustomMode(_ enabled: Bool) {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_SetPlaitsSixOpCustomMode(handle, enabled)
+        plaitsSixOpCustomEnabled = enabled
+    }
+
+    /// Select a patch index (0-31) from the loaded six-op custom bank.
+    func setPlaitsSixOpCustomPatch(_ patchIndex: Int) {
+        guard let handle = cppEngineHandle else { return }
+        let clamped = max(0, min(31, patchIndex))
+        let normalized = Float(clamped) / 31.0
+        AudioEngine_SetPlaitsSixOpCustomPatch(handle, Int32(clamped))
+        AudioEngine_SetParameter(handle, cppParameterID(for: .plaitsHarmonics), 0, normalized)
+        plaitsSixOpCustomSelectedPatch = clamped
+    }
+
+    /// Load a DX7 32-patch bank (.syx or raw 4096-byte packed data) for Plaits six-op custom mode.
+    func loadPlaitsSixOpCustomBank(url: URL) {
+        Task.detached(priority: .userInitiated) {
+            guard let rawData = try? Data(contentsOf: url),
+                  let packedBank = Self.extractDX7PackedBank(from: rawData) else {
+                await MainActor.run {
+                    self.plaitsSixOpCustomLoaded = false
+                }
+                return
+            }
+
+            let names = Self.extractDX7PatchNames(fromPackedBank: packedBank)
+            let loaded = await MainActor.run { () -> Bool in
+                guard let handle = self.cppEngineHandle else { return false }
+                let result = packedBank.withUnsafeBytes { rawBuffer in
+                    AudioEngine_LoadPlaitsSixOpCustomBank(
+                        handle,
+                        rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        Int32(packedBank.count)
+                    )
+                }
+                if result {
+                    self.plaitsSixOpCustomLoaded = true
+                    self.plaitsSixOpCustomPatchNames = names
+                    self.plaitsSixOpCustomBankPath = url
+                    self.setPlaitsSixOpCustomMode(true)
+                    let clampedPatch = max(0, min(31, self.plaitsSixOpCustomSelectedPatch))
+                    self.setPlaitsSixOpCustomPatch(clampedPatch)
+                } else {
+                    self.plaitsSixOpCustomLoaded = false
+                }
+                return result
+            }
+
+            if !loaded {
+                return
+            }
+        }
+    }
+
+    nonisolated private static func extractDX7PackedBank(from data: Data) -> Data? {
+        // Raw packed 32-voice bank (32 * 128 bytes).
+        if data.count == 4096 {
+            return data
+        }
+
+        // Standard DX7 bulk SysEx for 32 voices:
+        // F0 43 cc 09 20 00 + 4096 payload + checksum + F7.
+        if data.count == 4104,
+           data.first == 0xF0,
+           data.last == 0xF7 {
+            let payloadRange = 6..<(6 + 4096)
+            return data.subdata(in: payloadRange)
+        }
+
+        return nil
+    }
+
+    nonisolated private static func extractDX7PatchNames(fromPackedBank bank: Data) -> [String] {
+        guard bank.count >= 4096 else {
+            return (1...32).map { "Patch \($0)" }
+        }
+
+        var names: [String] = []
+        names.reserveCapacity(32)
+        for patch in 0..<32 {
+            let nameStart = patch * 128 + 118
+            let nameEnd = nameStart + 10
+            let bytes = bank[nameStart..<nameEnd].map { byte -> UInt8 in
+                if byte >= 32 && byte <= 126 {
+                    return byte
+                }
+                return 32
+            }
+            let decoded = String(decoding: bytes, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            names.append(decoded.isEmpty ? "Patch \(patch + 1)" : decoded)
+        }
+        return names
     }
 
     // MARK: - WAV Sampler (mx.samples)

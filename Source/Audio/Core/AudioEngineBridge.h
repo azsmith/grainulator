@@ -94,6 +94,9 @@ const char* AudioEngine_GetSoundFontPresetName(AudioEngineHandle handle, int ind
 
 // Plaits wavetable loading
 void AudioEngine_LoadUserWavetable(AudioEngineHandle handle, const float* data, int numSamples, int frameSize);
+bool AudioEngine_LoadPlaitsSixOpCustomBank(AudioEngineHandle handle, const uint8_t* data, int numBytes);
+void AudioEngine_SetPlaitsSixOpCustomMode(AudioEngineHandle handle, bool enabled);
+void AudioEngine_SetPlaitsSixOpCustomPatch(AudioEngineHandle handle, int patchIndex);
 
 // WAV sampler control (mx.samples)
 bool AudioEngine_LoadWavSampler(AudioEngineHandle handle, const char* dirPath);

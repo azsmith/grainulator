@@ -121,6 +121,11 @@ bool AudioEngine_IsRecording(AudioEngineHandle handle, int reelIndex);
 float AudioEngine_GetRecordingPosition(AudioEngineHandle handle, int reelIndex);
 void AudioEngine_WriteExternalInput(AudioEngineHandle handle, const float* left, const float* right, int numFrames);
 
+// Plaits custom six-op bank controls
+bool AudioEngine_LoadPlaitsSixOpCustomBank(AudioEngineHandle handle, const uint8_t* data, int numBytes);
+void AudioEngine_SetPlaitsSixOpCustomMode(AudioEngineHandle handle, bool enabled);
+void AudioEngine_SetPlaitsSixOpCustomPatch(AudioEngineHandle handle, int patchIndex);
+
 #ifdef __cplusplus
 }
 #endif

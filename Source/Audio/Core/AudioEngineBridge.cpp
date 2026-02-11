@@ -465,6 +465,23 @@ void AudioEngine_LoadUserWavetable(AudioEngineHandle handle, const float* data, 
     }
 }
 
+bool AudioEngine_LoadPlaitsSixOpCustomBank(AudioEngineHandle handle, const uint8_t* data, int numBytes) {
+    if (!handle) return false;
+    return static_cast<AudioEngine*>(handle)->loadPlaitsSixOpCustomBank(data, numBytes);
+}
+
+void AudioEngine_SetPlaitsSixOpCustomMode(AudioEngineHandle handle, bool enabled) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setPlaitsSixOpCustomMode(enabled);
+    }
+}
+
+void AudioEngine_SetPlaitsSixOpCustomPatch(AudioEngineHandle handle, int patchIndex) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setPlaitsSixOpCustomPatch(patchIndex);
+    }
+}
+
 // SoundFont sampler control
 bool AudioEngine_LoadSoundFont(AudioEngineHandle handle, const char* filePath) {
     if (!handle) return false;

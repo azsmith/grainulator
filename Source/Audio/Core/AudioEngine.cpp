@@ -57,12 +57,14 @@ AudioEngine::AudioEngine()
     , m_cpuLoad(0.0f)
     , m_activeGrains(0)
     , m_voiceCounter(0)
-    , m_currentEngine(0)
+    , m_currentEngine(8)
     , m_currentRingsModel(0)
     , m_harmonics(0.5f)
     , m_timbre(0.5f)
     , m_morph(0.5f)
-    , m_lpgColor(0.5f)
+    , m_plaitsSixOpCustomEnabled(false)
+    , m_plaitsSixOpCustomPatchIndex(0)
+    , m_lpgColor(0.0f)
     , m_lpgDecay(0.5f)
     , m_lpgAttack(0.0f)
     , m_lpgBypass(false)
@@ -709,11 +711,23 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
         enqueueScheduledEvent(futureEvents[i]);
     }
 
+    auto eventComesAfter = [](const ScheduledNoteEvent& lhs, const ScheduledNoteEvent& rhs) -> bool {
+        if (lhs.sampleTime != rhs.sampleTime) {
+            return lhs.sampleTime > rhs.sampleTime;
+        }
+        // For same-sample events, process note-off before note-on so 100% gate
+        // lengths still produce a deterministic retrigger edge.
+        if (lhs.isNoteOn != rhs.isNoteOn) {
+            return lhs.isNoteOn && !rhs.isNoteOn;
+        }
+        return false;
+    };
+
     // Insertion sort — no allocations, O(n^2) is fine for small event counts
     for (int i = 1; i < dueEventCount; ++i) {
         ScheduledNoteEvent key = dueEvents[i];
         int j = i - 1;
-        while (j >= 0 && dueEvents[j].sampleTime > key.sampleTime) {
+        while (j >= 0 && eventComesAfter(dueEvents[j], key)) {
             dueEvents[j + 1] = dueEvents[j];
             --j;
         }
@@ -803,9 +817,8 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                 }
             }
 
-            // Normalize polyphonic voice sum: 1/sqrt(8) ≈ 0.354
-            // Provides headroom for up to 8 simultaneous voices without clipping
-            constexpr float kPlaitsVoiceNorm = 0.354f;
+            // Normalize voice sum by configured polyphony.
+            const float kPlaitsVoiceNorm = 1.0f / std::sqrt(static_cast<float>(std::max(1, kNumPlaitsVoices)));
             for (int i = 0; i < frameCount; ++i) {
                 m_voiceBuffer[0][i] *= kPlaitsVoiceNorm;
                 m_voiceBuffer[1][i] *= kPlaitsVoiceNorm;
@@ -1364,11 +1377,21 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
         enqueueScheduledEvent(futureEvents[i]);
     }
 
+    auto eventComesAfter = [](const ScheduledNoteEvent& lhs, const ScheduledNoteEvent& rhs) -> bool {
+        if (lhs.sampleTime != rhs.sampleTime) {
+            return lhs.sampleTime > rhs.sampleTime;
+        }
+        if (lhs.isNoteOn != rhs.isNoteOn) {
+            return lhs.isNoteOn && !rhs.isNoteOn;
+        }
+        return false;
+    };
+
     // Insertion sort — no allocations, O(n^2) is fine for small event counts
     for (int i = 1; i < dueEventCount; ++i) {
         ScheduledNoteEvent key = dueEvents[i];
         int j = i - 1;
-        while (j >= 0 && dueEvents[j].sampleTime > key.sampleTime) {
+        while (j >= 0 && eventComesAfter(dueEvents[j], key)) {
             dueEvents[j + 1] = dueEvents[j];
             --j;
         }
@@ -1399,8 +1422,8 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
                 }
             }
 
-            // Normalize polyphonic voice sum: 1/sqrt(8) ≈ 0.354
-            constexpr float kPlaitsVoiceNorm = 0.354f;
+            // Normalize voice sum by configured polyphony.
+            const float kPlaitsVoiceNorm = 1.0f / std::sqrt(static_cast<float>(std::max(1, kNumPlaitsVoices)));
             for (int i = 0; i < frameCount; ++i) {
                 m_voiceBuffer[0][i] *= kPlaitsVoiceNorm;
                 m_voiceBuffer[1][i] *= kPlaitsVoiceNorm;
@@ -2113,23 +2136,40 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
 
         // ========== Plaits Parameters ==========
         case ParameterID::PlaitsModel:
-            m_currentEngine = static_cast<int>(value * 16.0f + 0.5f);
+            m_currentEngine = static_cast<int>(value * 23.0f + 0.5f);
             // Apply to all voices
             for (int i = 0; i < kNumPlaitsVoices; ++i) {
                 if (m_plaitsVoices[i]) {
                     m_plaitsVoices[i]->SetEngine(m_currentEngine);
+                    m_plaitsVoices[i]->SetSixOpCustomEnabled(m_plaitsSixOpCustomEnabled);
+                    if (m_plaitsSixOpCustomEnabled && m_currentEngine >= 2 && m_currentEngine <= 4) {
+                        m_plaitsVoices[i]->SetSixOpCustomPatchIndex(m_plaitsSixOpCustomPatchIndex);
+                    }
                 }
             }
             break;
 
         case ParameterID::PlaitsHarmonics:
-            m_harmonics = clampedValue;
+        {
+            float harmonicsValue = clampedValue;
+            if (m_plaitsSixOpCustomEnabled && m_currentEngine >= 2 && m_currentEngine <= 4) {
+                m_plaitsSixOpCustomPatchIndex = std::clamp(
+                    static_cast<int>(clampedValue * 31.0f + 0.5f),
+                    0,
+                    31);
+                harmonicsValue = static_cast<float>(m_plaitsSixOpCustomPatchIndex) / 31.0f;
+            }
+            m_harmonics = harmonicsValue;
             for (int i = 0; i < kNumPlaitsVoices; ++i) {
                 if (m_plaitsVoices[i]) {
-                    m_plaitsVoices[i]->SetHarmonics(clampedValue);
+                    if (m_plaitsSixOpCustomEnabled && m_currentEngine >= 2 && m_currentEngine <= 4) {
+                        m_plaitsVoices[i]->SetSixOpCustomPatchIndex(m_plaitsSixOpCustomPatchIndex);
+                    }
+                    m_plaitsVoices[i]->SetHarmonics(harmonicsValue);
                 }
             }
             break;
+        }
 
         case ParameterID::PlaitsTimbre:
             m_timbre = clampedValue;
@@ -2530,7 +2570,7 @@ float AudioEngine::getParameter(ParameterID id, int voiceIndex) const {
             if (m_ringsExciterSource < 0) return 0.0f;
             return clamp01((static_cast<float>(m_ringsExciterSource) + 0.5f) / 12.0f);
         }
-        case ParameterID::PlaitsModel: return clamp01(static_cast<float>(m_currentEngine) / 16.0f);
+        case ParameterID::PlaitsModel: return clamp01(static_cast<float>(m_currentEngine) / 23.0f);
         case ParameterID::PlaitsHarmonics: return clamp01(m_harmonics);
         case ParameterID::PlaitsTimbre: return clamp01(m_timbre);
         case ParameterID::PlaitsMorph: return clamp01(m_morph);
@@ -2740,6 +2780,45 @@ void AudioEngine::loadUserWavetable(const float* data, int numSamples, int frame
     for (int i = 0; i < kNumPlaitsVoices; ++i) {
         if (m_plaitsVoices[i]) {
             m_plaitsVoices[i]->LoadUserWavetable(data, numSamples, frameSize);
+        }
+    }
+}
+
+bool AudioEngine::loadPlaitsSixOpCustomBank(const uint8_t* data, int numBytes) {
+    if (data == nullptr || numBytes < 32 * 128) {
+        return false;
+    }
+
+    bool loaded = false;
+    for (int i = 0; i < kNumPlaitsVoices; ++i) {
+        if (m_plaitsVoices[i]) {
+            loaded = m_plaitsVoices[i]->LoadSixOpCustomBank(
+                data,
+                static_cast<size_t>(numBytes)) || loaded;
+            m_plaitsVoices[i]->SetSixOpCustomEnabled(m_plaitsSixOpCustomEnabled);
+            m_plaitsVoices[i]->SetSixOpCustomPatchIndex(m_plaitsSixOpCustomPatchIndex);
+        }
+    }
+    return loaded;
+}
+
+void AudioEngine::setPlaitsSixOpCustomMode(bool enabled) {
+    m_plaitsSixOpCustomEnabled = enabled;
+    for (int i = 0; i < kNumPlaitsVoices; ++i) {
+        if (m_plaitsVoices[i]) {
+            m_plaitsVoices[i]->SetSixOpCustomEnabled(enabled);
+        }
+    }
+}
+
+void AudioEngine::setPlaitsSixOpCustomPatch(int patchIndex) {
+    m_plaitsSixOpCustomPatchIndex = std::clamp(patchIndex, 0, 31);
+    const float normalizedPatch = static_cast<float>(m_plaitsSixOpCustomPatchIndex) / 31.0f;
+    m_harmonics = normalizedPatch;
+    for (int i = 0; i < kNumPlaitsVoices; ++i) {
+        if (m_plaitsVoices[i]) {
+            m_plaitsVoices[i]->SetSixOpCustomPatchIndex(m_plaitsSixOpCustomPatchIndex);
+            m_plaitsVoices[i]->SetHarmonics(normalizedPatch);
         }
     }
 }
