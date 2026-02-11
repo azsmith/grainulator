@@ -15,6 +15,8 @@ final class OscilloscopeWindowManager {
 
     private var scopePanel: NSPanel?
     private weak var layoutState: WorkspaceLayoutState?
+    private weak var audioEngine: AudioEngineWrapper?
+    private var scopePollingRetained: Bool = false
 
     private init() {}
 
@@ -23,6 +25,7 @@ final class OscilloscopeWindowManager {
         layoutState: WorkspaceLayoutState
     ) {
         self.layoutState = layoutState
+        self.audioEngine = audioEngine
 
         // If already open, bring to front
         if let existing = scopePanel, existing.isVisible {
@@ -56,6 +59,7 @@ final class OscilloscopeWindowManager {
         panel.center()
 
         scopePanel = panel
+        retainScopePollingIfNeeded()
 
         // Observe close to sync state
         NotificationCenter.default.addObserver(
@@ -64,6 +68,7 @@ final class OscilloscopeWindowManager {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
+                self?.releaseScopePollingIfNeeded()
                 self?.layoutState?.isScopeWindowOpen = false
                 self?.scopePanel = nil
             }
@@ -75,6 +80,7 @@ final class OscilloscopeWindowManager {
 
     func close() {
         scopePanel?.close()
+        releaseScopePollingIfNeeded()
         scopePanel = nil
         layoutState?.isScopeWindowOpen = false
     }
@@ -95,5 +101,17 @@ final class OscilloscopeWindowManager {
 
     var isOpen: Bool {
         scopePanel?.isVisible ?? false
+    }
+
+    private func retainScopePollingIfNeeded() {
+        guard !scopePollingRetained, let audioEngine else { return }
+        scopePollingRetained = true
+        audioEngine.retainScopeMonitoring()
+    }
+
+    private func releaseScopePollingIfNeeded() {
+        guard scopePollingRetained else { return }
+        scopePollingRetained = false
+        audioEngine?.releaseScopeMonitoring()
     }
 }

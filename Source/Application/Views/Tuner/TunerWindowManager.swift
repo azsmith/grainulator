@@ -15,6 +15,8 @@ final class TunerWindowManager {
 
     private var tunerPanel: NSPanel?
     private weak var layoutState: WorkspaceLayoutState?
+    private weak var audioEngine: AudioEngineWrapper?
+    private var tunerPollingRetained: Bool = false
 
     private init() {}
 
@@ -23,6 +25,7 @@ final class TunerWindowManager {
         layoutState: WorkspaceLayoutState
     ) {
         self.layoutState = layoutState
+        self.audioEngine = audioEngine
 
         // If already open, bring to front
         if let existing = tunerPanel, existing.isVisible {
@@ -56,6 +59,7 @@ final class TunerWindowManager {
         panel.center()
 
         tunerPanel = panel
+        retainTunerPollingIfNeeded()
 
         // Observe close to sync state
         NotificationCenter.default.addObserver(
@@ -64,6 +68,7 @@ final class TunerWindowManager {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
+                self?.releaseTunerPollingIfNeeded()
                 self?.layoutState?.isTunerWindowOpen = false
                 self?.tunerPanel = nil
             }
@@ -75,6 +80,7 @@ final class TunerWindowManager {
 
     func close() {
         tunerPanel?.close()
+        releaseTunerPollingIfNeeded()
         tunerPanel = nil
         layoutState?.isTunerWindowOpen = false
     }
@@ -95,5 +101,17 @@ final class TunerWindowManager {
 
     var isOpen: Bool {
         tunerPanel?.isVisible ?? false
+    }
+
+    private func retainTunerPollingIfNeeded() {
+        guard !tunerPollingRetained, let audioEngine else { return }
+        tunerPollingRetained = true
+        audioEngine.retainTunerMonitoring()
+    }
+
+    private func releaseTunerPollingIfNeeded() {
+        guard tunerPollingRetained else { return }
+        tunerPollingRetained = false
+        audioEngine?.releaseTunerMonitoring()
     }
 }

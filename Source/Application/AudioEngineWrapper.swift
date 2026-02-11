@@ -472,6 +472,8 @@ class AudioEngineWrapper: ObservableObject {
     private var performanceTimer: Timer?
     private var scopeTimer: Timer?
     private var tunerTimer: Timer?
+    private var scopeMonitorRefCount: Int = 0
+    private var tunerMonitorRefCount: Int = 0
     private var tunerRefreshInFlight = false
     private let pitchDetector = PitchDetector()
     private var lastCPUCheckTime: Date = Date()
@@ -525,8 +527,6 @@ class AudioEngineWrapper: ObservableObject {
         setupAudioEngine()
         enumerateAudioDevices()
         setupPerformanceMonitoring()
-        setupScopeTimer()
-        setupTunerTimer()
 
         // Initialize C++ engine
         if let handle = cppEngineHandle {
@@ -1629,7 +1629,22 @@ class AudioEngineWrapper: ObservableObject {
 
     private var scopeRefreshInFlight = false
 
+    func retainScopeMonitoring() {
+        scopeMonitorRefCount += 1
+        if scopeMonitorRefCount == 1 {
+            setupScopeTimer()
+        }
+    }
+
+    func releaseScopeMonitoring() {
+        scopeMonitorRefCount = max(0, scopeMonitorRefCount - 1)
+        if scopeMonitorRefCount == 0 {
+            stopScopeTimer()
+        }
+    }
+
     private func setupScopeTimer() {
+        guard scopeTimer == nil else { return }
         scopeTimer = Timer.scheduledTimer(withTimeInterval: 1.0/30.0, repeats: true) { [weak self] _ in
             guard let self, !self.scopeRefreshInFlight else { return }
             self.scopeRefreshInFlight = true
@@ -1638,6 +1653,14 @@ class AudioEngineWrapper: ObservableObject {
                 self.updateScopeWaveform()
             }
         }
+    }
+
+    private func stopScopeTimer() {
+        scopeTimer?.invalidate()
+        scopeTimer = nil
+        scopeRefreshInFlight = false
+        if !scopeWaveform.isEmpty { scopeWaveform = [] }
+        if !scopeWaveformB.isEmpty { scopeWaveformB = [] }
     }
 
     private func updateScopeWaveform() {
@@ -1663,7 +1686,22 @@ class AudioEngineWrapper: ObservableObject {
 
     // MARK: - Tuner Timer
 
+    func retainTunerMonitoring() {
+        tunerMonitorRefCount += 1
+        if tunerMonitorRefCount == 1 {
+            setupTunerTimer()
+        }
+    }
+
+    func releaseTunerMonitoring() {
+        tunerMonitorRefCount = max(0, tunerMonitorRefCount - 1)
+        if tunerMonitorRefCount == 0 {
+            stopTunerTimer()
+        }
+    }
+
     private func setupTunerTimer() {
+        guard tunerTimer == nil else { return }
         tunerTimer = Timer.scheduledTimer(withTimeInterval: 1.0/15.0, repeats: true) { [weak self] _ in
             guard let self, !self.tunerRefreshInFlight else { return }
             self.tunerRefreshInFlight = true
@@ -1672,6 +1710,14 @@ class AudioEngineWrapper: ObservableObject {
                 self.updateTunerPitch()
             }
         }
+    }
+
+    private func stopTunerTimer() {
+        tunerTimer?.invalidate()
+        tunerTimer = nil
+        tunerRefreshInFlight = false
+        if tunerFrequency != 0 { tunerFrequency = 0 }
+        if tunerConfidence != 0 { tunerConfidence = 0 }
     }
 
     private func updateTunerPitch() {
