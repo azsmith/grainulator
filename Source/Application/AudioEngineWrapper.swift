@@ -69,6 +69,12 @@ func AudioEngine_ScheduleNoteOnTarget(_ handle: OpaquePointer, _ note: Int32, _ 
 @_silgen_name("AudioEngine_ScheduleNoteOffTarget")
 func AudioEngine_ScheduleNoteOffTarget(_ handle: OpaquePointer, _ note: Int32, _ sampleTime: UInt64, _ targetMask: UInt8)
 
+@_silgen_name("AudioEngine_ScheduleNoteOnTargetTagged")
+func AudioEngine_ScheduleNoteOnTargetTagged(_ handle: OpaquePointer, _ note: Int32, _ velocity: Int32, _ sampleTime: UInt64, _ targetMask: UInt8, _ trackId: UInt8)
+
+@_silgen_name("AudioEngine_ScheduleNoteOffTargetTagged")
+func AudioEngine_ScheduleNoteOffTargetTagged(_ handle: OpaquePointer, _ note: Int32, _ sampleTime: UInt64, _ targetMask: UInt8, _ trackId: UInt8)
+
 @_silgen_name("AudioEngine_ClearScheduledNotes")
 func AudioEngine_ClearScheduledNotes(_ handle: OpaquePointer)
 
@@ -207,6 +213,19 @@ func AudioEngine_GetRecordingPosition(_ handle: OpaquePointer, _ reelIndex: Int3
 
 @_silgen_name("AudioEngine_WriteExternalInput")
 func AudioEngine_WriteExternalInput(_ handle: OpaquePointer, _ left: UnsafePointer<Float>?, _ right: UnsafePointer<Float>?, _ numFrames: Int32)
+
+// Master output capture (for file recording)
+@_silgen_name("AudioEngine_StartMasterCapture")
+func AudioEngine_StartMasterCapture(_ handle: OpaquePointer)
+
+@_silgen_name("AudioEngine_StopMasterCapture")
+func AudioEngine_StopMasterCapture(_ handle: OpaquePointer)
+
+@_silgen_name("AudioEngine_IsMasterCaptureActive")
+func AudioEngine_IsMasterCaptureActive(_ handle: OpaquePointer) -> Bool
+
+@_silgen_name("AudioEngine_ReadMasterCaptureBuffer")
+func AudioEngine_ReadMasterCaptureBuffer(_ handle: OpaquePointer, _ left: UnsafeMutablePointer<Float>?, _ right: UnsafeMutablePointer<Float>?, _ maxFrames: Int32) -> Int32
 
 // Drum sequencer lane control
 @_silgen_name("AudioEngine_TriggerDrumSeqLane")
@@ -376,6 +395,17 @@ class AudioEngineWrapper: ObservableObject {
     @Published var recordingStates: [Int: RecordingUIState] = [:]
     @Published var recordingPositions: [Int: Float] = [:]
     @Published var playingStates: [Int: Bool] = [:]
+
+    // MARK: - Master Output Recording
+
+    @Published var isMasterRecording: Bool = false
+    @Published var masterRecordingDuration: TimeInterval = 0
+    @Published var masterRecordingFilePath: URL? = nil
+
+    private var masterRecordingFile: AVAudioFile? = nil
+    private var masterDrainTimer: DispatchSourceTimer? = nil
+    private let masterRecordingQueue = DispatchQueue(label: "com.grainulator.master-recording", qos: .utility)
+    private var masterRecordingSampleCount: Int64 = 0
 
     // MARK: - Audio Graph Mode
 
@@ -1528,10 +1558,15 @@ class AudioEngineWrapper: ObservableObject {
 
     // MARK: - Scope Timer
 
+    private var scopeRefreshInFlight = false
+
     private func setupScopeTimer() {
         scopeTimer = Timer.scheduledTimer(withTimeInterval: 1.0/30.0, repeats: true) { [weak self] _ in
+            guard let self, !self.scopeRefreshInFlight else { return }
+            self.scopeRefreshInFlight = true
             Task { @MainActor in
-                self?.updateScopeWaveform()
+                defer { self.scopeRefreshInFlight = false }
+                self.updateScopeWaveform()
             }
         }
     }
@@ -1883,6 +1918,149 @@ class AudioEngineWrapper: ObservableObject {
     func isReelRecording(reelIndex: Int) -> Bool {
         guard let handle = cppEngineHandle else { return false }
         return AudioEngine_IsRecording(handle, Int32(reelIndex))
+    }
+
+    // MARK: - Master Output Recording
+
+    /// Start recording the master stereo output to a WAV file.
+    /// Creates `~/Music/Grainulator/Recordings/{projectName}_{timestamp}.wav`
+    func startMasterRecording(projectName: String) {
+        guard let handle = cppEngineHandle else { return }
+        guard !isMasterRecording else { return }
+
+        let recordingsDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Music/Grainulator/Recordings")
+
+        do {
+            try FileManager.default.createDirectory(at: recordingsDir, withIntermediateDirectories: true)
+        } catch {
+            print("[MasterRecording] Failed to create recordings directory: \(error)")
+            return
+        }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let timestamp = formatter.string(from: Date())
+        let safeName = projectName.replacingOccurrences(of: "/", with: "-")
+        let filename = "\(safeName)_\(timestamp).wav"
+        let fileURL = recordingsDir.appendingPathComponent(filename)
+
+        // 24-bit integer WAV file settings
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: 48000.0,
+            AVNumberOfChannelsKey: 2,
+            AVLinearPCMBitDepthKey: 24,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false
+        ]
+
+        do {
+            let file = try AVAudioFile(forWriting: fileURL, settings: settings)
+            masterRecordingFile = file
+        } catch {
+            print("[MasterRecording] Failed to create WAV file: \(error)")
+            return
+        }
+
+        masterRecordingSampleCount = 0
+        masterRecordingFilePath = fileURL
+
+        // Tell C++ engine to start capturing
+        AudioEngine_StartMasterCapture(handle)
+
+        // Capture values for background closure (handle is set once in init, file just created)
+        let capturedHandle = handle
+        let capturedFile = masterRecordingFile!
+
+        // Start drain timer on background queue
+        let timer = DispatchSource.makeTimerSource(queue: masterRecordingQueue)
+        timer.schedule(deadline: .now() + 0.05, repeating: 0.05)
+        timer.setEventHandler { [weak self] in
+            self?.drainMasterCaptureBuffer(handle: capturedHandle, file: capturedFile)
+        }
+        timer.resume()
+        masterDrainTimer = timer
+
+        isMasterRecording = true
+        masterRecordingDuration = 0
+    }
+
+    /// Drain available samples from the C++ ring buffer and write to disk.
+    /// Called on masterRecordingQueue — handle and file are captured from the main thread.
+    private nonisolated func drainMasterCaptureBuffer(handle: OpaquePointer, file: AVAudioFile) {
+        // Processing format: non-interleaved float32 stereo (matches ring buffer output)
+        guard let processingFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 48000,
+            channels: 2,
+            interleaved: false
+        ) else { return }
+
+        let chunkSize: Int32 = 4800  // 100ms @ 48kHz
+        var tempL = [Float](repeating: 0, count: Int(chunkSize))
+        var tempR = [Float](repeating: 0, count: Int(chunkSize))
+        var totalDrained: Int64 = 0
+
+        // Drain in a loop until empty
+        while true {
+            let framesRead = AudioEngine_ReadMasterCaptureBuffer(handle, &tempL, &tempR, chunkSize)
+            if framesRead <= 0 { break }
+
+            guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: processingFormat, frameCapacity: AVAudioFrameCount(framesRead)) else { break }
+            pcmBuffer.frameLength = AVAudioFrameCount(framesRead)
+
+            if let leftChannel = pcmBuffer.floatChannelData?[0],
+               let rightChannel = pcmBuffer.floatChannelData?[1] {
+                memcpy(leftChannel, &tempL, Int(framesRead) * MemoryLayout<Float>.size)
+                memcpy(rightChannel, &tempR, Int(framesRead) * MemoryLayout<Float>.size)
+            }
+
+            do {
+                try file.write(from: pcmBuffer)
+                totalDrained += Int64(framesRead)
+            } catch {
+                print("[MasterRecording] Write error: \(error)")
+                break
+            }
+        }
+
+        if totalDrained > 0 {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.masterRecordingSampleCount += totalDrained
+                self.masterRecordingDuration = Double(self.masterRecordingSampleCount) / 48000.0
+            }
+        }
+    }
+
+    /// Stop recording the master output and finalize the WAV file.
+    func stopMasterRecording() {
+        guard let handle = cppEngineHandle else { return }
+        guard isMasterRecording else { return }
+
+        // Cancel drain timer
+        masterDrainTimer?.cancel()
+        masterDrainTimer = nil
+
+        // Stop C++ capture (no new samples will be written after this)
+        AudioEngine_StopMasterCapture(handle)
+
+        // Final sync drain to flush remaining samples
+        if let file = masterRecordingFile {
+            masterRecordingQueue.sync {
+                self.drainMasterCaptureBuffer(handle: handle, file: file)
+            }
+        }
+
+        // Close file
+        masterRecordingFile = nil
+        isMasterRecording = false
+
+        if let path = masterRecordingFilePath {
+            print("[MasterRecording] Saved: \(path.lastPathComponent) (\(String(format: "%.1f", masterRecordingDuration))s)")
+        }
     }
 
     // MARK: - Input Tap Management

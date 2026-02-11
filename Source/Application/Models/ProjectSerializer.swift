@@ -216,7 +216,11 @@ struct ProjectSerializer {
                         octave: stage.octave,
                         stepType: stage.stepType.rawValue,
                         gateLength: stage.gateLength,
-                        slide: stage.slide
+                        slide: stage.slide,
+                        accumTranspose: stage.accumTranspose,
+                        accumTrigger: stage.accumTrigger.rawValue,
+                        accumRange: stage.accumRange,
+                        accumMode: stage.accumMode.rawValue
                     )
                 }
             )
@@ -570,6 +574,10 @@ struct ProjectSerializer {
                 sequencer.tracks[i].stages[j].stepType = SequencerStepType(rawValue: stageSnap.stepType) ?? .play
                 sequencer.tracks[i].stages[j].gateLength = stageSnap.gateLength ?? 1.0
                 sequencer.tracks[i].stages[j].slide = stageSnap.slide
+                sequencer.tracks[i].stages[j].accumTranspose = stageSnap.accumTranspose ?? 0
+                sequencer.tracks[i].stages[j].accumTrigger = AccumulatorTrigger(rawValue: stageSnap.accumTrigger ?? "") ?? .stage
+                sequencer.tracks[i].stages[j].accumRange = stageSnap.accumRange ?? 7
+                sequencer.tracks[i].stages[j].accumMode = AccumulatorMode(rawValue: stageSnap.accumMode ?? "") ?? .stage
             }
         }
     }

@@ -855,14 +855,28 @@ void WavSamplerVoice::Render(float* out_left, float* out_right, size_t size) {
                 continue;
             }
 
-            // Linear interpolation
+            // 4-point Hermite interpolation for quality pitched playback
             size_t idx0 = static_cast<size_t>(pos);
+            size_t idx_m1 = (idx0 > 0) ? idx0 - 1 : 0;
             size_t idx1 = idx0 + 1;
+            size_t idx2 = idx0 + 2;
             if (idx1 >= frames) idx1 = idx0;
+            if (idx2 >= frames) idx2 = idx1;
             float frac = static_cast<float>(pos - static_cast<double>(idx0));
 
-            float sampleL = data[idx0 * 2]     * (1.0f - frac) + data[idx1 * 2]     * frac;
-            float sampleR = data[idx0 * 2 + 1] * (1.0f - frac) + data[idx1 * 2 + 1] * frac;
+            // Hermite cubic for left channel (interleaved stereo: L at even indices)
+            float y0L = data[idx_m1 * 2], y1L = data[idx0 * 2], y2L = data[idx1 * 2], y3L = data[idx2 * 2];
+            float c1L = 0.5f * (y2L - y0L);
+            float c2L = y0L - 2.5f * y1L + 2.0f * y2L - 0.5f * y3L;
+            float c3L = 0.5f * (y3L - y0L) + 1.5f * (y1L - y2L);
+            float sampleL = ((c3L * frac + c2L) * frac + c1L) * frac + y1L;
+
+            // Hermite cubic for right channel (interleaved stereo: R at odd indices)
+            float y0R = data[idx_m1 * 2 + 1], y1R = data[idx0 * 2 + 1], y2R = data[idx1 * 2 + 1], y3R = data[idx2 * 2 + 1];
+            float c1R = 0.5f * (y2R - y0R);
+            float c2R = y0R - 2.5f * y1R + 2.0f * y2R - 0.5f * y3R;
+            float c3R = 0.5f * (y3R - y0R) + 1.5f * (y1R - y2R);
+            float sampleR = ((c3R * frac + c2R) * frac + c1R) * frac + y1R;
 
             // Per-voice SVF filter (Cytomic/Zavalishin topology)
             if (hasSvf) {

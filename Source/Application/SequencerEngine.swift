@@ -104,6 +104,21 @@ enum SequencerStepType: String, CaseIterable, Identifiable {
     }
 }
 
+enum AccumulatorTrigger: String, CaseIterable, Identifiable {
+    case stage = "STG"
+    case pulse = "PLS"
+    case ratchet = "RCH"
+
+    var id: String { rawValue }
+}
+
+enum AccumulatorMode: String, CaseIterable, Identifiable {
+    case stage = "STG"
+    case track = "TRK"
+
+    var id: String { rawValue }
+}
+
 enum SequencerTrackOutput: String, CaseIterable, Identifiable {
     case plaits = "PLAITS"
     case rings = "RINGS"
@@ -131,12 +146,17 @@ struct SequencerStage: Identifiable {
     var stepType: SequencerStepType
     var gateLength: Double   // 0.0-1.0, default 0.65
     var slide: Bool
+    var accumTranspose: Int = 0              // ±7 scale degrees per trigger
+    var accumTrigger: AccumulatorTrigger = .stage
+    var accumRange: Int = 7                  // 1-7 scale degrees, wraps at boundary
+    var accumMode: AccumulatorMode = .stage   // per-stage or shared track counter
 }
 
 struct SequencerTrack: Identifiable {
     let id: Int
     var name: String
     var muted: Bool
+    var running: Bool = true
     var direction: SequencerDirection
     var division: SequencerClockDivision
     var loopStart: Int
@@ -212,6 +232,8 @@ final class StepSequencer: ObservableObject {
         var heldTieNote: UInt8?
         var patternStep: Int = 0       // Counter for skip/converge/diverge patterns
         var climbWindowStart: Int = 0  // Window origin for climb patterns
+        var accumCounters: [Int] = Array(repeating: 0, count: 8) // Per-stage accumulator counters
+        var trackAccumCounter: Int = 0  // Shared counter for track-mode stages
     }
 
     private struct NoteOnDedupKey: Hashable {
@@ -284,7 +306,7 @@ final class StepSequencer: ObservableObject {
     @Published var interEngineCompensationSamples: Int = 0
     @Published var plaitsTriggerOffsetMs: Double = 0.0
     @Published var ringsTriggerOffsetMs: Double = 0.0
-    private let dedupeSameSampleSharedTargetNoteOn = true
+    private let dedupeSameSampleSharedTargetNoteOn = false
 
     let rootNames: [String] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
     let scaleOptions: [SequencerScaleDefinition] = [
@@ -482,6 +504,64 @@ final class StepSequencer: ObservableObject {
         tracks[trackIndex].muted = muted
     }
 
+    func setTrackRunning(_ trackIndex: Int, _ running: Bool) {
+        guard tracks.indices.contains(trackIndex) else { return }
+        tracks[trackIndex].running = running
+        if running {
+            // Quantize resume to the next beat boundary
+            let nextBeat = nextBeatBoundarySample()
+            schedulingLock.lock()
+            schedulingState.runtimes[trackIndex].nextPulseSample = nextBeat
+            schedulingLock.unlock()
+        }
+    }
+
+    func resetTrack(_ trackIndex: Int) {
+        guard tracks.indices.contains(trackIndex) else { return }
+        let start = tracks[trackIndex].loopStart
+        let nextBeat = nextBeatBoundarySample()
+        schedulingLock.lock()
+        schedulingState.runtimes[trackIndex] = TrackRuntimeState(
+            stageIndex: start,
+            pulseInStage: 0,
+            nextPulseSample: nextBeat,
+            alternateForward: true,
+            heldTieNote: nil,
+            patternStep: 0,
+            climbWindowStart: start,
+            accumCounters: Array(repeating: 0, count: 8),
+            trackAccumCounter: 0
+        )
+        schedulingState.playheadStages[trackIndex] = start
+        schedulingState.playheadPulses[trackIndex] = 0
+        schedulingState.lastPlayedNotes[trackIndex] = nil
+        schedulingLock.unlock()
+        playheadStagePerTrack[trackIndex] = start
+        playheadPulsePerTrack[trackIndex] = 0
+        lastPlayedNotePerTrack[trackIndex] = nil
+    }
+
+    /// Returns the sample time of the next quarter-note beat boundary,
+    /// aligned to `transportStartSample`.
+    private func nextBeatBoundarySample() -> UInt64 {
+        let nowSample = (audioEngine?.currentSampleTime() ?? 0) + secondsToSamples(schedulerLeadInSeconds)
+        let bpm = max(tempoBPM, 1.0)
+        let beatSamples = secondsToSamples(60.0 / bpm)
+        guard beatSamples > 0 else { return nowSample }
+
+        schedulingLock.lock()
+        let transportStart = schedulingState.transportStartSample
+        schedulingLock.unlock()
+
+        guard nowSample >= transportStart else { return nowSample }
+        let elapsed = nowSample - transportStart
+        let remainder = elapsed % beatSamples
+        if remainder == 0 {
+            return nowSample
+        }
+        return nowSample + (beatSamples - remainder)
+    }
+
     func setTempoBPM(_ bpm: Double) {
         tempoBPM = min(max(bpm, 40.0), 240.0)
     }
@@ -491,7 +571,7 @@ final class StepSequencer: ObservableObject {
     }
 
     func setSequenceOctave(_ octave: Int) {
-        sequenceOctave = min(max(octave, -2), 2)
+        sequenceOctave = min(max(octave, -4), 4)
     }
 
     func setScaleIndex(_ index: Int) {
@@ -532,13 +612,13 @@ final class StepSequencer: ObservableObject {
 
     func setTrackOctaveOffset(_ trackIndex: Int, _ octaveOffset: Int) {
         guard tracks.indices.contains(trackIndex) else { return }
-        let clampedOffset = min(max(octaveOffset, -2), 2)
+        let clampedOffset = min(max(octaveOffset, -4), 4)
         tracks[trackIndex].baseOctave = 4 + clampedOffset
     }
 
     func trackOctaveOffset(_ trackIndex: Int) -> Int {
         guard tracks.indices.contains(trackIndex) else { return 0 }
-        return min(max(tracks[trackIndex].baseOctave - 4, -2), 2)
+        return min(max(tracks[trackIndex].baseOctave - 4, -4), 4)
     }
 
     func setTrackVelocity(_ trackIndex: Int, _ velocity: Int) {
@@ -600,7 +680,7 @@ final class StepSequencer: ObservableObject {
 
     func setStageOctave(track: Int, stage: Int, value: Int) {
         guard isValidStage(track: track, stage: stage) else { return }
-        tracks[track].stages[stage].octave = min(max(value, -2), 2)
+        tracks[track].stages[stage].octave = min(max(value, -4), 4)
     }
 
     func setStageSlide(track: Int, stage: Int, value: Bool) {
@@ -616,6 +696,61 @@ final class StepSequencer: ObservableObject {
     func setStageStepType(track: Int, stage: Int, value: SequencerStepType) {
         guard isValidStage(track: track, stage: stage) else { return }
         tracks[track].stages[stage].stepType = value
+    }
+
+    func setStageAccumTranspose(track: Int, stage: Int, value: Int) {
+        guard isValidStage(track: track, stage: stage) else { return }
+        tracks[track].stages[stage].accumTranspose = min(max(value, -7), 7)
+    }
+
+    func setStageAccumTrigger(track: Int, stage: Int, value: AccumulatorTrigger) {
+        guard isValidStage(track: track, stage: stage) else { return }
+        tracks[track].stages[stage].accumTrigger = value
+    }
+
+    func setStageAccumRange(track: Int, stage: Int, value: Int) {
+        guard isValidStage(track: track, stage: stage) else { return }
+        tracks[track].stages[stage].accumRange = min(max(value, 1), 7)
+    }
+
+    func setStageAccumMode(track: Int, stage: Int, value: AccumulatorMode) {
+        guard isValidStage(track: track, stage: stage) else { return }
+        tracks[track].stages[stage].accumMode = value
+    }
+
+    func resetTrackToDefaults(_ trackIndex: Int) {
+        guard tracks.indices.contains(trackIndex) else { return }
+        let track = tracks[trackIndex]
+        tracks[trackIndex].direction = .forward
+        tracks[trackIndex].division = .x1
+        tracks[trackIndex].transpose = 0
+        tracks[trackIndex].baseOctave = 4
+        tracks[trackIndex].velocity = 100
+        tracks[trackIndex].loopStart = 0
+        tracks[trackIndex].loopEnd = track.stages.count - 1
+        tracks[trackIndex].muted = false
+        tracks[trackIndex].running = true
+        for stageIndex in tracks[trackIndex].stages.indices {
+            resetStageToDefaults(track: trackIndex, stage: stageIndex)
+        }
+        resetTrack(trackIndex)
+    }
+
+    func resetStageToDefaults(track: Int, stage: Int) {
+        guard isValidStage(track: track, stage: stage) else { return }
+        tracks[track].stages[stage].noteSlot = 0
+        tracks[track].stages[stage].pulses = 1
+        tracks[track].stages[stage].gateMode = .every
+        tracks[track].stages[stage].ratchets = 1
+        tracks[track].stages[stage].probability = 1.0
+        tracks[track].stages[stage].octave = 0
+        tracks[track].stages[stage].stepType = .play
+        tracks[track].stages[stage].gateLength = 1.0
+        tracks[track].stages[stage].slide = false
+        tracks[track].stages[stage].accumTranspose = 0
+        tracks[track].stages[stage].accumTrigger = .stage
+        tracks[track].stages[stage].accumRange = 7
+        tracks[track].stages[stage].accumMode = .stage
     }
 
     func stageNoteText(track: Int, stage: Int) -> String {
@@ -691,13 +826,18 @@ final class StepSequencer: ObservableObject {
     private var _latestSnapshot: SchedulingSnapshot?
     private let snapshotLock = NSLock()
     private var snapshotRefreshTimer: Timer?
+    private var snapshotRefreshInFlight = false
 
     private func startSnapshotRefreshTimer() {
         snapshotRefreshTimer?.invalidate()
+        snapshotRefreshInFlight = false
         snapshotRefreshTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            guard let self, !self.snapshotRefreshInFlight else { return }
+            self.snapshotRefreshInFlight = true
             // This runs on MainActor (RunLoop.main)
             Task { @MainActor in
-                guard let self, self.isPlaying else { return }
+                defer { self.snapshotRefreshInFlight = false }
+                guard self.isPlaying else { return }
                 let snap = self.createSchedulingSnapshot()
                 self.snapshotLock.lock()
                 self._latestSnapshot = snap
@@ -747,7 +887,9 @@ final class StepSequencer: ObservableObject {
                 alternateForward: true,
                 heldTieNote: nil,
                 patternStep: 0,
-                climbWindowStart: start
+                climbWindowStart: start,
+                accumCounters: Array(repeating: 0, count: 8),
+                trackAccumCounter: 0
             )
             schedulingState.playheadStages[trackIndex] = start
             schedulingState.playheadPulses[trackIndex] = 0
@@ -807,6 +949,7 @@ final class StepSequencer: ObservableObject {
             var earliestSample: UInt64 = UInt64.max
 
             for trackIndex in tracks.indices {
+                guard tracks[trackIndex].running else { continue }
                 let nextSample = state.runtimes[trackIndex].nextPulseSample
                 if nextSample <= horizonSample && nextSample < earliestSample {
                     earliestSample = nextSample
@@ -818,7 +961,7 @@ final class StepSequencer: ObservableObject {
             var dueTracks: [Int] = []
             dueTracks.reserveCapacity(tracks.count)
             for trackIndex in tracks.indices {
-                if state.runtimes[trackIndex].nextPulseSample == earliestSample {
+                if tracks[trackIndex].running && state.runtimes[trackIndex].nextPulseSample == earliestSample {
                     dueTracks.append(trackIndex)
                 }
             }
@@ -901,15 +1044,17 @@ final class StepSequencer: ObservableObject {
             }
         }
 
+        let tId = UInt8(trackIndex + 1)  // Track IDs: 1+ for sequencer tracks, 0 = keyboard
+
         if stage.stepType == .rest || stage.stepType == .skip {
             if let oldNote = runtime.heldTieNote {
-                scheduleNoteOffDirect(note: oldNote, sampleTime: eventSample, output: track.output, snapshot: snapshot, handle: handle)
+                scheduleNoteOffDirect(note: oldNote, sampleTime: eventSample, output: track.output, snapshot: snapshot, handle: handle, trackId: tId)
                 runtime.heldTieNote = nil
             }
         }
 
         if shouldGate && stage.probability >= Double.random(in: 0...1) {
-            let note = noteForStageFromSnapshot(track: track, stage: stage, snapshot: snapshot, state: state)
+            let note = noteForStageFromSnapshot(track: track, stage: stage, snapshot: snapshot, state: state, trackIndex: trackIndex)
             state.lastPlayedNotes[trackIndex] = note
             state.lastGateSamples[trackIndex] = eventSample
 
@@ -917,18 +1062,18 @@ final class StepSequencer: ObservableObject {
                 if !track.muted {
                     if runtime.heldTieNote != note {
                         if let oldNote = runtime.heldTieNote {
-                            scheduleNoteOffDirect(note: oldNote, sampleTime: eventSample, output: track.output, snapshot: snapshot, handle: handle)
+                            scheduleNoteOffDirect(note: oldNote, sampleTime: eventSample, output: track.output, snapshot: snapshot, handle: handle, trackId: tId)
                         }
                         scheduleNoteOnDirect(
                             note: note, velocity: UInt8(track.velocity), sampleTime: eventSample,
-                            output: track.output, snapshot: snapshot, handle: handle, dedupKeys: &dedupKeys
+                            output: track.output, snapshot: snapshot, handle: handle, dedupKeys: &dedupKeys, trackId: tId
                         )
                     }
                 }
                 runtime.heldTieNote = note
             } else if !track.muted {
                 if let oldNote = runtime.heldTieNote {
-                    scheduleNoteOffDirect(note: oldNote, sampleTime: eventSample, output: track.output, snapshot: snapshot, handle: handle)
+                    scheduleNoteOffDirect(note: oldNote, sampleTime: eventSample, output: track.output, snapshot: snapshot, handle: handle, trackId: tId)
                     runtime.heldTieNote = nil
                 }
                 triggerRatchetsDirect(
@@ -936,8 +1081,26 @@ final class StepSequencer: ObservableObject {
                     gateLength: stage.gateLength, pulseDurationSamples: pulseDurationSamples,
                     eventSample: eventSample,
                     target: targetMask(for: track.output), snapshot: snapshot, handle: handle,
-                    dedupKeys: &dedupKeys
+                    dedupKeys: &dedupKeys,
+                    track: track, stage: stage, trackIndex: trackIndex,
+                    runtime: &runtime, state: &state,
+                    trackId: tId
                 )
+            }
+
+            // Accumulator counter increments (stage and pulse triggers; ratchet handled in triggerRatchetsDirect)
+            if stage.accumTranspose != 0 {
+                let stageIdx = runtime.stageIndex
+                switch stage.accumTrigger {
+                case .stage:
+                    if pulsePosition == 0 {
+                        incrementAccumCounter(runtime: &runtime, stageIndex: stageIdx, mode: stage.accumMode)
+                    }
+                case .pulse:
+                    incrementAccumCounter(runtime: &runtime, stageIndex: stageIdx, mode: stage.accumMode)
+                case .ratchet:
+                    break // Handled in triggerRatchetsDirect
+                }
             }
 
             if trackIndex < state.lastScheduledNoteOnSamples.count {
@@ -954,7 +1117,7 @@ final class StepSequencer: ObservableObject {
             runtime.pulseInStage = 0
 
             if let held = runtime.heldTieNote, stage.stepType != .tie, !stage.slide {
-                scheduleNoteOffDirect(note: held, sampleTime: eventSample, output: track.output, snapshot: snapshot, handle: handle)
+                scheduleNoteOffDirect(note: held, sampleTime: eventSample, output: track.output, snapshot: snapshot, handle: handle, trackId: tId)
                 runtime.heldTieNote = nil
             }
 
@@ -984,10 +1147,22 @@ final class StepSequencer: ObservableObject {
         return UInt64(max(1.0, (pulseSeconds * snapshot.sampleRate).rounded()))
     }
 
-    private func noteForStageFromSnapshot(track: SequencerTrack, stage: SequencerStage, snapshot: SchedulingSnapshot, state: SchedulingState) -> UInt8 {
+    /// Compute the diatonic accumulator offset for a stage given its counter value.
+    /// Wraps symmetrically within ±range using negative-safe modulo.
+    private func accumOffset(counter: Int, transpose: Int, range: Int) -> Int {
+        guard transpose != 0 else { return 0 }
+        let raw = counter * transpose
+        let span = 2 * range + 1 // e.g. range=7 → span=15 (-7..+7)
+        return mod(raw + range, span) - range
+    }
+
+    /// Compute the MIDI note for a stage with an explicit accumulator counter applied.
+    private func noteForStageWithAccumOffset(
+        track: SequencerTrack, stage: SequencerStage,
+        accumCounter: Int, snapshot: SchedulingSnapshot, state: SchedulingState
+    ) -> UInt8 {
         let rootMidi = (track.baseOctave + snapshot.sequenceOctave + 1) * 12 + snapshot.rootNote
 
-        // When "Chord Sequencer" scale is active, use the current chord's intervals
         let intervals: [Int]
         if snapshot.isChordScale && snapshot.chordEnabled && snapshot.chordStepCount > 0 {
             let chordStep = state.chordPlayheadStep % snapshot.chordStepCount
@@ -1000,10 +1175,28 @@ final class StepSequencer: ObservableObject {
             intervals = snapshot.scaleIntervals
         }
 
-        let degree = degreeForNoteSlot(stage.noteSlot) + track.transpose
+        let offset = accumOffset(counter: accumCounter, transpose: stage.accumTranspose, range: stage.accumRange)
+        let degree = degreeForNoteSlot(stage.noteSlot) + track.transpose + offset
         let semitoneOffset = semitoneForDegree(degree, intervals: intervals)
         let note = rootMidi + semitoneOffset + stage.octave * 12
         return UInt8(min(max(note, 0), 127))
+    }
+
+    private func noteForStageFromSnapshot(track: SequencerTrack, stage: SequencerStage, snapshot: SchedulingSnapshot, state: SchedulingState, trackIndex: Int = 0) -> UInt8 {
+        // Read accumulator counter based on stage's mode
+        let counter: Int
+        if stage.accumTranspose != 0, state.runtimes.indices.contains(trackIndex) {
+            let runtime = state.runtimes[trackIndex]
+            switch stage.accumMode {
+            case .stage:
+                counter = stage.id < runtime.accumCounters.count ? runtime.accumCounters[stage.id] : 0
+            case .track:
+                counter = runtime.trackAccumCounter
+            }
+        } else {
+            counter = 0
+        }
+        return noteForStageWithAccumOffset(track: track, stage: stage, accumCounter: counter, snapshot: snapshot, state: state)
     }
 
     private func compensatedSampleTimeDirect(base: UInt64, for target: AudioEngineWrapper.NoteTargetMask, snapshot: SchedulingSnapshot) -> UInt64 {
@@ -1024,45 +1217,47 @@ final class StepSequencer: ObservableObject {
     private func scheduleNoteOnDirect(
         note: UInt8, velocity: UInt8, sampleTime: UInt64,
         output: SequencerTrackOutput, snapshot: SchedulingSnapshot, handle: OpaquePointer,
-        dedupKeys: inout Set<NoteOnDedupKey>
+        dedupKeys: inout Set<NoteOnDedupKey>,
+        trackId: UInt8 = 0
     ) {
         let target = targetMask(for: output)
         scheduleNoteOnDirect(note: note, velocity: velocity, sampleTime: sampleTime,
-                             target: target, snapshot: snapshot, handle: handle, dedupKeys: &dedupKeys)
+                             target: target, snapshot: snapshot, handle: handle, dedupKeys: &dedupKeys, trackId: trackId)
     }
 
     private func scheduleNoteOnDirect(
         note: UInt8, velocity: UInt8, sampleTime: UInt64,
         target: AudioEngineWrapper.NoteTargetMask, snapshot: SchedulingSnapshot, handle: OpaquePointer,
-        dedupKeys: inout Set<NoteOnDedupKey>
+        dedupKeys: inout Set<NoteOnDedupKey>,
+        trackId: UInt8 = 0
     ) {
         switch target {
         case .plaits:
             emitNoteOnDirect(note: note, velocity: velocity,
                              sampleTime: compensatedSampleTimeDirect(base: sampleTime, for: .plaits, snapshot: snapshot),
-                             target: .plaits, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys)
+                             target: .plaits, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys, trackId: trackId)
         case .rings:
             emitNoteOnDirect(note: note, velocity: velocity,
                              sampleTime: compensatedSampleTimeDirect(base: sampleTime, for: .rings, snapshot: snapshot),
-                             target: .rings, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys)
+                             target: .rings, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys, trackId: trackId)
         case .both:
             let ps = compensatedSampleTimeDirect(base: sampleTime, for: .plaits, snapshot: snapshot)
             let rs = compensatedSampleTimeDirect(base: sampleTime, for: .rings, snapshot: snapshot)
             if rs <= ps {
-                emitNoteOnDirect(note: note, velocity: velocity, sampleTime: rs, target: .rings, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys)
-                emitNoteOnDirect(note: note, velocity: velocity, sampleTime: ps, target: .plaits, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys)
+                emitNoteOnDirect(note: note, velocity: velocity, sampleTime: rs, target: .rings, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys, trackId: trackId)
+                emitNoteOnDirect(note: note, velocity: velocity, sampleTime: ps, target: .plaits, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys, trackId: trackId)
             } else {
-                emitNoteOnDirect(note: note, velocity: velocity, sampleTime: ps, target: .plaits, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys)
-                emitNoteOnDirect(note: note, velocity: velocity, sampleTime: rs, target: .rings, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys)
+                emitNoteOnDirect(note: note, velocity: velocity, sampleTime: ps, target: .plaits, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys, trackId: trackId)
+                emitNoteOnDirect(note: note, velocity: velocity, sampleTime: rs, target: .rings, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys, trackId: trackId)
             }
         case .daisyDrum:
             emitNoteOnDirect(note: note, velocity: velocity,
                              sampleTime: sampleTime,
-                             target: .daisyDrum, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys)
+                             target: .daisyDrum, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys, trackId: trackId)
         case .sampler:
             emitNoteOnDirect(note: note, velocity: velocity,
                              sampleTime: sampleTime,
-                             target: .sampler, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys)
+                             target: .sampler, handle: handle, dedupe: snapshot.dedupe, dedupKeys: &dedupKeys, trackId: trackId)
         case .drumLane0, .drumLane1, .drumLane2, .drumLane3:
             break  // Drum seq lanes are driven by DrumSequencer, not StepSequencer
         }
@@ -1071,46 +1266,60 @@ final class StepSequencer: ObservableObject {
     private func emitNoteOnDirect(
         note: UInt8, velocity: UInt8, sampleTime: UInt64,
         target: AudioEngineWrapper.NoteTargetMask, handle: OpaquePointer,
-        dedupe: Bool, dedupKeys: inout Set<NoteOnDedupKey>
+        dedupe: Bool, dedupKeys: inout Set<NoteOnDedupKey>,
+        trackId: UInt8 = 0
     ) {
         if dedupe {
             let key = NoteOnDedupKey(sampleTime: sampleTime, note: note, targetRaw: target.rawValue)
             if dedupKeys.contains(key) { return }
             dedupKeys.insert(key)
         }
-        AudioEngine_ScheduleNoteOnTarget(handle, Int32(note), Int32(velocity), sampleTime, target.rawValue)
+        AudioEngine_ScheduleNoteOnTargetTagged(handle, Int32(note), Int32(velocity), sampleTime, target.rawValue, trackId)
     }
 
     private func scheduleNoteOffDirect(
         note: UInt8, sampleTime: UInt64, output: SequencerTrackOutput,
-        snapshot: SchedulingSnapshot, handle: OpaquePointer
+        snapshot: SchedulingSnapshot, handle: OpaquePointer,
+        trackId: UInt8 = 0
     ) {
         let target = targetMask(for: output)
         switch target {
         case .plaits:
-            AudioEngine_ScheduleNoteOffTarget(handle, Int32(note),
-                compensatedSampleTimeDirect(base: sampleTime, for: .plaits, snapshot: snapshot), AudioEngineWrapper.NoteTargetMask.plaits.rawValue)
+            AudioEngine_ScheduleNoteOffTargetTagged(handle, Int32(note),
+                compensatedSampleTimeDirect(base: sampleTime, for: .plaits, snapshot: snapshot), AudioEngineWrapper.NoteTargetMask.plaits.rawValue, trackId)
         case .rings:
-            AudioEngine_ScheduleNoteOffTarget(handle, Int32(note),
-                compensatedSampleTimeDirect(base: sampleTime, for: .rings, snapshot: snapshot), AudioEngineWrapper.NoteTargetMask.rings.rawValue)
+            AudioEngine_ScheduleNoteOffTargetTagged(handle, Int32(note),
+                compensatedSampleTimeDirect(base: sampleTime, for: .rings, snapshot: snapshot), AudioEngineWrapper.NoteTargetMask.rings.rawValue, trackId)
         case .both:
             let ps = compensatedSampleTimeDirect(base: sampleTime, for: .plaits, snapshot: snapshot)
             let rs = compensatedSampleTimeDirect(base: sampleTime, for: .rings, snapshot: snapshot)
             if rs <= ps {
-                AudioEngine_ScheduleNoteOffTarget(handle, Int32(note), rs, AudioEngineWrapper.NoteTargetMask.rings.rawValue)
-                AudioEngine_ScheduleNoteOffTarget(handle, Int32(note), ps, AudioEngineWrapper.NoteTargetMask.plaits.rawValue)
+                AudioEngine_ScheduleNoteOffTargetTagged(handle, Int32(note), rs, AudioEngineWrapper.NoteTargetMask.rings.rawValue, trackId)
+                AudioEngine_ScheduleNoteOffTargetTagged(handle, Int32(note), ps, AudioEngineWrapper.NoteTargetMask.plaits.rawValue, trackId)
             } else {
-                AudioEngine_ScheduleNoteOffTarget(handle, Int32(note), ps, AudioEngineWrapper.NoteTargetMask.plaits.rawValue)
-                AudioEngine_ScheduleNoteOffTarget(handle, Int32(note), rs, AudioEngineWrapper.NoteTargetMask.rings.rawValue)
+                AudioEngine_ScheduleNoteOffTargetTagged(handle, Int32(note), ps, AudioEngineWrapper.NoteTargetMask.plaits.rawValue, trackId)
+                AudioEngine_ScheduleNoteOffTargetTagged(handle, Int32(note), rs, AudioEngineWrapper.NoteTargetMask.rings.rawValue, trackId)
             }
         case .daisyDrum:
-            AudioEngine_ScheduleNoteOffTarget(handle, Int32(note),
-                sampleTime, AudioEngineWrapper.NoteTargetMask.daisyDrum.rawValue)
+            AudioEngine_ScheduleNoteOffTargetTagged(handle, Int32(note),
+                sampleTime, AudioEngineWrapper.NoteTargetMask.daisyDrum.rawValue, trackId)
         case .sampler:
-            AudioEngine_ScheduleNoteOffTarget(handle, Int32(note),
-                sampleTime, AudioEngineWrapper.NoteTargetMask.sampler.rawValue)
+            AudioEngine_ScheduleNoteOffTargetTagged(handle, Int32(note),
+                sampleTime, AudioEngineWrapper.NoteTargetMask.sampler.rawValue, trackId)
         case .drumLane0, .drumLane1, .drumLane2, .drumLane3:
             break  // Drum seq lanes are driven by DrumSequencer, not StepSequencer
+        }
+    }
+
+    /// Increment the appropriate accumulator counter (per-stage or shared track).
+    private func incrementAccumCounter(runtime: inout TrackRuntimeState, stageIndex: Int, mode: AccumulatorMode) {
+        switch mode {
+        case .stage:
+            if stageIndex < runtime.accumCounters.count {
+                runtime.accumCounters[stageIndex] += 1
+            }
+        case .track:
+            runtime.trackAccumCounter += 1
         }
     }
 
@@ -1119,19 +1328,51 @@ final class StepSequencer: ObservableObject {
         pulseDurationSamples: UInt64,
         eventSample: UInt64, target: AudioEngineWrapper.NoteTargetMask,
         snapshot: SchedulingSnapshot, handle: OpaquePointer,
-        dedupKeys: inout Set<NoteOnDedupKey>
+        dedupKeys: inout Set<NoteOnDedupKey>,
+        track: SequencerTrack? = nil, stage: SequencerStage? = nil,
+        trackIndex: Int = 0,
+        runtime: inout TrackRuntimeState, state: inout SchedulingState,
+        trackId: UInt8 = 0
     ) {
         let ratchetCount = max(ratchets, 1)
         let subdivisionSamples = max(1, Int(pulseDurationSamples) / ratchetCount)
+        let isRatchetTrigger = stage?.accumTrigger == .ratchet && (stage?.accumTranspose ?? 0) != 0
 
         for ratchetIndex in 0..<ratchetCount {
             let onSample = eventSample &+ UInt64(ratchetIndex * subdivisionSamples)
             let gateLengthSamples = max(1, Int(Double(subdivisionSamples) * gateLength))
             let offSample = onSample &+ UInt64(gateLengthSamples)
 
-            scheduleNoteOnDirect(note: note, velocity: velocity, sampleTime: onSample,
-                                 target: target, snapshot: snapshot, handle: handle, dedupKeys: &dedupKeys)
-            scheduleNoteOffDirect(note: note, sampleTime: offSample, output: targetToOutput(target), snapshot: snapshot, handle: handle)
+            let ratchetNote: UInt8
+            if isRatchetTrigger, let trk = track, let stg = stage {
+                if ratchetIndex == 0 {
+                    // First ratchet uses the pre-computed note, then increment
+                    ratchetNote = note
+                    incrementAccumCounter(runtime: &runtime, stageIndex: runtime.stageIndex, mode: stg.accumMode)
+                    state.runtimes[trackIndex] = runtime
+                } else {
+                    // Subsequent ratchets re-compute note from updated counter
+                    let counter: Int
+                    switch stg.accumMode {
+                    case .stage:
+                        counter = stg.id < runtime.accumCounters.count ? runtime.accumCounters[stg.id] : 0
+                    case .track:
+                        counter = runtime.trackAccumCounter
+                    }
+                    ratchetNote = noteForStageWithAccumOffset(
+                        track: trk, stage: stg, accumCounter: counter,
+                        snapshot: snapshot, state: state
+                    )
+                    incrementAccumCounter(runtime: &runtime, stageIndex: runtime.stageIndex, mode: stg.accumMode)
+                    state.runtimes[trackIndex] = runtime
+                }
+            } else {
+                ratchetNote = note
+            }
+
+            scheduleNoteOnDirect(note: ratchetNote, velocity: velocity, sampleTime: onSample,
+                                 target: target, snapshot: snapshot, handle: handle, dedupKeys: &dedupKeys, trackId: trackId)
+            scheduleNoteOffDirect(note: ratchetNote, sampleTime: offSample, output: targetToOutput(target), snapshot: snapshot, handle: handle, trackId: trackId)
         }
     }
 

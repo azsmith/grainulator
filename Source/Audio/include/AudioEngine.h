@@ -35,6 +35,9 @@ constexpr int kMultiChannelRingBufferSize = 4096;  // ~85ms @ 48kHz
 constexpr int kNumMixerChannelsForRing = 8;
 constexpr int kRingBufferProcessFrames = 256;      // Chunk size for background processing
 
+// Master output capture ring buffer (for recording to file via Swift)
+constexpr int kMasterCaptureRingSize = 480000;     // 10 seconds @ 48kHz
+
 /// Lock-free ring buffer for multi-channel audio
 /// Uses single write index (producer writes all channels together)
 /// and per-channel read indices (callbacks fire independently)
@@ -68,6 +71,22 @@ private:
 
     // Per-channel read indices (callbacks fire independently)
     std::atomic<size_t> m_readIndex[kNumMixerChannelsForRing];
+};
+
+/// SPSC lock-free stereo ring buffer for master output capture (recording to WAV).
+/// Single producer (audio thread) writes post-clip stereo samples.
+/// Single consumer (Swift drain timer) reads and writes to AVAudioFile.
+class MasterCaptureRingBuffer {
+public:
+    void write(const float* left, const float* right, int numFrames);
+    int read(float* left, float* right, int maxFrames);
+    void reset();
+
+private:
+    float m_bufferL[kMasterCaptureRingSize]{};
+    float m_bufferR[kMasterCaptureRingSize]{};
+    std::atomic<size_t> m_writeIndex{0};
+    std::atomic<size_t> m_readIndex{0};
 };
 
 class GranularVoice;
@@ -335,6 +354,8 @@ public:
     void scheduleNoteOff(int note, uint64_t sampleTime);
     void scheduleNoteOnTarget(int note, int velocity, uint64_t sampleTime, uint8_t targetMask);
     void scheduleNoteOffTarget(int note, uint64_t sampleTime, uint8_t targetMask);
+    void scheduleNoteOnTargetTagged(int note, int velocity, uint64_t sampleTime, uint8_t targetMask, uint8_t trackId);
+    void scheduleNoteOffTargetTagged(int note, uint64_t sampleTime, uint8_t targetMask, uint8_t trackId);
     void clearScheduledNotes();
     uint64_t getCurrentSampleTime() const;
 
@@ -365,6 +386,12 @@ public:
 
     // External audio input (called from Swift input tap callback)
     void writeExternalInput(const float* left, const float* right, int numFrames);
+
+    // Master output capture (for file recording via Swift)
+    void startMasterCapture();
+    void stopMasterCapture();
+    bool isMasterCaptureActive() const;
+    int readMasterCaptureBuffer(float* left, float* right, int maxFrames);
 
     // Quantization
     enum class QuantizationMode {
@@ -413,6 +440,7 @@ private:
         uint8_t velocity;
         bool isNoteOn;
         uint8_t targetMask;
+        uint8_t trackId;  // 0 = keyboard/untagged, 1+ = sequencer track
     };
 
     static constexpr uint32_t kScheduledEventCapacity = 4096;
@@ -451,9 +479,10 @@ private:
     float m_drumSeqHarmonics[kNumDrumSeqLanes];
     float m_drumSeqTimbre[kNumDrumSeqLanes];
     float m_drumSeqMorph[kNumDrumSeqLanes];
-    int m_voiceNote[kNumPlaitsVoices];      // MIDI note for each voice (-1 = free)
-    uint32_t m_voiceAge[kNumPlaitsVoices];  // For voice stealing (older = lower priority)
-    uint32_t m_voiceCounter;                 // Increments on each note-on
+    int m_voiceNote[kNumPlaitsVoices];         // MIDI note for each voice (-1 = free)
+    uint8_t m_voiceTrackId[kNumPlaitsVoices];  // Track that owns this voice (0 = keyboard)
+    uint32_t m_voiceAge[kNumPlaitsVoices];     // For voice stealing (older = lower priority)
+    uint32_t m_voiceCounter;                    // Increments on each note-on
 
     // Granular voices (4 tracks)
     std::unique_ptr<GranularVoice> m_granularVoices[kNumGranularVoices];
@@ -479,6 +508,10 @@ private:
     // Recording helpers
     void processRecordingForChannel(int channelIndex, const float* srcLeft, const float* srcRight, int numFrames);
     void processExternalInputRecording(int numFrames);
+
+    // Master output capture state
+    MasterCaptureRingBuffer m_masterCaptureRing;
+    std::atomic<bool> m_masterCaptureActive{false};
 
     // Shared parameters (applied to all voices)
     int m_currentEngine;
@@ -559,6 +592,7 @@ private:
     size_t m_combLengths[kNumCombs];
     size_t m_combPos[kNumCombs];
     float m_combFilters[kNumCombs];
+    float m_combFiltersR[kNumCombs];  // Right channel damping (symmetric with left)
 
     float* m_allpassBuffersL[kNumAllpasses];
     float* m_allpassBuffersR[kNumAllpasses];
@@ -579,17 +613,22 @@ private:
     // Per-channel mixer state (0=Plaits, 1=Rings, 2-5=Track voices, 6=DaisyDrum, 7=Sampler)
     static constexpr int kNumMixerChannels = 8;
     static constexpr int kMaxChannelDelaySamples = 2400; // 50ms @ 48kHz
-    float m_channelGain[kNumMixerChannels];
-    float m_channelPan[kNumMixerChannels];
+    float m_channelGain[kNumMixerChannels];       // Target gain (set from UI)
+    float m_channelGainSmoothed[kNumMixerChannels]; // Smoothed gain (used in DSP)
+    float m_channelPan[kNumMixerChannels];        // Target pan (set from UI)
+    float m_channelPanSmoothed[kNumMixerChannels];  // Smoothed pan (used in DSP)
     float m_channelSendA[kNumMixerChannels];
+    float m_channelSendASmoothed[kNumMixerChannels];
     float m_channelSendB[kNumMixerChannels];
+    float m_channelSendBSmoothed[kNumMixerChannels];
     int m_channelDelaySamples[kNumMixerChannels];
     int m_channelDelayWritePos[kNumMixerChannels];
     std::array<std::array<float, kMaxChannelDelaySamples + 1>, kNumMixerChannels> m_channelDelayBufferL;
     std::array<std::array<float, kMaxChannelDelaySamples + 1>, kNumMixerChannels> m_channelDelayBufferR;
     bool m_channelMute[kNumMixerChannels];
     bool m_channelSolo[kNumMixerChannels];
-    float m_masterGain;  // Master output volume
+    float m_masterGain;          // Target master gain
+    float m_masterGainSmoothed;  // Smoothed master gain
 
     // Master filter (flexible Moog ladder models)
     float m_masterFilterCutoff;     // 20-20000 Hz
@@ -617,10 +656,12 @@ private:
     void cleanupEffects();
     bool enqueueScheduledEvent(const ScheduledNoteEvent& event);
     void noteOnTarget(int note, int velocity, uint8_t targetMask);
+    void noteOnTarget(int note, int velocity, uint8_t targetMask, uint8_t trackId);
     void noteOffTarget(int note, uint8_t targetMask);
+    void noteOffTarget(int note, uint8_t targetMask, uint8_t trackId);
 
     // Voice allocation helper
-    int allocateVoice(int note);
+    int allocateVoice(int note, uint8_t trackId);
 
     // Scheduled event queue state.
     // Producers are serialized with m_scheduledWriteLock; consumer is the audio thread.

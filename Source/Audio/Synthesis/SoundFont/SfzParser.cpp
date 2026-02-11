@@ -438,9 +438,10 @@ SfzParseResult ParseSfzFile(const char* sfzPath) {
             pos = eqPos + 1;
 
             // Value extends until next opcode (key=) or header (<) or end
-            // Special case: 'sample' opcode value can contain spaces
+            // Special case: 'sample' and 'default_path' opcode values can contain spaces
             std::string value;
-            if (toLowerStr(key) == "sample") {
+            std::string keyLower = toLowerStr(key);
+            if (keyLower == "sample" || keyLower == "default_path") {
                 // sample value goes to end of line
                 size_t lineEnd = cleaned.find('\n', pos);
                 if (lineEnd == std::string::npos) lineEnd = cleaned.size();

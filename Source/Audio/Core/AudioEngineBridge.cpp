@@ -133,6 +133,18 @@ void AudioEngine_ScheduleNoteOffTarget(AudioEngineHandle handle, int note, uint6
     }
 }
 
+void AudioEngine_ScheduleNoteOnTargetTagged(AudioEngineHandle handle, int note, int velocity, uint64_t sampleTime, uint8_t targetMask, uint8_t trackId) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->scheduleNoteOnTargetTagged(note, velocity, sampleTime, targetMask, trackId);
+    }
+}
+
+void AudioEngine_ScheduleNoteOffTargetTagged(AudioEngineHandle handle, int note, uint64_t sampleTime, uint8_t targetMask, uint8_t trackId) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->scheduleNoteOffTargetTagged(note, sampleTime, targetMask, trackId);
+    }
+}
+
 void AudioEngine_ClearScheduledNotes(AudioEngineHandle handle) {
     if (handle) {
         static_cast<AudioEngine*>(handle)->clearScheduledNotes();
@@ -506,6 +518,30 @@ void AudioEngine_SetSamplerMode(AudioEngineHandle handle, int mode) {
         }
         static_cast<AudioEngine*>(handle)->setSamplerMode(m);
     }
+}
+
+// ========== Master Output Capture ==========
+
+void AudioEngine_StartMasterCapture(AudioEngineHandle handle) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->startMasterCapture();
+    }
+}
+
+void AudioEngine_StopMasterCapture(AudioEngineHandle handle) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->stopMasterCapture();
+    }
+}
+
+bool AudioEngine_IsMasterCaptureActive(AudioEngineHandle handle) {
+    if (!handle) return false;
+    return static_cast<AudioEngine*>(handle)->isMasterCaptureActive();
+}
+
+int AudioEngine_ReadMasterCaptureBuffer(AudioEngineHandle handle, float* left, float* right, int maxFrames) {
+    if (!handle) return 0;
+    return static_cast<AudioEngine*>(handle)->readMasterCaptureBuffer(left, right, maxFrames);
 }
 
 } // extern "C"

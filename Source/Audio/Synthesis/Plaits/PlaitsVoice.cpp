@@ -286,8 +286,8 @@ void PlaitsVoice::Render(float* out, float* aux, size_t size) {
                 processed_sample *= level_;
             }
 
-            // Soft limiting
-            processed_sample = std::tanh(processed_sample * 1.5f) * 0.67f;
+            // Hard clamp to ±1.0 — saturation is handled by the master bus tanh
+            processed_sample = std::max(-1.0f, std::min(1.0f, processed_sample));
 
             if (out) {
                 out[offset + i] = processed_sample;
@@ -298,7 +298,7 @@ void PlaitsVoice::Render(float* out, float* aux, size_t size) {
                 if (!lpg_bypass_ && !is_triggered_engine) {
                     aux_sample *= envelope_;
                 }
-                aux[offset + i] = std::tanh(aux_sample);
+                aux[offset + i] = std::max(-1.0f, std::min(1.0f, aux_sample));
             }
         }
 

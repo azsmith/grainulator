@@ -29,9 +29,9 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
     var shortName: String {
         switch self {
         case .sequencer: return "SEQ"
-        case .synths: return "SYN"
-        case .granular: return "GRN"
-        case .drums: return "DRM"
+        case .synths: return "SYNTH"
+        case .granular: return "GRAN"
+        case .drums: return "DRUM"
         }
     }
 
@@ -48,7 +48,7 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
 // MARK: - Workspace Layout State
 
 class WorkspaceLayoutState: ObservableObject {
-    @Published var currentTab: WorkspaceTab = .synths
+    @Published var currentTab: WorkspaceTab = .sequencer
     @Published var isMixerWindowOpen: Bool = false
     @Published var isScopeWindowOpen: Bool = false
 

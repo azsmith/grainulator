@@ -16,7 +16,9 @@ RingsVoice::RingsVoice()
     : sample_rate_(48000.0f)
     , note_(48.0f)
     , level_(0.8f)
-    , trigger_pending_(false)
+    , note_queue_head_(0)
+    , note_queue_tail_(0)
+    , note_queue_count_(0)
     , chord_(0)
     , fm_(0.0f)
     , internal_exciter_(true)
@@ -45,14 +47,16 @@ void RingsVoice::Init(float sample_rate) {
     std::memset(reverb_buffer_, 0, sizeof(reverb_buffer_));
 
     part_.Init(reverb_buffer_);
-    part_.set_polyphony(1);
+    part_.set_polyphony(2);
     part_.set_model(rings::RESONATOR_MODEL_MODAL);
 
     // Rings models are tuned for 48k processing with 24-sample control blocks.
     const float controlRate = 48000.0f / static_cast<float>(kRenderBlockSize);
     strummer_.Init(0.01f, controlRate);
 
-    trigger_pending_ = false;
+    note_queue_head_ = 0;
+    note_queue_tail_ = 0;
+    note_queue_count_ = 0;
     patch_ = base_patch_;
 }
 
@@ -80,18 +84,35 @@ void RingsVoice::Render(const float* in, float* out, float* aux, size_t size) {
         patch_.damping = std::clamp(base_patch_.damping + damping_mod_, 0.0f, 0.9995f);
         patch_.position = std::clamp(base_patch_.position + position_mod_, 0.0f, 0.9995f);
 
+        // Pop a queued note event if available — each gets its own strum
+        bool strum = false;
+        if (note_queue_count_ > 0) {
+            NoteEvent ev = note_queue_[note_queue_head_];
+            note_queue_head_ = (note_queue_head_ + 1) % kMaxNoteQueue;
+            note_queue_count_--;
+            note_ = ev.note;
+            level_ = ev.level;
+            strum = true;
+        }
+
         performance_.note = note_;
         performance_.tonic = 0.0f;
         performance_.fm = fm_ * 48.0f - 24.0f;  // Map 0-1 to ±24 semitones
         performance_.chord = std::clamp(chord_, 0, rings::kNumChords - 1);
-        performance_.strum = trigger_pending_;
+        performance_.strum = strum;
         performance_.internal_exciter = internal_exciter_;
         performance_.internal_strum = false;
 
         strummer_.Process(input_buffer_, block, &performance_);
-        part_.Process(performance_, patch_, input_buffer_, render_l_, render_r_, block);
 
-        trigger_pending_ = false;
+        // Force strum through for explicit NoteOn events — the Strummer's
+        // inhibit timer blocks rapid re-triggers (10ms debounce), which
+        // swallows polyphonic notes from the sequencer/MIDI.
+        if (strum) {
+            performance_.strum = true;
+        }
+
+        part_.Process(performance_, patch_, input_buffer_, render_l_, render_r_, block);
 
         for (size_t i = 0; i < block; ++i) {
             out[rendered + i] = render_l_[i] * level_;
@@ -103,10 +124,19 @@ void RingsVoice::Render(const float* in, float* out, float* aux, size_t size) {
 }
 
 void RingsVoice::NoteOn(int midiNote, int velocity) {
-    SetNote(static_cast<float>(midiNote));
-    const float accent = std::clamp(static_cast<float>(velocity) / 127.0f, 0.0f, 1.0f);
-    SetLevel(std::max(0.2f, accent));
-    trigger_pending_ = true;
+    float note = std::clamp(static_cast<float>(midiNote), 0.0f, 127.0f);
+    float accent = std::clamp(static_cast<float>(velocity) / 127.0f, 0.0f, 1.0f);
+    float level = std::max(0.2f, accent);
+
+    if (note_queue_count_ < kMaxNoteQueue) {
+        note_queue_[note_queue_tail_] = { note, level };
+        note_queue_tail_ = (note_queue_tail_ + 1) % kMaxNoteQueue;
+        note_queue_count_++;
+    }
+
+    // Keep note_/level_ updated for non-strum render blocks
+    note_ = note;
+    level_ = level;
 }
 
 void RingsVoice::NoteOff(int midiNote) {

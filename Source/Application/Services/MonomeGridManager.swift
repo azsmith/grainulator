@@ -194,8 +194,13 @@ class MonomeGridManager: ObservableObject {
         reconnectTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self, !self.isConnected else { return }
-                self.querySerialoscDevices()
-                self.subscribeToNotifications()
+                if self.oscServer == nil {
+                    // Server failed to start (port in use?) — retry full discovery
+                    self.startDiscovery()
+                } else {
+                    self.querySerialoscDevices()
+                    self.subscribeToNotifications()
+                }
             }
         }
     }

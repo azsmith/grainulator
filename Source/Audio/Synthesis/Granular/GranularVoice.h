@@ -463,15 +463,35 @@ public:
                 float read_pos = std::fmod(grain.position, buffer_length);
                 if (read_pos < 0.0f) read_pos += buffer_length;
 
-                // Linear interpolation for smooth playback
+                // 4-point Hermite interpolation for quality pitched playback
                 size_t idx0 = static_cast<size_t>(read_pos);
-                size_t idx1 = (idx0 + 1) % static_cast<size_t>(buffer_length);
+                size_t buf_len = static_cast<size_t>(buffer_length);
+                size_t idx_m1 = (idx0 > 0) ? idx0 - 1 : buf_len - 1;
+                size_t idx1 = (idx0 + 1) % buf_len;
+                size_t idx2 = (idx0 + 2) % buf_len;
                 float frac = read_pos - static_cast<float>(idx0);
 
-                float samp_l = buffer_->GetSampleInt(0, idx0) * (1.0f - frac) +
-                               buffer_->GetSampleInt(0, idx1) * frac;
-                float samp_r = buffer_->GetSampleInt(1, idx0) * (1.0f - frac) +
-                               buffer_->GetSampleInt(1, idx1) * frac;
+                // Hermite cubic for left channel
+                float y0L = buffer_->GetSampleInt(0, idx_m1);
+                float y1L = buffer_->GetSampleInt(0, idx0);
+                float y2L = buffer_->GetSampleInt(0, idx1);
+                float y3L = buffer_->GetSampleInt(0, idx2);
+                float c0L = y1L;
+                float c1L = 0.5f * (y2L - y0L);
+                float c2L = y0L - 2.5f * y1L + 2.0f * y2L - 0.5f * y3L;
+                float c3L = 0.5f * (y3L - y0L) + 1.5f * (y1L - y2L);
+                float samp_l = ((c3L * frac + c2L) * frac + c1L) * frac + c0L;
+
+                // Hermite cubic for right channel
+                float y0R = buffer_->GetSampleInt(1, idx_m1);
+                float y1R = buffer_->GetSampleInt(1, idx0);
+                float y2R = buffer_->GetSampleInt(1, idx1);
+                float y3R = buffer_->GetSampleInt(1, idx2);
+                float c0R = y1R;
+                float c1R = 0.5f * (y2R - y0R);
+                float c2R = y0R - 2.5f * y1R + 2.0f * y2R - 0.5f * y3R;
+                float c3R = 0.5f * (y3R - y0R) + 1.5f * (y1R - y2R);
+                float samp_r = ((c3R * frac + c2R) * frac + c1R) * frac + c0R;
 
                 // Apply grain envelope
                 samp_l *= env;

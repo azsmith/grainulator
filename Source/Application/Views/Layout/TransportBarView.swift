@@ -19,6 +19,7 @@ struct TransportBarView: View {
     @EnvironmentObject var audioEngine: AudioEngineWrapper
     @EnvironmentObject var mixerState: MixerState
     @EnvironmentObject var pluginManager: AUPluginManager
+    @EnvironmentObject var projectManager: ProjectManager
 
     @State private var tapTimestamps: [Date] = []
     @State private var isEditingBPM: Bool = false
@@ -35,38 +36,46 @@ struct TransportBarView: View {
                 Color.clear
                     .frame(width: 78)
 
-                // Left section: Transport controls
+                // Transport + BPM group
                 transportSection
-                    .frame(width: 240)
+                    .padding(.trailing, 12)
 
-                // Divider
-                Rectangle()
-                    .fill(ColorPalette.divider)
-                    .frame(width: 1)
+                sectionDivider
 
                 // Clock outputs
                 clockOutputsSection
+                    .padding(.horizontal, 10)
 
-                // Divider
-                Rectangle()
-                    .fill(ColorPalette.divider)
-                    .frame(width: 1)
+                sectionDivider
 
-                // Center section: Tab navigation
+                // Workspace tabs
                 tabNavigationSection
+                    .padding(.horizontal, 10)
 
-                // Divider
-                Rectangle()
-                    .fill(ColorPalette.divider)
-                    .frame(width: 1)
+                Spacer(minLength: 8)
 
-                // Right section: Status and mixer toggle
+                sectionDivider
+
+                // Status: Mixer + Scope
                 statusSection
-                    .frame(width: 200)
+                    .padding(.horizontal, 12)
             }
-            .frame(height: 56)
+            .frame(height: 48)
+
+            // Bottom edge line
+            Rectangle()
+                .fill(ColorPalette.divider.opacity(0.6))
+                .frame(height: 1)
         }
         .background(ColorPalette.backgroundSecondary)
+    }
+
+    // MARK: - Section Divider
+
+    private var sectionDivider: some View {
+        Rectangle()
+            .fill(ColorPalette.divider.opacity(0.4))
+            .frame(width: 1, height: 28)
     }
 
     // MARK: - Transport Section
@@ -75,13 +84,13 @@ struct TransportBarView: View {
         let transportRef = transportState
         let sequencerRef = sequencer
         let drumSeqRef = drumSequencer
-        return HStack(spacing: 12) {
-            // BPM display/edit
-            bpmDisplay
-
-            // Transport buttons
-            HStack(spacing: 4) {
+        return HStack(spacing: 8) {
+            // Transport buttons — fixed tight cluster like a tape machine
+            HStack(spacing: 2) {
                 TransportButton(type: .stop, isActive: !sequencer.isPlaying) {
+                    if audioEngine.isMasterRecording {
+                        audioEngine.stopMasterRecording()
+                    }
                     transportRef.stop()
                     sequencerRef.stop()
                     if drumSeqRef.syncToTransport {
@@ -98,40 +107,50 @@ struct TransportBarView: View {
                     transportRef.isPlaying = sequencerRef.isPlaying
                 }
 
-                TransportButton(type: .record, isActive: transportState.isRecording) {
-                    transportRef.toggleRecording()
+                TransportButton(type: .record, isActive: audioEngine.isMasterRecording) {
+                    if audioEngine.isMasterRecording {
+                        audioEngine.stopMasterRecording()
+                        transportRef.isRecording = false
+                    } else {
+                        audioEngine.startMasterRecording(projectName: projectManager.currentProjectName)
+                        transportRef.isRecording = true
+                    }
                 }
             }
+            .fixedSize()
 
-            // Tap tempo button
+            // BPM display
+            bpmDisplay
+
+            // Tap tempo
             Button(action: handleTapTempo) {
                 Text("TAP")
-                    .font(Typography.buttonSmall)
-                    .foregroundColor(ColorPalette.textMuted)
-                    .frame(width: 36, height: 24)
+                    .font(.system(size: 9, weight: .heavy, design: .monospaced))
+                    .foregroundColor(ColorPalette.textDimmed)
+                    .frame(width: 32, height: 28)
                     .background(
                         RoundedRectangle(cornerRadius: 4)
                             .fill(ColorPalette.backgroundTertiary)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(ColorPalette.divider, lineWidth: 0.5)
+                            )
                     )
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 12)
+        .padding(.leading, 8)
     }
 
     // MARK: - BPM Display
 
     private var bpmDisplay: some View {
-        VStack(spacing: 0) {
-            Text("BPM")
-                .font(Typography.parameterLabelSmall)
-                .foregroundColor(ColorPalette.textDimmed)
-
+        HStack(spacing: 0) {
             if isEditingBPM {
                 TextField("", text: $bpmText)
-                    .font(Typography.valueLarge)
-                    .foregroundColor(ColorPalette.accentMaster)
-                    .multilineTextAlignment(.center)
+                    .font(.system(size: 18, weight: .bold, design: .monospaced))
+                    .foregroundColor(ColorPalette.lcdAmber)
+                    .multilineTextAlignment(.trailing)
                     .frame(width: 60)
                     .textFieldStyle(.plain)
                     .onSubmit {
@@ -142,22 +161,40 @@ struct TransportBarView: View {
                         isEditingBPM = false
                     }
             } else {
-                Text(String(format: "%.1f", masterClock.bpm))
-                    .font(Typography.valueLarge)
-                    .foregroundColor(ColorPalette.accentMaster)
+                Text(bpmDisplayString)
+                    .font(.system(size: 18, weight: .bold, design: .monospaced))
+                    .foregroundColor(ColorPalette.lcdAmber)
                     .monospacedDigit()
+                    .frame(width: 60, alignment: .trailing)
                     .onTapGesture {
                         bpmText = String(format: "%.1f", masterClock.bpm)
                         isEditingBPM = true
                     }
             }
+
+            Text(" BPM")
+                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .foregroundColor(ColorPalette.textDimmed)
         }
-        .frame(width: 60)
-        .padding(.vertical, 2)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
         .background(
             RoundedRectangle(cornerRadius: 4)
                 .fill(ColorPalette.backgroundPrimary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(ColorPalette.divider.opacity(0.5), lineWidth: 0.5)
+                )
         )
+    }
+
+    /// Format BPM: show integer when whole, 1 decimal otherwise. Always fits in frame.
+    private var bpmDisplayString: String {
+        let bpm = masterClock.bpm
+        if bpm == bpm.rounded() && bpm >= 10 {
+            return String(format: "%.0f", bpm)
+        }
+        return String(format: "%.1f", bpm)
     }
 
     // MARK: - Clock Outputs Section
@@ -168,13 +205,12 @@ struct TransportBarView: View {
                 CompactClockOutputPad(output: masterClock.outputs[index], index: index)
             }
         }
-        .padding(.horizontal, 8)
     }
 
     // MARK: - Tab Navigation Section
 
     private var tabNavigationSection: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             ForEach(WorkspaceTab.allCases) { tab in
                 WorkspaceTabButton(
                     tab: tab,
@@ -184,87 +220,94 @@ struct TransportBarView: View {
                 }
             }
         }
-        .padding(.horizontal, 12)
     }
 
     // MARK: - Status Section
 
     private var statusSection: some View {
-        HStack(spacing: 8) {
-            // Mixer window toggle button
-            Button(action: {
+        HStack(spacing: 6) {
+            // Mixer toggle
+            StatusToggleButton(
+                icon: "slider.horizontal.3",
+                label: "MIXER",
+                isActive: layoutState.isMixerWindowOpen,
+                activeColor: ColorPalette.accentMaster
+            ) {
                 MixerWindowManager.shared.toggle(
                     mixerState: mixerState,
                     audioEngine: audioEngine,
                     pluginManager: pluginManager,
                     layoutState: layoutState
                 )
-            }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 12))
-                    Text("MIXER")
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                }
-                .foregroundColor(layoutState.isMixerWindowOpen ? ColorPalette.accentMaster : ColorPalette.textMuted)
-                .padding(.horizontal, 8)
-                .frame(height: 28)
-                .background(
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(layoutState.isMixerWindowOpen ? ColorPalette.accentMaster.opacity(0.2) : ColorPalette.backgroundTertiary)
-                )
             }
-            .buttonStyle(.plain)
-            .help(layoutState.isMixerWindowOpen ? "Close mixer window" : "Open mixer window")
 
-            // Scope window toggle button
-            Button(action: {
+            // Scope toggle
+            StatusToggleButton(
+                icon: "waveform.path",
+                label: "SCOPE",
+                isActive: layoutState.isScopeWindowOpen,
+                activeColor: ColorPalette.accentGranular1
+            ) {
                 OscilloscopeWindowManager.shared.toggle(
                     audioEngine: audioEngine,
                     layoutState: layoutState
                 )
-            }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "waveform.path")
-                        .font(.system(size: 12))
-                    Text("SCOPE")
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                }
-                .foregroundColor(layoutState.isScopeWindowOpen ? ColorPalette.accentGranular1 : ColorPalette.textMuted)
-                .padding(.horizontal, 8)
-                .frame(height: 28)
-                .background(
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(layoutState.isScopeWindowOpen ? ColorPalette.accentGranular1.opacity(0.2) : ColorPalette.backgroundTertiary)
-                )
             }
-            .buttonStyle(.plain)
-            .help(layoutState.isScopeWindowOpen ? "Close oscilloscope" : "Open oscilloscope")
         }
-        .padding(.horizontal, 12)
     }
 
     // MARK: - Tap Tempo
 
     private func handleTapTempo() {
         let now = Date()
-
-        // Remove old taps (older than 2 seconds)
         tapTimestamps = tapTimestamps.filter { now.timeIntervalSince($0) < 2.0 }
-
-        // Add new tap
         tapTimestamps.append(now)
 
-        // Calculate BPM if we have enough taps
         if tapTimestamps.count >= 2 {
             transportState.tapTempo(timestamps: tapTimestamps)
             masterClock.bpm = transportState.bpm
         }
 
-        // Keep only last 8 taps
         if tapTimestamps.count > 8 {
             tapTimestamps.removeFirst()
         }
+    }
+}
+
+// MARK: - Status Toggle Button
+
+private struct StatusToggleButton: View {
+    let icon: String
+    let label: String
+    let isActive: Bool
+    let activeColor: Color
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .medium))
+                Text(label)
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+            }
+            .foregroundColor(isActive ? activeColor : (isHovering ? ColorPalette.textSecondary : ColorPalette.textMuted))
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(isActive ? activeColor.opacity(0.15) : ColorPalette.backgroundTertiary)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(isActive ? activeColor.opacity(0.3) : Color.clear, lineWidth: 0.5)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .help(isActive ? "Close \(label.lowercased())" : "Open \(label.lowercased())")
     }
 }
 
@@ -279,29 +322,27 @@ struct WorkspaceTabButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: tab.icon)
-                    .font(.system(size: 11))
+            VStack(spacing: 0) {
+                HStack(spacing: 4) {
+                    Image(systemName: tab.icon)
+                        .font(.system(size: 10, weight: .medium))
+                    Text(tab.shortName)
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                }
+                .foregroundColor(isSelected ? tab.accentColor : (isHovering ? ColorPalette.textSecondary : ColorPalette.textMuted))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
 
-                Text(tab.shortName)
-                    .font(Typography.buttonStandard)
+                // Underline indicator
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(isSelected ? tab.accentColor : Color.clear)
+                    .frame(height: 2)
+                    .padding(.horizontal, 6)
             }
-            .foregroundColor(isSelected ? .white : (isHovering ? tab.accentColor : ColorPalette.textMuted))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isSelected ? tab.accentColor : (isHovering ? tab.accentColor.opacity(0.1) : Color.clear))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(isSelected ? tab.accentColor : Color.clear, lineWidth: 1)
-            )
         }
         .buttonStyle(.plain)
-        .onHover { hovering in
-            isHovering = hovering
-        }
+        .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
     }
 }
 

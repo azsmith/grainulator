@@ -23,4 +23,22 @@ enum MixerChannel {
         default: return "???"
         }
     }
+
+    static func displayName(_ channel: Int) -> String {
+        switch channel {
+        case 0: return "Plaits"
+        case 1: return "Rings"
+        case 2: return "Gran 1"
+        case 3: return "Loop 1"
+        case 4: return "Loop 2"
+        case 5: return "Gran 2"
+        case 6: return "Drums"
+        case 7: return "Kick"
+        case 8: return "Syn Kick"
+        case 9: return "Snare"
+        case 10: return "Hi-Hat"
+        case 11: return "Sampler"
+        default: return "???"
+        }
+    }
 }

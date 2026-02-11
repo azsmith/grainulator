@@ -15,6 +15,7 @@ struct SettingsView: View {
         case audio = "Audio"
         case midi = "MIDI"
         case controllers = "Controllers"
+        case library = "Library"
         case appearance = "Appearance"
     }
 
@@ -37,6 +38,12 @@ struct SettingsView: View {
                     Label("Controllers", systemImage: "gamecontroller")
                 }
                 .tag(SettingsTab.controllers)
+
+            LibrarySettingsView()
+                .tabItem {
+                    Label("Library", systemImage: "folder.badge.gearshape")
+                }
+                .tag(SettingsTab.library)
 
             AppearanceSettingsView()
                 .tabItem {
@@ -141,6 +148,83 @@ struct ControllerSettingsView: View {
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Library Settings
+
+struct LibrarySettingsView: View {
+    @StateObject private var folderManager = SampleFolderManager.shared
+
+    var body: some View {
+        Form {
+            Section("Sample Library Folders") {
+                if folderManager.folders.isEmpty {
+                    Text("No folders configured. Add a folder containing SF2 or SFZ files.")
+                        .foregroundColor(.secondary)
+                        .font(.callout)
+                } else {
+                    ForEach(Array(folderManager.folders.enumerated()), id: \.offset) { index, folder in
+                        HStack {
+                            Image(systemName: "folder")
+                                .foregroundColor(.accentColor)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(folder.lastPathComponent)
+                                    .fontWeight(.medium)
+                                Text(folder.path)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            Spacer()
+                            Button(action: { folderManager.removeFolder(at: index) }) {
+                                Image(systemName: "minus.circle.fill")
+                                    .foregroundColor(.red)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
+                HStack {
+                    Button("Add Folder...") {
+                        folderManager.addFolder()
+                    }
+
+                    Spacer()
+
+                    if folderManager.isScanning {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Scanning...")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Button("Rescan") {
+                            folderManager.rescan()
+                        }
+                    }
+                }
+            }
+
+            Section("Summary") {
+                HStack {
+                    Text("SF2 files found:")
+                    Spacer()
+                    Text("\(folderManager.sf2Files.count)")
+                        .foregroundColor(.secondary)
+                }
+                HStack {
+                    Text("SFZ files found:")
+                    Spacer()
+                    Text("\(folderManager.sfzFiles.count)")
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
     }
 }
 

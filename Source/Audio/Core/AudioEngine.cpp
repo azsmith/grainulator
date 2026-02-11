@@ -66,7 +66,7 @@ AudioEngine::AudioEngine()
     , m_lpgDecay(0.5f)
     , m_lpgAttack(0.0f)
     , m_lpgBypass(false)
-    , m_ringsPolyphony(1)
+    , m_ringsPolyphony(2)
     , m_ringsChord(0)
     , m_ringsFM(0.0f)
     , m_ringsExciterSource(-1)
@@ -147,6 +147,7 @@ AudioEngine::AudioEngine()
         m_combBuffersR[i] = nullptr;
         m_combPos[i] = 0;
         m_combFilters[i] = 0.0f;
+        m_combFiltersR[i] = 0.0f;
     }
     for (size_t i = 0; i < kNumAllpasses; ++i) {
         m_allpassBuffersL[i] = nullptr;
@@ -157,15 +158,20 @@ AudioEngine::AudioEngine()
     // Initialize voice state
     for (int i = 0; i < kNumPlaitsVoices; ++i) {
         m_voiceNote[i] = -1;  // -1 = free
+        m_voiceTrackId[i] = 0;
         m_voiceAge[i] = 0;
     }
 
     // Initialize mixer state
     for (int i = 0; i < kNumMixerChannels; ++i) {
         m_channelGain[i] = 1.0f;  // Unity gain
+        m_channelGainSmoothed[i] = 1.0f;
         m_channelPan[i] = 0.0f;   // Center
+        m_channelPanSmoothed[i] = 0.0f;
         m_channelSendA[i] = 0.0f;
+        m_channelSendASmoothed[i] = 0.0f;
         m_channelSendB[i] = 0.0f;
+        m_channelSendBSmoothed[i] = 0.0f;
         m_channelDelaySamples[i] = 0;
         m_channelDelayWritePos[i] = 0;
         m_channelDelayBufferL[i].fill(0.0f);
@@ -175,6 +181,7 @@ AudioEngine::AudioEngine()
         m_channelLevels[i].store(0.0f);
     }
     m_masterGain = 1.0f;  // Default master at unity
+    m_masterGainSmoothed = 1.0f;
     m_masterLevelL.store(0.0f);
     m_masterLevelR.store(0.0f);
 
@@ -269,6 +276,7 @@ bool AudioEngine::initialize(int sampleRate, int bufferSize) {
         m_plaitsVoices[i] = std::make_unique<PlaitsVoice>();
         m_plaitsVoices[i]->Init(static_cast<float>(sampleRate));
         m_voiceNote[i] = -1;
+        m_voiceTrackId[i] = 0;
         m_voiceAge[i] = 0;
     }
     m_ringsVoice = std::make_unique<RingsVoice>();
@@ -396,10 +404,10 @@ void AudioEngine::shutdown() {
     m_initialized.store(false);
 }
 
-int AudioEngine::allocateVoice(int note) {
-    // First, check if this note is already playing - retrigger same voice
+int AudioEngine::allocateVoice(int note, uint8_t trackId) {
+    // First, check if this note is already playing BY THE SAME TRACK - retrigger same voice
     for (int i = 0; i < kNumPlaitsVoices; ++i) {
-        if (m_voiceNote[i] == note) {
+        if (m_voiceNote[i] == note && m_voiceTrackId[i] == trackId) {
             return i;
         }
     }
@@ -424,18 +432,22 @@ int AudioEngine::allocateVoice(int note) {
 }
 
 void AudioEngine::noteOn(int note, int velocity) {
-    noteOnTarget(note, velocity, static_cast<uint8_t>(NoteTarget::TargetBoth));
+    noteOnTarget(note, velocity, static_cast<uint8_t>(NoteTarget::TargetBoth), 0);
 }
 
 void AudioEngine::noteOff(int note) {
-    noteOffTarget(note, static_cast<uint8_t>(NoteTarget::TargetBoth));
+    noteOffTarget(note, static_cast<uint8_t>(NoteTarget::TargetBoth), 0);
 }
 
 void AudioEngine::noteOnTarget(int note, int velocity, uint8_t targetMask) {
+    noteOnTarget(note, velocity, targetMask, 0);
+}
+
+void AudioEngine::noteOnTarget(int note, int velocity, uint8_t targetMask, uint8_t trackId) {
     if (!m_initialized.load()) return;
 
     if ((targetMask & static_cast<uint8_t>(NoteTarget::TargetPlaits)) != 0) {
-        int voiceIndex = allocateVoice(note);
+        int voiceIndex = allocateVoice(note, trackId);
         if (voiceIndex >= 0 && voiceIndex < kNumPlaitsVoices) {
             auto& voice = m_plaitsVoices[voiceIndex];
             if (voice) {
@@ -458,6 +470,7 @@ void AudioEngine::noteOnTarget(int note, int velocity, uint8_t targetMask) {
 
                 // Update voice state
                 m_voiceNote[voiceIndex] = note;
+                m_voiceTrackId[voiceIndex] = trackId;
                 m_voiceAge[voiceIndex] = ++m_voiceCounter;
             }
         }
@@ -502,6 +515,10 @@ void AudioEngine::noteOnTarget(int note, int velocity, uint8_t targetMask) {
 }
 
 void AudioEngine::noteOffTarget(int note, uint8_t targetMask) {
+    noteOffTarget(note, targetMask, 0);
+}
+
+void AudioEngine::noteOffTarget(int note, uint8_t targetMask, uint8_t trackId) {
     if (!m_initialized.load()) return;
 
     if ((targetMask & static_cast<uint8_t>(NoteTarget::TargetRings)) != 0 && m_ringsVoice) {
@@ -533,13 +550,12 @@ void AudioEngine::noteOffTarget(int note, uint8_t targetMask) {
         return;
     }
 
-    // Find the voice playing this note and release it
+    // Find the voice playing this note FROM THE SAME TRACK and release it
     for (int i = 0; i < kNumPlaitsVoices; ++i) {
-        if (m_voiceNote[i] == note) {
+        if (m_voiceNote[i] == note && m_voiceTrackId[i] == trackId) {
             if (m_plaitsVoices[i]) {
                 m_plaitsVoices[i]->Trigger(false);
             }
-            // Mark voice as free (it will continue to decay naturally)
             m_voiceNote[i] = -1;
             break;
         }
@@ -576,6 +592,14 @@ void AudioEngine::scheduleNoteOff(int note, uint64_t sampleTime) {
 }
 
 void AudioEngine::scheduleNoteOnTarget(int note, int velocity, uint64_t sampleTime, uint8_t targetMask) {
+    scheduleNoteOnTargetTagged(note, velocity, sampleTime, targetMask, 0);
+}
+
+void AudioEngine::scheduleNoteOffTarget(int note, uint64_t sampleTime, uint8_t targetMask) {
+    scheduleNoteOffTargetTagged(note, sampleTime, targetMask, 0);
+}
+
+void AudioEngine::scheduleNoteOnTargetTagged(int note, int velocity, uint64_t sampleTime, uint8_t targetMask, uint8_t trackId) {
     if (!m_initialized.load()) return;
 
     const int clampedNote = std::max(0, std::min(note, 127));
@@ -587,10 +611,11 @@ void AudioEngine::scheduleNoteOnTarget(int note, int velocity, uint64_t sampleTi
     event.velocity = static_cast<uint8_t>(clampedVelocity);
     event.isNoteOn = true;
     event.targetMask = targetMask == 0 ? static_cast<uint8_t>(NoteTarget::TargetBoth) : targetMask;
+    event.trackId = trackId;
     enqueueScheduledEvent(event);
 }
 
-void AudioEngine::scheduleNoteOffTarget(int note, uint64_t sampleTime, uint8_t targetMask) {
+void AudioEngine::scheduleNoteOffTargetTagged(int note, uint64_t sampleTime, uint8_t targetMask, uint8_t trackId) {
     if (!m_initialized.load()) return;
 
     const int clampedNote = std::max(0, std::min(note, 127));
@@ -601,6 +626,7 @@ void AudioEngine::scheduleNoteOffTarget(int note, uint64_t sampleTime, uint8_t t
     event.velocity = 0;
     event.isNoteOn = false;
     event.targetMask = targetMask == 0 ? static_cast<uint8_t>(NoteTarget::TargetBoth) : targetMask;
+    event.trackId = trackId;
     enqueueScheduledEvent(event);
 }
 
@@ -744,6 +770,19 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
         std::memset(m_sendBufferBL, 0, frameCount * sizeof(float));
         std::memset(m_sendBufferBR, 0, frameCount * sizeof(float));
 
+        // Smooth mixer parameters toward targets (~10ms time constant)
+        // Prevents zipper noise from instantaneous gain/pan/send changes
+        {
+            const float kSmoothAlpha = 1.0f - std::exp(-static_cast<float>(frameCount) / (0.010f * static_cast<float>(m_sampleRate)));
+            for (int ch = 0; ch < kNumMixerChannels; ++ch) {
+                m_channelGainSmoothed[ch] += (m_channelGain[ch] - m_channelGainSmoothed[ch]) * kSmoothAlpha;
+                m_channelPanSmoothed[ch] += (m_channelPan[ch] - m_channelPanSmoothed[ch]) * kSmoothAlpha;
+                m_channelSendASmoothed[ch] += (m_channelSendA[ch] - m_channelSendASmoothed[ch]) * kSmoothAlpha;
+                m_channelSendBSmoothed[ch] += (m_channelSendB[ch] - m_channelSendBSmoothed[ch]) * kSmoothAlpha;
+            }
+            m_masterGainSmoothed += (m_masterGain - m_masterGainSmoothed) * kSmoothAlpha;
+        }
+
         // ========== Channel 0: Plaits ==========
         {
             int ch = 0;
@@ -764,6 +803,14 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                 }
             }
 
+            // Normalize polyphonic voice sum: 1/sqrt(8) ≈ 0.354
+            // Provides headroom for up to 8 simultaneous voices without clipping
+            constexpr float kPlaitsVoiceNorm = 0.354f;
+            for (int i = 0; i < frameCount; ++i) {
+                m_voiceBuffer[0][i] *= kPlaitsVoiceNorm;
+                m_voiceBuffer[1][i] *= kPlaitsVoiceNorm;
+            }
+
             // Record from Plaits (channel 0) pre-mixer
             processRecordingForChannel(0, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
 
@@ -781,10 +828,10 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                 std::memcpy(m_ringsExciterBufferR, m_voiceBuffer[1], frameCount * sizeof(float));
             }
 
-            float gain = m_channelGain[ch];
-            float pan = m_channelPan[ch];
-            float sendA = m_channelSendA[ch];
-            float sendB = m_channelSendB[ch];
+            float gain = m_channelGainSmoothed[ch];
+            float pan = m_channelPanSmoothed[ch];
+            float sendA = m_channelSendASmoothed[ch];
+            float sendB = m_channelSendBSmoothed[ch];
             float panL = std::cos((pan + 1.0f) * 0.25f * 3.14159265f);
             float panR = std::sin((pan + 1.0f) * 0.25f * 3.14159265f);
 
@@ -850,10 +897,10 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                 }
             }
 
-            float gain = m_channelGain[ch];
-            float pan = m_channelPan[ch];
-            float sendA = m_channelSendA[ch];
-            float sendB = m_channelSendB[ch];
+            float gain = m_channelGainSmoothed[ch];
+            float pan = m_channelPanSmoothed[ch];
+            float sendA = m_channelSendASmoothed[ch];
+            float sendB = m_channelSendBSmoothed[ch];
             float panL = std::cos((pan + 1.0f) * 0.25f * 3.14159265f);
             float panR = std::sin((pan + 1.0f) * 0.25f * 3.14159265f);
 
@@ -926,10 +973,10 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                 std::memcpy(m_ringsExciterBufferR, m_voiceBuffer[1], frameCount * sizeof(float));
             }
 
-            float gain = m_channelGain[ch];
-            float pan = m_channelPan[ch];
-            float sendA = m_channelSendA[ch];
-            float sendB = m_channelSendB[ch];
+            float gain = m_channelGainSmoothed[ch];
+            float pan = m_channelPanSmoothed[ch];
+            float sendA = m_channelSendASmoothed[ch];
+            float sendB = m_channelSendBSmoothed[ch];
             float panL = std::cos((pan + 1.0f) * 0.25f * 3.14159265f);
             float panR = std::sin((pan + 1.0f) * 0.25f * 3.14159265f);
 
@@ -979,7 +1026,9 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
             }
 
             // Render drum sequencer voices and sum into the same buffer
+            // Scale lanes by 1/sqrt(4) = 0.5 to prevent clipping when all hit together
             {
+                constexpr float kDrumLaneNorm = 0.5f;
                 for (int lane = 0; lane < kNumDrumSeqLanes; ++lane) {
                     if (m_drumSeqVoices[lane]) {
                         std::memset(m_tempDrumSeq, 0, frameCount * sizeof(float));
@@ -987,8 +1036,8 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                         // Record per-lane: channel 7=Kick, 8=SynthKick, 9=Snare, 10=HiHat
                         processRecordingForChannel(7 + lane, m_tempDrumSeq, m_tempDrumSeq, frameCount);
                         for (int i = 0; i < frameCount; ++i) {
-                            m_voiceBuffer[0][i] += m_tempDrumSeq[i];
-                            m_voiceBuffer[1][i] += m_tempDrumSeq[i];
+                            m_voiceBuffer[0][i] += m_tempDrumSeq[i] * kDrumLaneNorm;
+                            m_voiceBuffer[1][i] += m_tempDrumSeq[i] * kDrumLaneNorm;
                         }
                     }
                 }
@@ -1011,10 +1060,10 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                 std::memcpy(m_ringsExciterBufferR, m_voiceBuffer[1], frameCount * sizeof(float));
             }
 
-            float gain = m_channelGain[ch];
-            float pan = m_channelPan[ch];
-            float sendA = m_channelSendA[ch];
-            float sendB = m_channelSendB[ch];
+            float gain = m_channelGainSmoothed[ch];
+            float pan = m_channelPanSmoothed[ch];
+            float sendA = m_channelSendASmoothed[ch];
+            float sendB = m_channelSendBSmoothed[ch];
             float panL = std::cos((pan + 1.0f) * 0.25f * 3.14159265f);
             float panR = std::sin((pan + 1.0f) * 0.25f * 3.14159265f);
 
@@ -1087,10 +1136,10 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                 std::memcpy(m_ringsExciterBufferR, m_voiceBuffer[1], frameCount * sizeof(float));
             }
 
-            float gain = m_channelGain[ch];
-            float pan = m_channelPan[ch];
-            float sendA = m_channelSendA[ch];
-            float sendB = m_channelSendB[ch];
+            float gain = m_channelGainSmoothed[ch];
+            float pan = m_channelPanSmoothed[ch];
+            float sendA = m_channelSendASmoothed[ch];
+            float sendB = m_channelSendBSmoothed[ch];
             float panL = std::cos((pan + 1.0f) * 0.25f * 3.14159265f);
             float panR = std::sin((pan + 1.0f) * 0.25f * 3.14159265f);
 
@@ -1155,9 +1204,9 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
             float sampleR = m_processingBuffer[1][i];
             processMasterFilter(sampleL, sampleR);
 
-            // Apply master gain
-            sampleL *= m_masterGain;
-            sampleR *= m_masterGain;
+            // Apply smoothed master gain
+            sampleL *= m_masterGainSmoothed;
+            sampleR *= m_masterGainSmoothed;
 
             // Soft clip
             m_processingBuffer[0][i] = std::tanh(sampleL);
@@ -1165,6 +1214,11 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
 
             masterPeakL = std::max(masterPeakL, std::abs(m_processingBuffer[0][i]));
             masterPeakR = std::max(masterPeakR, std::abs(m_processingBuffer[1][i]));
+        }
+
+        // Master capture (recording to file via Swift)
+        if (m_masterCaptureActive.load(std::memory_order_relaxed)) {
+            m_masterCaptureRing.write(m_processingBuffer[0], m_processingBuffer[1], frameCount);
         }
 
         // Scope capture: Channel 8 (Master) — mono mix of final output
@@ -1206,9 +1260,9 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
         while (eventIndex < dueEventCount && dueEvents[eventIndex].sampleTime == eventSample) {
             const ScheduledNoteEvent& event = dueEvents[eventIndex];
             if (event.isNoteOn) {
-                noteOnTarget(static_cast<int>(event.note), static_cast<int>(event.velocity), event.targetMask);
+                noteOnTarget(static_cast<int>(event.note), static_cast<int>(event.velocity), event.targetMask, event.trackId);
             } else {
-                noteOffTarget(static_cast<int>(event.note), event.targetMask);
+                noteOffTarget(static_cast<int>(event.note), event.targetMask, event.trackId);
             }
             ++eventIndex;
         }
@@ -1345,6 +1399,13 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
                 }
             }
 
+            // Normalize polyphonic voice sum: 1/sqrt(8) ≈ 0.354
+            constexpr float kPlaitsVoiceNorm = 0.354f;
+            for (int i = 0; i < frameCount; ++i) {
+                m_voiceBuffer[0][i] *= kPlaitsVoiceNorm;
+                m_voiceBuffer[1][i] *= kPlaitsVoiceNorm;
+            }
+
             // Record from Plaits (channel 0) pre-output
             processRecordingForChannel(0, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
 
@@ -1456,7 +1517,9 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
             }
 
             // Render drum sequencer voices and sum into the same buffer
+            // Scale lanes by 1/sqrt(4) = 0.5 to prevent clipping when all hit together
             {
+                constexpr float kDrumLaneNorm = 0.5f;
                 for (int lane = 0; lane < kNumDrumSeqLanes; ++lane) {
                     if (m_drumSeqVoices[lane]) {
                         std::memset(m_tempDrumSeq, 0, frameCount * sizeof(float));
@@ -1464,8 +1527,8 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
                         // Record per-lane: channel 7=Kick, 8=SynthKick, 9=Snare, 10=HiHat
                         processRecordingForChannel(7 + lane, m_tempDrumSeq, m_tempDrumSeq, frameCount);
                         for (int i = 0; i < frameCount; ++i) {
-                            m_voiceBuffer[0][i] += m_tempDrumSeq[i];
-                            m_voiceBuffer[1][i] += m_tempDrumSeq[i];
+                            m_voiceBuffer[0][i] += m_tempDrumSeq[i] * kDrumLaneNorm;
+                            m_voiceBuffer[1][i] += m_tempDrumSeq[i] * kDrumLaneNorm;
                         }
                     }
                 }
@@ -1553,9 +1616,9 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
         while (eventIndex < dueEventCount && dueEvents[eventIndex].sampleTime == eventSample) {
             const ScheduledNoteEvent& event = dueEvents[eventIndex];
             if (event.isNoteOn) {
-                noteOnTarget(static_cast<int>(event.note), static_cast<int>(event.velocity), event.targetMask);
+                noteOnTarget(static_cast<int>(event.note), static_cast<int>(event.velocity), event.targetMask, event.trackId);
             } else {
-                noteOffTarget(static_cast<int>(event.note), event.targetMask);
+                noteOffTarget(static_cast<int>(event.note), event.targetMask, event.trackId);
             }
             ++eventIndex;
         }
@@ -2887,6 +2950,7 @@ void AudioEngine::initEffects() {
         std::memset(m_combBuffersR[i], 0, combTunings[i] * sizeof(float));
         m_combPos[i] = 0;
         m_combFilters[i] = 0.0f;
+        m_combFiltersR[i] = 0.0f;
     }
 
     // Initialize allpass filters
@@ -3130,10 +3194,11 @@ void AudioEngine::processReverb(float& left, float& right) {
 
         outL += combOutL;
 
-        // Right channel comb (slightly offset for stereo)
+        // Right channel comb (slightly offset for stereo, with symmetric damping)
         size_t rightPos = (m_combPos[i] + 23) % m_combLengths[i];
         float combOutR = m_combBuffersR[i][rightPos];
-        m_combBuffersR[i][rightPos] = inputR + combOutR * feedback;
+        m_combFiltersR[i] = combOutR * damp2 + m_combFiltersR[i] * damp1;
+        m_combBuffersR[i][rightPos] = inputR + m_combFiltersR[i] * feedback;
         outR += combOutR;
 
         // Advance position
@@ -3717,6 +3782,66 @@ size_t MultiChannelRingBuffer::getWritableFrames() const {
     }
 
     return minAvailable;
+}
+
+// MARK: - MasterCaptureRingBuffer Implementation
+
+void MasterCaptureRingBuffer::reset() {
+    m_writeIndex.store(0, std::memory_order_release);
+    m_readIndex.store(0, std::memory_order_release);
+}
+
+void MasterCaptureRingBuffer::write(const float* left, const float* right, int numFrames) {
+    size_t writeIdx = m_writeIndex.load(std::memory_order_relaxed);
+    size_t readIdx = m_readIndex.load(std::memory_order_acquire);
+
+    // Available space (leave 1 slot to distinguish full from empty)
+    size_t space = (readIdx - writeIdx - 1 + kMasterCaptureRingSize) % kMasterCaptureRingSize;
+    int framesToWrite = std::min(numFrames, static_cast<int>(space));
+
+    for (int i = 0; i < framesToWrite; ++i) {
+        size_t idx = (writeIdx + i) % kMasterCaptureRingSize;
+        m_bufferL[idx] = left[i];
+        m_bufferR[idx] = right[i];
+    }
+
+    m_writeIndex.store((writeIdx + framesToWrite) % kMasterCaptureRingSize, std::memory_order_release);
+}
+
+int MasterCaptureRingBuffer::read(float* left, float* right, int maxFrames) {
+    size_t readIdx = m_readIndex.load(std::memory_order_relaxed);
+    size_t writeIdx = m_writeIndex.load(std::memory_order_acquire);
+
+    size_t available = (writeIdx - readIdx + kMasterCaptureRingSize) % kMasterCaptureRingSize;
+    int framesToRead = std::min(maxFrames, static_cast<int>(available));
+
+    for (int i = 0; i < framesToRead; ++i) {
+        size_t idx = (readIdx + i) % kMasterCaptureRingSize;
+        left[i] = m_bufferL[idx];
+        right[i] = m_bufferR[idx];
+    }
+
+    m_readIndex.store((readIdx + framesToRead) % kMasterCaptureRingSize, std::memory_order_release);
+    return framesToRead;
+}
+
+// MARK: - Master Output Capture
+
+void AudioEngine::startMasterCapture() {
+    m_masterCaptureRing.reset();
+    m_masterCaptureActive.store(true, std::memory_order_release);
+}
+
+void AudioEngine::stopMasterCapture() {
+    m_masterCaptureActive.store(false, std::memory_order_release);
+}
+
+bool AudioEngine::isMasterCaptureActive() const {
+    return m_masterCaptureActive.load(std::memory_order_acquire);
+}
+
+int AudioEngine::readMasterCaptureBuffer(float* left, float* right, int maxFrames) {
+    return m_masterCaptureRing.read(left, right, maxFrames);
 }
 
 // MARK: - Multi-Channel Processing Thread

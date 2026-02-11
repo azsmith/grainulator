@@ -126,7 +126,7 @@ struct SequencerView: View {
                         .frame(width: 18, height: 18)
                 }
                 .buttonStyle(.plain)
-                .disabled(sequencer.sequenceOctave <= -2)
+                .disabled(sequencer.sequenceOctave <= -4)
 
                 Text("\(sequencer.sequenceOctave >= 0 ? "+" : "")\(sequencer.sequenceOctave)")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
@@ -140,7 +140,7 @@ struct SequencerView: View {
                         .frame(width: 18, height: 18)
                 }
                 .buttonStyle(.plain)
-                .disabled(sequencer.sequenceOctave >= 2)
+                .disabled(sequencer.sequenceOctave >= 4)
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
@@ -215,16 +215,28 @@ struct SequencerView: View {
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
                 .foregroundColor(trackColor)
 
-            // Mute toggle
-            Button(action: { sequencer.setTrackMuted(trackIndex, !track.muted) }) {
-                Text("M")
+            // Run toggle
+            Button(action: { sequencer.setTrackRunning(trackIndex, !track.running) }) {
+                Text("RUN")
                     .font(.system(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundColor(track.muted ? .white : ColorPalette.metalSteel)
-                    .frame(width: 20, height: 18)
-                    .background(track.muted ? ColorPalette.ledRed : ColorPalette.backgroundTertiary)
+                    .foregroundColor(track.running ? ColorPalette.ledGreen : ColorPalette.textDimmed)
+                    .frame(width: 30, height: 18)
+                    .background(track.running ? ColorPalette.ledGreen.opacity(0.2) : ColorPalette.backgroundTertiary)
                     .cornerRadius(3)
             }
             .buttonStyle(.plain)
+
+            // Reset track
+            Button(action: { sequencer.resetTrack(trackIndex) }) {
+                Image(systemName: "arrow.counterclockwise")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(ColorPalette.textMuted)
+                    .frame(width: 20, height: 18)
+                    .background(ColorPalette.backgroundTertiary)
+                    .cornerRadius(3)
+            }
+            .buttonStyle(.plain)
+            .help("Reset track to start")
 
             // Output dropdown
             compactDropdown(
@@ -255,7 +267,7 @@ struct SequencerView: View {
             compactStepper(
                 label: "OCT",
                 value: sequencer.trackOctaveOffset(trackIndex),
-                range: -2...2,
+                range: -4...4,
                 signed: true
             ) { sequencer.setTrackOctaveOffset(trackIndex, $0) }
 
@@ -274,7 +286,33 @@ struct SequencerView: View {
                 range: 1...127
             ) { sequencer.setTrackVelocity(trackIndex, $0) }
 
+            // Loop start
+            compactStepper(
+                label: "S",
+                value: track.loopStart + 1,
+                range: 1...8
+            ) { sequencer.setTrackLoopStart(trackIndex, $0 - 1) }
+
+            // Loop end
+            compactStepper(
+                label: "E",
+                value: track.loopEnd + 1,
+                range: 1...8
+            ) { sequencer.setTrackLoopEnd(trackIndex, $0 - 1) }
+
             Spacer()
+
+            // Reset track to defaults
+            Button(action: { sequencer.resetTrackToDefaults(trackIndex) }) {
+                Image(systemName: "arrow.uturn.backward")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(ColorPalette.textMuted)
+                    .frame(width: 24, height: 18)
+                    .background(ColorPalette.backgroundTertiary)
+                    .cornerRadius(3)
+            }
+            .buttonStyle(.plain)
+            .help("Reset track to defaults")
 
             // Random button
             Button(action: { sequencer.randomizeTrack(trackIndex) }) {
@@ -478,6 +516,17 @@ struct SequencerStepConfigView: View {
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundColor(ColorPalette.textPanelLabel)
                 Spacer()
+                Button(action: { sequencer.resetStageToDefaults(track: trackIndex, stage: stageIndex) }) {
+                    Text("RESET")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundColor(ColorPalette.textMuted)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(ColorPalette.backgroundTertiary)
+                        .cornerRadius(3)
+                }
+                .buttonStyle(.plain)
+                .help("Reset step to defaults")
             }
 
             Divider()
@@ -518,7 +567,7 @@ struct SequencerStepConfigView: View {
                     configStepper(
                         label: "OCTAVE",
                         value: stage.octave,
-                        range: -2...2,
+                        range: -4...4,
                         signed: true
                     ) {
                         sequencer.setStageOctave(track: trackIndex, stage: stageIndex, value: $0)
@@ -581,6 +630,40 @@ struct SequencerStepConfigView: View {
                     .toggleStyle(.switch)
                     .scaleEffect(0.65)
                     .frame(width: 44)
+                }
+
+                Divider()
+                    .background(ColorPalette.textDimmed.opacity(0.3))
+
+                // Row 6: Accumulator section
+                Text("ACCUMULATOR")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(ColorPalette.textDimmed)
+
+                HStack(spacing: 12) {
+                    configStepper(label: "TRANSPOSE", value: stage.accumTranspose, range: -7...7, signed: true) {
+                        sequencer.setStageAccumTranspose(track: trackIndex, stage: stageIndex, value: $0)
+                    }
+                    configStepper(label: "RANGE", value: stage.accumRange, range: 1...7) {
+                        sequencer.setStageAccumRange(track: trackIndex, stage: stageIndex, value: $0)
+                    }
+                }
+
+                HStack(spacing: 12) {
+                    configDropdown(label: "TRIGGER", value: stage.accumTrigger.rawValue, width: 52) {
+                        ForEach(AccumulatorTrigger.allCases) { trigger in
+                            Button(trigger.rawValue) {
+                                sequencer.setStageAccumTrigger(track: trackIndex, stage: stageIndex, value: trigger)
+                            }
+                        }
+                    }
+                    configDropdown(label: "MODE", value: stage.accumMode.rawValue, width: 52) {
+                        ForEach(AccumulatorMode.allCases) { mode in
+                            Button(mode.rawValue) {
+                                sequencer.setStageAccumMode(track: trackIndex, stage: stageIndex, value: mode)
+                            }
+                        }
+                    }
                 }
             }
         }

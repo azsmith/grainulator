@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <cmath>
 #include <algorithm>
 #include <atomic>
 
@@ -261,7 +262,11 @@ public:
     }
 
     float GetFeedback() const { return feedback_.load(std::memory_order_relaxed); }
-    void SetFeedback(float fb) { feedback_.store(fb, std::memory_order_relaxed); }
+    void SetFeedback(float fb) {
+        // Clamp to < 1.0 to prevent runaway signal accumulation in live-loop mode
+        fb = std::max(0.0f, std::min(fb, 0.98f));
+        feedback_.store(fb, std::memory_order_relaxed);
+    }
 
     size_t GetLoopLength() const { return loop_length_; }
     void SetLoopLength(size_t samples) {
@@ -334,8 +339,13 @@ public:
                 record_position_ = 0;
             }
             float fb = feedback_.load(std::memory_order_relaxed);
-            buffer_left_[record_position_] = buffer_left_[record_position_] * fb + left;
-            buffer_right_[record_position_] = buffer_right_[record_position_] * fb + right;
+            float mixL = buffer_left_[record_position_] * fb + left;
+            float mixR = buffer_right_[record_position_] * fb + right;
+            // Soft-clip to prevent runaway accumulation and guard against NaN/Inf
+            if (!std::isfinite(mixL)) mixL = 0.0f;
+            if (!std::isfinite(mixR)) mixR = 0.0f;
+            buffer_left_[record_position_] = std::max(-4.0f, std::min(4.0f, mixL));
+            buffer_right_[record_position_] = std::max(-4.0f, std::min(4.0f, mixR));
             record_position_++;
             if (record_position_ >= loop_length_) {
                 record_position_ = 0;

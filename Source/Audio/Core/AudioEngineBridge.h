@@ -47,6 +47,8 @@ void AudioEngine_ScheduleNoteOn(AudioEngineHandle handle, int note, int velocity
 void AudioEngine_ScheduleNoteOff(AudioEngineHandle handle, int note, uint64_t sampleTime);
 void AudioEngine_ScheduleNoteOnTarget(AudioEngineHandle handle, int note, int velocity, uint64_t sampleTime, uint8_t targetMask);
 void AudioEngine_ScheduleNoteOffTarget(AudioEngineHandle handle, int note, uint64_t sampleTime, uint8_t targetMask);
+void AudioEngine_ScheduleNoteOnTargetTagged(AudioEngineHandle handle, int note, int velocity, uint64_t sampleTime, uint8_t targetMask, uint8_t trackId);
+void AudioEngine_ScheduleNoteOffTargetTagged(AudioEngineHandle handle, int note, uint64_t sampleTime, uint8_t targetMask, uint8_t trackId);
 void AudioEngine_ClearScheduledNotes(AudioEngineHandle handle);
 uint64_t AudioEngine_GetCurrentSampleTime(AudioEngineHandle handle);
 
@@ -99,6 +101,12 @@ bool AudioEngine_LoadSfzFile(AudioEngineHandle handle, const char* sfzPath);
 void AudioEngine_UnloadWavSampler(AudioEngineHandle handle);
 const char* AudioEngine_GetWavSamplerInstrumentName(AudioEngineHandle handle);
 void AudioEngine_SetSamplerMode(AudioEngineHandle handle, int mode);
+
+// Master output capture (for file recording)
+void AudioEngine_StartMasterCapture(AudioEngineHandle handle);
+void AudioEngine_StopMasterCapture(AudioEngineHandle handle);
+bool AudioEngine_IsMasterCaptureActive(AudioEngineHandle handle);
+int AudioEngine_ReadMasterCaptureBuffer(AudioEngineHandle handle, float* left, float* right, int maxFrames);
 
 #ifdef __cplusplus
 }

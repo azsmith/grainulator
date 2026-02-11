@@ -287,11 +287,20 @@ private:
     float ReadWavetable(int bank, int row, int col, float phase) {
         float pos = phase * kTableSize;
         int idx0 = static_cast<int>(pos) % kTableSize;
+        int idx_m1 = (idx0 + kTableSize - 1) % kTableSize;
         int idx1 = (idx0 + 1) % kTableSize;
+        int idx2 = (idx0 + 2) % kTableSize;
         float frac = pos - std::floor(pos);
 
-        return wavetables_[bank][row][col][idx0] * (1.0f - frac)
-             + wavetables_[bank][row][col][idx1] * frac;
+        // 4-point Hermite cubic interpolation
+        float y0 = wavetables_[bank][row][col][idx_m1];
+        float y1 = wavetables_[bank][row][col][idx0];
+        float y2 = wavetables_[bank][row][col][idx1];
+        float y3 = wavetables_[bank][row][col][idx2];
+        float c1 = 0.5f * (y2 - y0);
+        float c2 = y0 - 2.5f * y1 + 2.0f * y2 - 0.5f * y3;
+        float c3 = 0.5f * (y3 - y0) + 1.5f * (y1 - y2);
+        return ((c3 * frac + c2) * frac + c1) * frac + y1;
     }
 };
 

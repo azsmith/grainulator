@@ -51,6 +51,8 @@ void AudioEngine_ScheduleNoteOn(AudioEngineHandle handle, int note, int velocity
 void AudioEngine_ScheduleNoteOff(AudioEngineHandle handle, int note, uint64_t sampleTime);
 void AudioEngine_ScheduleNoteOnTarget(AudioEngineHandle handle, int note, int velocity, uint64_t sampleTime, uint8_t targetMask);
 void AudioEngine_ScheduleNoteOffTarget(AudioEngineHandle handle, int note, uint64_t sampleTime, uint8_t targetMask);
+void AudioEngine_ScheduleNoteOnTargetTagged(AudioEngineHandle handle, int note, int velocity, uint64_t sampleTime, uint8_t targetMask, uint8_t trackId);
+void AudioEngine_ScheduleNoteOffTargetTagged(AudioEngineHandle handle, int note, uint64_t sampleTime, uint8_t targetMask, uint8_t trackId);
 void AudioEngine_ClearScheduledNotes(AudioEngineHandle handle);
 uint64_t AudioEngine_GetCurrentSampleTime(AudioEngineHandle handle);
 

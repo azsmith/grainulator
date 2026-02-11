@@ -52,11 +52,23 @@ public:
 
 private:
     static constexpr size_t kRenderBlockSize = rings::kMaxBlockSize;
+    static constexpr int kMaxNoteQueue = 8;
+
+    struct NoteEvent {
+        float note;
+        float level;
+    };
 
     float sample_rate_;
     float note_;
     float level_;
-    bool trigger_pending_;
+
+    // Note event queue — allows multiple NoteOns between Render() calls
+    // so each gets its own strum in a separate render block.
+    NoteEvent note_queue_[kMaxNoteQueue];
+    int note_queue_head_;
+    int note_queue_tail_;
+    int note_queue_count_;
 
     rings::Part part_;
     rings::Strummer strummer_;

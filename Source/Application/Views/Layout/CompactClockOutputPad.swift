@@ -44,25 +44,25 @@ struct CompactClockOutputPad: View {
 
     var body: some View {
         Button(action: { showingConfig = true }) {
-            VStack(spacing: 1) {
+            VStack(spacing: 0) {
                 // Output index
                 Text("\(index + 1)")
-                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .font(.system(size: 6, weight: .bold, design: .monospaced))
                     .foregroundColor(secondaryTextColor)
 
                 // Division or waveform
                 Text(output.mode == .clock ? output.division.rawValue : output.waveform.rawValue)
-                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 10, weight: .heavy, design: .monospaced))
                     .foregroundColor(textColor)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
 
                 // Mode label
                 Text(output.mode == .clock ? "CLK" : "LFO")
-                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .font(.system(size: 6, weight: .bold, design: .monospaced))
                     .foregroundColor(secondaryTextColor)
             }
-            .frame(width: 36, height: 36)
+            .frame(width: 32, height: 32)
             .background(
                 RoundedRectangle(cornerRadius: 3)
                     .fill(padColor)

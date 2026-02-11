@@ -163,8 +163,8 @@ void DaisyDrumVoice::Render(float* out, float* aux, size_t size) {
                 break;
         }
 
-        // Soft clip (matches Plaits convention)
-        sample = std::tanh(sample * 1.5f) * 0.67f;
+        // Hard clamp to ±1.0 — saturation is handled by the master bus tanh
+        sample = std::max(-1.0f, std::min(1.0f, sample));
 
         if (out) out[i] = sample;
         if (aux) aux[i] = sample * 0.7f;

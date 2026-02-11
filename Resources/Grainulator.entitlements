@@ -2,7 +2,20 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- Microphone / line-in access for recording into granular & looper -->
     <key>com.apple.security.device.audio-input</key>
+    <true/>
+
+    <!-- Conversational control bridge (HTTP + WebSocket on 127.0.0.1:4850) -->
+    <key>com.apple.security.network.server</key>
+    <true/>
+
+    <!-- serialosc / Monome device discovery, OSC communication -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!-- C++ audio engine may require writable-executable memory -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>
 </dict>
 </plist>

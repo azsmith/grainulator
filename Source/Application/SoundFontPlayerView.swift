@@ -13,6 +13,7 @@ import AppKit
 struct SoundFontPlayerView: View {
     @EnvironmentObject var audioEngine: AudioEngineWrapper
     @Binding var showLibraryBrowser: Bool
+    @StateObject private var folderManager = SampleFolderManager.shared
 
     @State private var attack: Float = 0.0
     @State private var decay: Float = 0.0
@@ -87,60 +88,10 @@ struct SoundFontPlayerView: View {
         VStack(spacing: 4) {
             switch audioEngine.activeSamplerMode {
             case .soundFont:
-                Button(action: openSoundFontFile) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "doc.badge.plus")
-                            .font(.system(size: 9))
-                            .foregroundColor(ColorPalette.accentSampler)
-                        Text(audioEngine.soundFontLoaded
-                             ? (audioEngine.soundFontFilePath?.lastPathComponent ?? "Loaded")
-                             : "Load SF2...")
-                            .font(.system(size: 10, weight: .bold, design: .monospaced))
-                            .foregroundColor(ColorPalette.synthPanelLabel)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.black.opacity(0.3))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(ColorPalette.synthPanelDivider, lineWidth: 1)
-                    )
-                }
-                .buttonStyle(.plain)
+                sf2SourcePicker
 
             case .sfz:
-                Button(action: openSfzFile) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "doc.text")
-                            .font(.system(size: 9))
-                            .foregroundColor(ColorPalette.accentSampler)
-                        Text(audioEngine.sfzLoaded
-                             ? (audioEngine.sfzFilePath?.lastPathComponent ?? "Loaded")
-                             : "Open SFZ...")
-                            .font(.system(size: 10, weight: .bold, design: .monospaced))
-                            .foregroundColor(ColorPalette.synthPanelLabel)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.black.opacity(0.3))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(ColorPalette.synthPanelDivider, lineWidth: 1)
-                    )
-                }
-                .buttonStyle(.plain)
+                sfzSourcePicker
 
             case .wavSampler:
                 Button(action: { showLibraryBrowser = true }) {
@@ -375,6 +326,116 @@ struct SoundFontPlayerView: View {
         }
         .onChange(of: tuning) { audioEngine.setParameter(id: .samplerTuning, value: $0) }
         .onChange(of: level) { audioEngine.setParameter(id: .samplerLevel, value: $0) }
+    }
+
+    // MARK: - SF2/SFZ Source Pickers
+
+    private var sf2SourceLabel: String {
+        if audioEngine.soundFontLoaded {
+            return audioEngine.soundFontFilePath?.lastPathComponent ?? "Loaded"
+        }
+        return "Browse SF2..."
+    }
+
+    private var sfzSourceLabel: String {
+        if audioEngine.sfzLoaded {
+            return audioEngine.sfzFilePath?.lastPathComponent ?? "Loaded"
+        }
+        return "Browse SFZ..."
+    }
+
+    private func sourcePickerLabel(icon: String, text: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 9))
+                .foregroundColor(ColorPalette.accentSampler)
+            Text(text)
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundColor(ColorPalette.synthPanelLabel)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            if !folderManager.sf2Files.isEmpty || !folderManager.sfzFiles.isEmpty {
+                Spacer()
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(ColorPalette.accentSampler)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color.black.opacity(0.3))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(ColorPalette.synthPanelDivider, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private var sf2SourcePicker: some View {
+        if folderManager.sf2Files.isEmpty {
+            Button(action: openSoundFontFile) {
+                sourcePickerLabel(icon: "doc.badge.plus", text: sf2SourceLabel)
+            }
+            .buttonStyle(.plain)
+        } else {
+            Menu {
+                let grouped = Dictionary(grouping: folderManager.sf2Files, by: \.folderName)
+                ForEach(grouped.keys.sorted(), id: \.self) { folder in
+                    Section(folder) {
+                        ForEach(grouped[folder]!) { entry in
+                            Button(action: {
+                                let didAccess = entry.url.startAccessingSecurityScopedResource()
+                                audioEngine.loadSoundFont(url: entry.url)
+                                if didAccess { entry.url.stopAccessingSecurityScopedResource() }
+                            }) {
+                                Text("\(entry.name)  (\(entry.formattedSize))")
+                            }
+                        }
+                    }
+                }
+                Divider()
+                Button("Open File...") { openSoundFontFile() }
+            } label: {
+                sourcePickerLabel(icon: "doc.badge.plus", text: sf2SourceLabel)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private var sfzSourcePicker: some View {
+        if folderManager.sfzFiles.isEmpty {
+            Button(action: openSfzFile) {
+                sourcePickerLabel(icon: "doc.text", text: sfzSourceLabel)
+            }
+            .buttonStyle(.plain)
+        } else {
+            Menu {
+                let grouped = Dictionary(grouping: folderManager.sfzFiles, by: \.folderName)
+                ForEach(grouped.keys.sorted(), id: \.self) { folder in
+                    Section(folder) {
+                        ForEach(grouped[folder]!) { entry in
+                            Button(action: {
+                                let didAccess = entry.url.startAccessingSecurityScopedResource()
+                                audioEngine.loadSfzFile(url: entry.url)
+                                if didAccess { entry.url.stopAccessingSecurityScopedResource() }
+                            }) {
+                                Text("\(entry.name)  (\(entry.formattedSize))")
+                            }
+                        }
+                    }
+                }
+                Divider()
+                Button("Open File...") { openSfzFile() }
+            } label: {
+                sourcePickerLabel(icon: "doc.text", text: sfzSourceLabel)
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     // MARK: - Helpers

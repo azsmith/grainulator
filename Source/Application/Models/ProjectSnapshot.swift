@@ -201,6 +201,10 @@ struct SequencerStageSnapshot: Codable {
     var stepType: String        // SequencerStepType raw value
     var gateLength: Double?     // 0.0-1.0, nil for backward compat (defaults to 0.65)
     var slide: Bool
+    var accumTranspose: Int?    // ±7 scale degrees per trigger (nil = 0)
+    var accumTrigger: String?   // AccumulatorTrigger raw value (nil = "STG")
+    var accumRange: Int?        // 1-7 wrapping range (nil = 7)
+    var accumMode: String?      // AccumulatorMode raw value (nil = "STG")
 }
 
 // MARK: - Master Clock Snapshot

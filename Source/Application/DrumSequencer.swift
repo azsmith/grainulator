@@ -131,6 +131,7 @@ class DrumSequencer: ObservableObject {
     private let snapshotLock = NSLock()
     private var snapshotRefreshTimer: Timer?
     private var refreshFrameCount: Int = 0
+    private var snapshotRefreshInFlight = false
 
     // MARK: - Init
 
@@ -310,10 +311,14 @@ class DrumSequencer: ObservableObject {
     private func startSnapshotRefreshTimer() {
         snapshotRefreshTimer?.invalidate()
         refreshFrameCount = 0
+        snapshotRefreshInFlight = false
         // 16ms (~60fps) for smooth playhead display
         snapshotRefreshTimer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { [weak self] _ in
+            guard let self, !self.snapshotRefreshInFlight else { return }
+            self.snapshotRefreshInFlight = true
             Task { @MainActor in
-                guard let self, self.isPlaying else { return }
+                defer { self.snapshotRefreshInFlight = false }
+                guard self.isPlaying else { return }
 
                 // Pull playhead from audio clock every frame for smooth display
                 self.pullPlayheadUpdates()

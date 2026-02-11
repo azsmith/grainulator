@@ -19,7 +19,7 @@ struct RingsView: View {
     @State private var level: Float = 0.8
 
     // Extended parameters
-    @State private var polyphony: Int = 0        // 0=1voice, 1=2voice, 2=4voice
+    @State private var polyphony: Int = 1        // 0=1voice, 1=2voice, 2=4voice
     @State private var chord: Int = 0            // 0-10
     @State private var fm: Float = 0.5           // 0-1 (0.5 = center = 0 semitones)
     @State private var exciterSource: Int = 0    // 0=internal, 1-7=channels

@@ -51,53 +51,70 @@ struct LooperView: View {
                 Menu {
                     Section("Input Source") {
                         Button(action: { recordSourceType = .external; recordSourceChannel = 0 }) {
-                            Label("Mic / Line In", systemImage: "mic")
+                            if isSourceSelected(.external, 0) {
+                                Label("Mic / Line In", systemImage: "checkmark")
+                            } else {
+                                Label("Mic / Line In", systemImage: "mic")
+                            }
                         }
                         Divider()
-                        Button("Plaits") { recordSourceType = .internalVoice; recordSourceChannel = 0 }
-                        Button("Rings") { recordSourceType = .internalVoice; recordSourceChannel = 1 }
-                        Button("Granular 1") { recordSourceType = .internalVoice; recordSourceChannel = 2 }
+                        inputSourceButton("Plaits", channel: 0)
+                        inputSourceButton("Rings", channel: 1)
+                        inputSourceButton("Granular 1", channel: 2)
                         if voiceIndex != 1 {
-                            Button("Looper 1") { recordSourceType = .internalVoice; recordSourceChannel = 3 }
+                            inputSourceButton("Looper 1", channel: 3)
                         }
                         if voiceIndex != 2 {
-                            Button("Looper 2") { recordSourceType = .internalVoice; recordSourceChannel = 4 }
+                            inputSourceButton("Looper 2", channel: 4)
                         }
-                        Button("Granular 2") { recordSourceType = .internalVoice; recordSourceChannel = 5 }
+                        inputSourceButton("Granular 2", channel: 5)
                     }
                     Section("Sampler") {
-                        Button("Sampler") { recordSourceType = .internalVoice; recordSourceChannel = 11 }
+                        inputSourceButton("Sampler", channel: 11)
                     }
                     Section("Drums") {
-                        Button("Drums (All)") { recordSourceType = .internalVoice; recordSourceChannel = 6 }
-                        Button("Kick") { recordSourceType = .internalVoice; recordSourceChannel = 7 }
-                        Button("Synth Kick") { recordSourceType = .internalVoice; recordSourceChannel = 8 }
-                        Button("Snare") { recordSourceType = .internalVoice; recordSourceChannel = 9 }
-                        Button("Hi-Hat") { recordSourceType = .internalVoice; recordSourceChannel = 10 }
+                        inputSourceButton("Drums (All)", channel: 6)
+                        inputSourceButton("Kick", channel: 7)
+                        inputSourceButton("Synth Kick", channel: 8)
+                        inputSourceButton("Snare", channel: 9)
+                        inputSourceButton("Hi-Hat", channel: 10)
                     }
                     Section("Mode") {
                         Button(action: { recordMode = .oneShot }) {
-                            Label("One Shot", systemImage: recordMode == .oneShot ? "checkmark" : "")
+                            if recordMode == .oneShot {
+                                Label("One Shot", systemImage: "checkmark")
+                            } else {
+                                Text("One Shot")
+                            }
                         }
                         Button(action: { recordMode = .liveLoop }) {
-                            Label("Live Loop", systemImage: recordMode == .liveLoop ? "checkmark" : "")
+                            if recordMode == .liveLoop {
+                                Label("Live Loop", systemImage: "checkmark")
+                            } else {
+                                Text("Live Loop")
+                            }
                         }
                     }
                 } label: {
-                    HStack(spacing: 2) {
-                        Text("IN:")
-                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("INPUT")
+                            .font(.system(size: 7, weight: .medium, design: .monospaced))
                             .foregroundColor(ColorPalette.textDimmed)
-                        Text(recordSourceType == .external ? "MIC" : channelShortName(recordSourceChannel))
-                            .font(.system(size: 9, weight: .bold, design: .monospaced))
-                            .foregroundColor(ColorPalette.textMuted)
+                        HStack(spacing: 3) {
+                            Text(recordSourceType == .external ? "Mic" : channelDisplayName(recordSourceChannel))
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundColor(accentColor)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 7, weight: .bold))
+                                .foregroundColor(accentColor.opacity(0.6))
+                        }
                     }
                     .fixedSize(horizontal: true, vertical: false)
                     .frame(height: 32)
-                    .padding(.horizontal, 6)
+                    .padding(.horizontal, 8)
                     .background(RoundedRectangle(cornerRadius: 4).fill(ColorPalette.backgroundTertiary))
                 }
-                .menuStyle(.borderlessButton)
+                .buttonStyle(.plain)
                 .fixedSize()
 
                 if recordMode == .liveLoop {
@@ -399,5 +416,24 @@ struct LooperView: View {
 
     private func channelShortName(_ channel: Int) -> String {
         MixerChannel.shortName(channel)
+    }
+
+    private func channelDisplayName(_ channel: Int) -> String {
+        MixerChannel.displayName(channel)
+    }
+
+    private func isSourceSelected(_ type: AudioEngineWrapper.RecordSourceType, _ channel: Int) -> Bool {
+        recordSourceType == type && recordSourceChannel == channel
+    }
+
+    @ViewBuilder
+    private func inputSourceButton(_ name: String, channel: Int) -> some View {
+        Button(action: { recordSourceType = .internalVoice; recordSourceChannel = channel }) {
+            if isSourceSelected(.internalVoice, channel) {
+                Label(name, systemImage: "checkmark")
+            } else {
+                Text(name)
+            }
+        }
     }
 }
