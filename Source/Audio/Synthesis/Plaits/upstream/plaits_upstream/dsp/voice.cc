@@ -70,6 +70,7 @@ void Voice::Init(BufferAllocator* allocator) {
     engines_.get(i)->Init(allocator);
   }
   
+  allocator_ = allocator;
   engine_quantizer_.Init(engines_.size(), 0.05f, true);
   previous_engine_index_ = -1;
   reload_user_data_ = false;
@@ -126,6 +127,14 @@ void Voice::Render(
   Engine* e = engines_.get(engine_index);
   
   if (engine_index != previous_engine_index_ || reload_user_data_) {
+    // Re-init the engine's buffer allocations from the shared pool.
+    // All engines share the same RAM; only the active engine's pointers
+    // need to be valid.  Without this, engines that access allocated
+    // memory in Reset() (e.g. StringMachineEngine's Ensemble buffer)
+    // would use stale pointers left over from the last-initialised engine.
+    allocator_->Free();
+    e->Init(allocator_);
+
     UserData user_data;
     const uint8_t* data = user_data.ptr(engine_index);
     if (!data && engine_index >= 2 && engine_index <= 4) {

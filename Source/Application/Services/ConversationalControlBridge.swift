@@ -2006,16 +2006,49 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return (true, nil)
         }
 
-        if target == "synth.plaits.mode" {
+        if target == "session.tempoBpm" {
+            guard let bpm = feedbackValueFromAction(action), bpm >= 20.0, bpm <= 300.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "session.tempoBpm must be a number between 20 and 300"))
+            }
+            return (true, nil)
+        }
+
+        if target == "synth.plaits.mode" || target == "synth.macro_osc.mode" {
             guard let mode = modeTextFromAction(action), plaitsModelNormalized(modeText: mode) != nil else {
                 return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Unsupported plaits mode"))
             }
             return (true, nil)
         }
 
-        if target == "synth.rings.mode" {
+        if target == "synth.rings.mode" || target == "synth.resonator.mode" {
             guard let mode = modeTextFromAction(action), ringsModelNormalized(modeText: mode) != nil else {
                 return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Unsupported rings mode"))
+            }
+            return (true, nil)
+        }
+
+        // Macro Osc / Plaits continuous parameters (accept both path prefixes)
+        let plaitsContParams: Set<String> = [
+            "synth.macro_osc.harmonics", "synth.macro_osc.timbre", "synth.macro_osc.morph", "synth.macro_osc.level",
+            "synth.macro_osc.lpgColor", "synth.macro_osc.lpgDecay", "synth.macro_osc.lpgAttack", "synth.macro_osc.lpgBypass",
+            "synth.plaits.harmonics", "synth.plaits.timbre", "synth.plaits.morph", "synth.plaits.level",
+            "synth.plaits.lpgColor", "synth.plaits.lpgDecay", "synth.plaits.lpgAttack", "synth.plaits.lpgBypass",
+        ]
+        if plaitsContParams.contains(target) {
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Macro Osc \(target.split(separator: ".").last ?? "") must be within [0.0, 1.0]"))
+            }
+            return (true, nil)
+        }
+
+        // Resonator / Rings continuous parameters (accept both path prefixes)
+        let ringsContParams: Set<String> = [
+            "synth.resonator.structure", "synth.resonator.brightness", "synth.resonator.damping", "synth.resonator.position", "synth.resonator.level",
+            "synth.rings.structure", "synth.rings.brightness", "synth.rings.damping", "synth.rings.position", "synth.rings.level",
+        ]
+        if ringsContParams.contains(target) {
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Resonator \(target.split(separator: ".").last ?? "") must be within [0.0, 1.0]"))
             }
             return (true, nil)
         }
@@ -2064,6 +2097,11 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
                 return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Sampler tuning must be within [0.0, 1.0] (0.5 = center)"))
             }
+            return (true, nil)
+        }
+
+        // Chord sequencer targets — allow through validation; applyChordSequencerAction handles details
+        if target.hasPrefix("sequencer.chords") {
             return (true, nil)
         }
 
@@ -2356,6 +2394,23 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                             "rootNote": descriptor.rootNote,
                             "scaleIndex": descriptor.scaleIndex,
                         ]
+                    ),
+                ]
+            )
+            return (true, nil)
+        }
+
+        if target == "session.tempoBpm" {
+            guard let bpm = feedbackValueFromAction(action), bpm >= 20.0, bpm <= 300.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "session.tempoBpm must be a number between 20 and 300"))
+            }
+            writeMasterClockBPM(bpm)
+            recordMutation(
+                changedPaths: ["session.tempoBpm"],
+                additionalEvents: [
+                    (
+                        type: "session.tempoBpm_changed",
+                        payload: ["tempoBpm": bpm]
                     ),
                 ]
             )
@@ -4833,6 +4888,21 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
         // Read directly from C++ engine via cached handle — atomic read, thread-safe
         guard let handle = cachedEngineHandle else { return 120.0 }
         return AudioEngine_GetClockBPM(handle)
+    }
+
+    private func writeMasterClockBPM(_ bpm: Double) {
+        let clamped = max(20.0, min(300.0, bpm))
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { [weak self] in
+                self?.masterClock?.bpm = clamped
+            }
+            return
+        }
+        DispatchQueue.main.sync {
+            MainActor.assumeIsolated { [weak self] in
+                self?.masterClock?.bpm = clamped
+            }
+        }
     }
 
     private func readClockRunning() -> Bool {

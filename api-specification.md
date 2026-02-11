@@ -104,7 +104,7 @@ enum class ParameterID : uint16_t {
     FilterResonance,    // 0.0 - 0.9 (Q)
 
     // Plaits parameters
-    PlaitsModel,        // 0 - 15 (synthesis model)
+    PlaitsModel,        // 0 - 23 (synthesis engine)
     PlaitsHarmonics,    // 0.0 - 1.0
     PlaitsMorph,        // 0.0 - 1.0
     PlaitsFrequency,    // 20.0 - 20000.0 (Hz)
@@ -753,7 +753,7 @@ public enum ArcConfiguration {
 
 | Parameter | Range | Default | Unit | Description |
 |-----------|-------|---------|------|-------------|
-| PlaitsModel | 0 - 15 | 0 | index | Synthesis model |
+| PlaitsModel | 0 - 23 | 0 | index | Synthesis engine (24 engines + 6-OP FM with DX7 patches) |
 | PlaitsHarmonics | 0.0 - 1.0 | 0.5 | normalized | Spectral content |
 | PlaitsMorph | 0.0 - 1.0 | 0.5 | normalized | Secondary timbre |
 | PlaitsFrequency | 20.0 - 20000.0 | 440.0 | Hz | Pitch/frequency |

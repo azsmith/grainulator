@@ -30,27 +30,41 @@ This document outlines the strategy for integrating Mutable Instruments Plaits s
 - `plaits/dsp/engine/virtual_analog_engine.h/cc` - First test engine
 - Selected stmlib utilities (filters, interpolators, oscillators)
 
-### Phase 2: All 16 Engines
+### Phase 2: All 24 Engines
 
-**Goal**: Port all synthesis models
+**Goal**: Port all synthesis engines (engine1 + engine2 generations)
 
-**Order** (by complexity, easiest first):
-1. ✅ Virtual Analog (Phase 1)
-2. Waveshaping
-3. FM
-4. Wavetable (requires resource data)
-5. Additive
-6. Chord
-7. Grain
-8. Formant
-9. Speech (requires resource data)
-10. Noise
-11. Particle
-12. Swarm
-13. Bass Drum
-14. Snare Drum
-15. Hi-Hat
-16. Modal/String (physical modeling)
+**Status**: ✅ Complete — all 24 upstream engines ported, plus 6-OP FM with DX7 patch loading.
+
+**Engine2 Generation (indices 0-7):**
+1. ✅ Virtual Analog VCF
+2. ✅ Phase Distortion
+3. ✅ Six-Op FM (bank 0) — with DX7 .syx patch loading
+4. ✅ Six-Op FM (bank 1) — with DX7 .syx patch loading
+5. ✅ Six-Op FM (bank 2) — with DX7 .syx patch loading
+6. ✅ Wave Terrain
+7. ✅ String Machine
+8. ✅ Chiptune
+
+**Engine1 Generation (indices 8-15):**
+9. ✅ Virtual Analog
+10. ✅ Waveshaping
+11. ✅ FM
+12. ✅ Grain
+13. ✅ Additive
+14. ✅ Wavetable
+15. ✅ Chord
+16. ✅ Speech (LPC)
+
+**Triggered/Percussion (indices 16-23):**
+17. ✅ Swarm
+18. ✅ Noise
+19. ✅ Particle
+20. ✅ String (physical modeling)
+21. ✅ Modal (physical modeling)
+22. ✅ Bass Drum
+23. ✅ Snare Drum
+24. ✅ Hi-Hat
 
 ### Phase 3: Resources & Optimization
 
@@ -103,7 +117,7 @@ AudioEngine::process()
 - `morph` ← Morph knob (0.0-1.0)
 - `trigger` ← Gate/trigger from MIDI
 - `level` ← Accent/velocity
-- `engine` ← Model selector (0-15)
+- `engine` ← Engine selector (0-23)
 
 **Modulation Sources**:
 - Internal envelopes
@@ -128,7 +142,7 @@ Source/Audio/Synthesis/Plaits/
 │   ├── virtual_analog_engine.h/cc
 │   ├── waveshaping_engine.h/cc
 │   ├── fm_engine.h/cc
-│   └── ... (all 16 engines)
+│   └── ... (all 24 engines)
 │
 ├── DSP/                        # Supporting DSP modules
 │   ├── oscillator/
@@ -162,13 +176,19 @@ public:
     void Render(float* out, float* aux, size_t size);
 
     // Parameter setters (thread-safe)
-    void SetEngine(int engine);
+    void SetEngine(int engine);       // 0-23
     void SetNote(float note);         // MIDI note number
     void SetHarmonics(float value);   // 0.0-1.0
     void SetTimbre(float value);      // 0.0-1.0
     void SetMorph(float value);       // 0.0-1.0
     void Trigger(bool state);
     void SetLevel(float value);       // 0.0-1.0
+
+    // 6-OP FM / DX7
+    void SetSixOpCustomEnabled(bool enabled);
+    void SetSixOpCustomPatchIndex(int index);  // 0-31
+    void LoadSixOpCustomBank(const uint8_t* data, size_t size);
+    void ClearSixOpCustomBank();
 
 private:
     plaits::Voice voice_;
@@ -309,7 +329,7 @@ private:
    - Verify parameter defaults
 
 2. **Engine Switching**
-   - Test all 16 engine transitions
+   - Test all 24 engine transitions
    - Verify no clicks/pops during transitions
 
 3. **Parameter Response**
@@ -352,7 +372,7 @@ private:
 - ✅ CPU usage < 5% for one voice
 
 ### Week 4 Completion
-- ✅ All 16 engines working
+- ✅ All 24 engines working
 - ✅ MIDI keyboard input functional
 - ✅ UI complete with all controls
 - ✅ Engine switching smooth (no glitches)

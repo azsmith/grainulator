@@ -62,12 +62,19 @@ AudioEngine::AudioEngine()
     , m_harmonics(0.5f)
     , m_timbre(0.5f)
     , m_morph(0.5f)
+    , m_plaitsLevel(0.8f)
+    , m_plaitsFrequency(0.0f)
     , m_plaitsSixOpCustomEnabled(false)
     , m_plaitsSixOpCustomPatchIndex(0)
     , m_lpgColor(0.0f)
     , m_lpgDecay(0.5f)
     , m_lpgAttack(0.0f)
     , m_lpgBypass(false)
+    , m_ringsStructure(0.3f)
+    , m_ringsBrightness(0.4f)
+    , m_ringsDamping(0.39f)
+    , m_ringsPosition(0.97f)
+    , m_ringsLevel(0.8f)
     , m_ringsPolyphony(2)
     , m_ringsChord(0)
     , m_ringsFM(0.0f)
@@ -82,6 +89,14 @@ AudioEngine::AudioEngine()
     , m_drumSeqTimbre{0.5f, 0.5f, 0.5f, 0.5f}
     , m_drumSeqMorph{0.5f, 0.5f, 0.5f, 0.5f}
     , m_samplerMode(SamplerMode::SoundFont)
+    , m_samplerAttack(0.0f)
+    , m_samplerDecay(0.0f)
+    , m_samplerSustain(1.0f)
+    , m_samplerRelease(0.1f)
+    , m_samplerFilterCutoff(1.0f)
+    , m_samplerFilterResonance(0.0f)
+    , m_samplerTuning(0.5f)
+    , m_samplerLevel(0.8f)
     , m_activeGranularVoice(0)
     // Mangl-style granular parameters
     , m_granularSpeed(1.0f)
@@ -2032,30 +2047,35 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
             break;
 
         case ParameterID::RingsStructure:
+            m_ringsStructure = clampedValue;
             if (m_ringsVoice) {
                 m_ringsVoice->SetStructure(clampedValue);
             }
             break;
 
         case ParameterID::RingsBrightness:
+            m_ringsBrightness = clampedValue;
             if (m_ringsVoice) {
                 m_ringsVoice->SetBrightness(clampedValue);
             }
             break;
 
         case ParameterID::RingsDamping:
+            m_ringsDamping = clampedValue;
             if (m_ringsVoice) {
                 m_ringsVoice->SetDamping(clampedValue);
             }
             break;
 
         case ParameterID::RingsPosition:
+            m_ringsPosition = clampedValue;
             if (m_ringsVoice) {
                 m_ringsVoice->SetPosition(clampedValue);
             }
             break;
 
         case ParameterID::RingsLevel:
+            m_ringsLevel = clampedValue;
             if (m_ringsVoice) {
                 m_ringsVoice->SetLevel(clampedValue);
             }
@@ -2190,6 +2210,7 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
             break;
 
         case ParameterID::PlaitsFrequency:
+            m_plaitsFrequency = clampedValue;
             // Legacy: Set note on voice 0 only
             if (m_plaitsVoices[0]) {
                 m_plaitsVoices[0]->SetNote(24.0f + clampedValue * 72.0f);
@@ -2197,6 +2218,7 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
             break;
 
         case ParameterID::PlaitsLevel:
+            m_plaitsLevel = clampedValue;
             // Set level on all voices
             for (int i = 0; i < kNumPlaitsVoices; ++i) {
                 if (m_plaitsVoices[i]) {
@@ -2403,31 +2425,38 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
             // WAV sampler doesn't have presets — parameter ignored for it
             break;
         case ParameterID::SamplerAttack:
+            m_samplerAttack = clampedValue;
             if (m_soundFontVoice) m_soundFontVoice->SetAttack(clampedValue);
             if (m_wavSamplerVoice) m_wavSamplerVoice->SetAttack(clampedValue);
             break;
         case ParameterID::SamplerDecay:
+            m_samplerDecay = clampedValue;
             if (m_soundFontVoice) m_soundFontVoice->SetDecay(clampedValue);
             if (m_wavSamplerVoice) m_wavSamplerVoice->SetDecay(clampedValue);
             break;
         case ParameterID::SamplerSustain:
+            m_samplerSustain = clampedValue;
             if (m_soundFontVoice) m_soundFontVoice->SetSustain(clampedValue);
             if (m_wavSamplerVoice) m_wavSamplerVoice->SetSustain(clampedValue);
             break;
         case ParameterID::SamplerRelease:
+            m_samplerRelease = clampedValue;
             if (m_soundFontVoice) m_soundFontVoice->SetRelease(clampedValue);
             if (m_wavSamplerVoice) m_wavSamplerVoice->SetRelease(clampedValue);
             break;
         case ParameterID::SamplerFilterCutoff:
+            m_samplerFilterCutoff = clampedValue;
             if (m_soundFontVoice) m_soundFontVoice->SetFilterCutoff(clampedValue);
             if (m_wavSamplerVoice) m_wavSamplerVoice->SetFilterCutoff(clampedValue);
             break;
         case ParameterID::SamplerFilterResonance:
+            m_samplerFilterResonance = clampedValue;
             if (m_soundFontVoice) m_soundFontVoice->SetFilterResonance(clampedValue);
             if (m_wavSamplerVoice) m_wavSamplerVoice->SetFilterResonance(clampedValue);
             break;
         case ParameterID::SamplerTuning:
         {
+            m_samplerTuning = clampedValue;
             // Map 0-1 to -24..+24 semitones
             float semitones = (clampedValue * 48.0f) - 24.0f;
             if (m_soundFontVoice) m_soundFontVoice->SetTuning(semitones);
@@ -2435,6 +2464,7 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
             break;
         }
         case ParameterID::SamplerLevel:
+            m_samplerLevel = clampedValue;
             if (m_soundFontVoice) m_soundFontVoice->SetLevel(clampedValue);
             if (m_wavSamplerVoice) m_wavSamplerVoice->SetLevel(clampedValue);
             break;
@@ -2559,6 +2589,11 @@ float AudioEngine::getParameter(ParameterID id, int voiceIndex) const {
             if (maxModel <= 0) { return 0.0f; }
             return clamp01(static_cast<float>(m_currentRingsModel) / static_cast<float>(maxModel));
         }
+        case ParameterID::RingsStructure: return clamp01(m_ringsStructure);
+        case ParameterID::RingsBrightness: return clamp01(m_ringsBrightness);
+        case ParameterID::RingsDamping: return clamp01(m_ringsDamping);
+        case ParameterID::RingsPosition: return clamp01(m_ringsPosition);
+        case ParameterID::RingsLevel: return clamp01(m_ringsLevel);
         case ParameterID::RingsPolyphony: {
             if (m_ringsPolyphony >= 4) return 1.0f;
             if (m_ringsPolyphony >= 2) return 0.5f;
@@ -2574,6 +2609,7 @@ float AudioEngine::getParameter(ParameterID id, int voiceIndex) const {
         case ParameterID::PlaitsHarmonics: return clamp01(m_harmonics);
         case ParameterID::PlaitsTimbre: return clamp01(m_timbre);
         case ParameterID::PlaitsMorph: return clamp01(m_morph);
+        case ParameterID::PlaitsLevel: return clamp01(m_plaitsLevel);
         case ParameterID::PlaitsLPGColor: return clamp01(m_lpgColor);
         case ParameterID::PlaitsLPGDecay: return clamp01(m_lpgDecay);
         case ParameterID::PlaitsLPGAttack: return clamp01(m_lpgAttack);
@@ -2592,6 +2628,16 @@ float AudioEngine::getParameter(ParameterID id, int voiceIndex) const {
         case ParameterID::ReverbDamping: return clamp01(m_reverbDamping);
         case ParameterID::ReverbMix: return clamp01(m_reverbMix);
         case ParameterID::MasterGain: return clamp01(m_masterGain / 2.0f);
+
+        // Master filter readbacks
+        case ParameterID::MasterFilterCutoff:
+            // Inverse of: cutoff = 20 * pow(1000, value)  =>  value = log(cutoff/20) / log(1000)
+            return clamp01(std::log(m_masterFilterCutoff / 20.0f) / std::log(1000.0f));
+        case ParameterID::MasterFilterResonance: return clamp01(m_masterFilterResonance);
+        case ParameterID::MasterFilterModel: return clamp01(static_cast<float>(m_masterFilterModel) / 9.0f);
+
+        // Plaits frequency readback
+        case ParameterID::PlaitsFrequency: return clamp01(m_plaitsFrequency);
 
         // DaisyDrum readbacks
         case ParameterID::DaisyDrumEngine: return clamp01(static_cast<float>(m_currentDaisyDrumEngine) / 4.0f);
@@ -2638,14 +2684,14 @@ float AudioEngine::getParameter(ParameterID id, int voiceIndex) const {
             if (count <= 1) return 0.0f;
             return clamp01(static_cast<float>(m_soundFontVoice->GetPreset()) / static_cast<float>(count - 1));
         }
-        case ParameterID::SamplerAttack: return 0.0f;  // Stored in voice, no mirrored member
-        case ParameterID::SamplerDecay: return 0.0f;
-        case ParameterID::SamplerSustain: return 1.0f;
-        case ParameterID::SamplerRelease: return 0.1f;
-        case ParameterID::SamplerFilterCutoff: return 1.0f;
-        case ParameterID::SamplerFilterResonance: return 0.0f;
-        case ParameterID::SamplerTuning: return 0.5f;  // Center = 0 semitones
-        case ParameterID::SamplerLevel: return 0.8f;
+        case ParameterID::SamplerAttack: return clamp01(m_samplerAttack);
+        case ParameterID::SamplerDecay: return clamp01(m_samplerDecay);
+        case ParameterID::SamplerSustain: return clamp01(m_samplerSustain);
+        case ParameterID::SamplerRelease: return clamp01(m_samplerRelease);
+        case ParameterID::SamplerFilterCutoff: return clamp01(m_samplerFilterCutoff);
+        case ParameterID::SamplerFilterResonance: return clamp01(m_samplerFilterResonance);
+        case ParameterID::SamplerTuning: return clamp01(m_samplerTuning);
+        case ParameterID::SamplerLevel: return clamp01(m_samplerLevel);
         case ParameterID::SamplerMode:
             if (m_samplerMode == SamplerMode::SoundFont) return 0.0f;
             if (m_samplerMode == SamplerMode::Sfz) return 0.5f;

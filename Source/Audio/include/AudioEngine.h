@@ -478,6 +478,16 @@ private:
     // WAV sampler voice (mx.samples)
     std::unique_ptr<WavSamplerVoice> m_wavSamplerVoice;
     SamplerMode m_samplerMode;
+
+    // Sampler parameters (mirrored for getParameter readback)
+    float m_samplerAttack;
+    float m_samplerDecay;
+    float m_samplerSustain;
+    float m_samplerRelease;
+    float m_samplerFilterCutoff;
+    float m_samplerFilterResonance;
+    float m_samplerTuning;
+    float m_samplerLevel;
     float m_drumSeqLevel[kNumDrumSeqLanes];
     float m_drumSeqHarmonics[kNumDrumSeqLanes];
     float m_drumSeqTimbre[kNumDrumSeqLanes];
@@ -522,12 +532,21 @@ private:
     float m_harmonics;
     float m_timbre;
     float m_morph;
+    float m_plaitsLevel;
+    float m_plaitsFrequency;  // Normalized 0-1 (maps to note 24-96)
     bool m_plaitsSixOpCustomEnabled;
     int m_plaitsSixOpCustomPatchIndex;
     float m_lpgColor;
     float m_lpgDecay;
     float m_lpgAttack;
     bool m_lpgBypass;
+
+    // Rings basic parameters (mirrored for getParameter readback)
+    float m_ringsStructure;
+    float m_ringsBrightness;
+    float m_ringsDamping;
+    float m_ringsPosition;
+    float m_ringsLevel;
 
     // Rings extended parameters
     int m_ringsPolyphony;         // 1, 2, or 4

@@ -8,7 +8,7 @@
 
 ## Architecture
 
-- **Audio Engine** (C++): Real-time DSP — granular synthesis (4 voices), Mutable Instruments Plaits + Rings, delay, reverb, master filter, mixer. Lock-free, no allocations on audio thread.
+- **Audio Engine** (C++): Real-time DSP — granular synthesis (4 voices), Mutable Instruments Plaits (24 engines + 6-OP FM with DX7 patch loading) + Rings, delay, reverb, master filter, mixer. Lock-free, no allocations on audio thread.
 - **Application Layer** (Swift): SwiftUI interface, sequencer (step-sequencer-style, 2 tracks x 8 steps), master clock, project save/load, MIDI/controller mapping.
 - **Conversational Control Bridge** (Swift): HTTP/1.1 + WebSocket server on `127.0.0.1:4850`. Implements the AI control API for ChatGPT/Claude tool-calling. See `ai-conversational-control-spec.md` and `ai-conversational-control-api-spec.md`.
 

@@ -228,7 +228,8 @@ class Voice {
   ChiptuneEngine chiptune_engine_;
 
   stmlib::HysteresisQuantizer2 engine_quantizer_;
-  
+  stmlib::BufferAllocator* allocator_;
+
   bool reload_user_data_;
   int previous_engine_index_;
   float engine_cv_;

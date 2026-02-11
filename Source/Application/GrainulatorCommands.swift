@@ -5,6 +5,7 @@
 //  Menu commands and keyboard shortcuts
 //
 
+import AppKit
 import SwiftUI
 
 struct GrainulatorCommands: Commands {
@@ -301,6 +302,115 @@ struct GrainulatorCommands: Commands {
                 // TODO: Show audio settings
             }
             .keyboardShortcut(",", modifiers: .command)
+        }
+
+        // About panel
+        CommandGroup(replacing: .appInfo) {
+            Button("About Grainulator") {
+                GrainulatorCommands.showAboutPanel()
+            }
+        }
+
+        // Help menu
+        CommandGroup(replacing: .help) {
+            Button("Quick Start Guide") {
+                GrainulatorCommands.openBundledPDF("Quick-Start-Guide")
+            }
+
+            Button("User Manual") {
+                GrainulatorCommands.openBundledPDF("User-Manual")
+            }
+
+            Divider()
+
+            Button("Grainulator Website") {
+                if let url = URL(string: "https://grainulator.app") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        }
+    }
+
+    // MARK: - About Panel
+
+    private static func showAboutPanel() {
+        let credits = NSMutableAttributedString()
+
+        let headingAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: 12),
+            .foregroundColor: NSColor.labelColor
+        ]
+        let bodyAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11),
+            .foregroundColor: NSColor.secondaryLabelColor
+        ]
+
+        func addSection(_ title: String, _ items: [(String, String)]) {
+            credits.append(NSAttributedString(string: "\(title)\n", attributes: headingAttrs))
+            for (name, detail) in items {
+                credits.append(NSAttributedString(
+                    string: "\(name) — \(detail)\n",
+                    attributes: bodyAttrs
+                ))
+            }
+            credits.append(NSAttributedString(string: "\n", attributes: bodyAttrs))
+        }
+
+        addSection("Synthesis Engines", [
+            ("Plaits (Macro Oscillator)", "Emilie Gillet / Mutable Instruments (MIT)"),
+            ("Rings (Resonator)", "Emilie Gillet / Mutable Instruments (MIT)"),
+            ("stmlib DSP library", "Emilie Gillet / Mutable Instruments (MIT)"),
+            ("DaisySP drum synthesis", "Electrosmith + Emilie Gillet (MIT)"),
+            ("TinySoundFont", "Bernhard Schelling (MIT)"),
+            ("dr_wav", "David Reid (Public Domain / MIT-0)")
+        ])
+
+        addSection("Filter Models", [
+            ("Moog ladder filters", "David Lowenfels, Stefano D'Angelo, Miller Puckette, Victor Lazzarini")
+        ])
+
+        addSection("Libraries", [
+            ("OSCKit", "Steffan Andrews (MIT)"),
+            ("MCP Swift SDK", "Model Context Protocol (MIT)"),
+            ("Swift Log / Swift System", "Apple (Apache 2.0)")
+        ])
+
+        addSection("Inspirations", [
+            ("Mutable Instruments", "Eurorack modules by Emilie Gillet"),
+            ("Monome", "Grid and arc controllers"),
+            ("Yamaha DX7", "FM synthesis")
+        ])
+
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .credits: credits
+        ])
+    }
+
+    // MARK: - PDF Helpers
+
+    private static func openBundledPDF(_ name: String) {
+        // Try app bundle first (distributed .app)
+        if let url = Bundle.main.url(forResource: name, withExtension: "pdf") {
+            NSWorkspace.shared.open(url)
+            return
+        }
+
+        // Fallback: docs/ relative to executable's parent dir (dev builds via swift run)
+        let execURL = URL(fileURLWithPath: CommandLine.arguments[0])
+        let projectDir = execURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let devURL = projectDir.appendingPathComponent("docs/\(name).pdf")
+        if FileManager.default.fileExists(atPath: devURL.path) {
+            NSWorkspace.shared.open(devURL)
+            return
+        }
+
+        // Last resort: check working directory
+        let cwdURL = URL(fileURLWithPath: "docs/\(name).pdf")
+        if FileManager.default.fileExists(atPath: cwdURL.path) {
+            NSWorkspace.shared.open(cwdURL)
         }
     }
 }

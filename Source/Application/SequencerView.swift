@@ -93,22 +93,29 @@ struct SequencerView: View {
             }
             .buttonStyle(.plain)
 
-            // Scale dropdown (compact)
+            // Scale dropdown (compact) — greyed out when chord sequencer drives the scale
             Menu {
                 ForEach(Array(sequencer.scaleOptions.enumerated()), id: \.offset) { index, scale in
                     Button(scale.name) { sequencer.setScaleIndex(index) }
                 }
             } label: {
                 HStack(spacing: 3) {
+                    if isChordScaleActive {
+                        Image(systemName: "link")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(ColorPalette.ledBlue)
+                    }
                     Text(currentScaleName)
                         .font(.system(size: 9, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white)
+                        .foregroundColor(isChordScaleActive ? ColorPalette.ledBlue : .white)
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 7, weight: .bold))
                         .foregroundColor(ColorPalette.textMuted)
                 }
-                .frame(width: 80, height: 26)
+                .frame(height: 26)
+                .frame(minWidth: 80)
+                .padding(.horizontal, 4)
                 .background(ColorPalette.panelBackground)
                 .cornerRadius(4)
             }
@@ -159,6 +166,10 @@ struct SequencerView: View {
 
             Spacer()
         }
+    }
+
+    private var isChordScaleActive: Bool {
+        sequencer.scaleIndex == StepSequencer.chordSequencerScaleIndex
     }
 
     private var currentScaleName: String {

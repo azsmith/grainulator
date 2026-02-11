@@ -7,7 +7,7 @@ A macOS granular/wavetable synthesizer with step sequencer, effects processing, 
 Grainulator is a real-time synthesis workstation combining granular sampling, wavetable synthesis, drum machine, and chord-driven sequencing. It features:
 
 - **Granular Synthesis Engine**: 4 independent voices with Morphagene-inspired controls (speed, pitch, size, density, jitter, spread, envelope shaping)
-- **Plaits Synthesizer**: 17 synthesis models from Mutable Instruments (virtual analog, FM, wavetable, physical modeling, percussion, six-op FM, speech/LPC) with engine crossfade and custom wavetable loading
+- **Plaits Synthesizer**: 24 synthesis engines from Mutable Instruments (virtual analog, phase distortion, FM, wavetable, wave terrain, string machine, chiptune, granular, additive, chords, speech/LPC, physical modeling, percussion) with engine crossfade, custom wavetable loading, and a 6-OP FM engine with DX7 patch (.syx) loading
 - **Rings Synthesizer**: 6 resonator models from Mutable Instruments (modal, sympathetic, string, FM voice)
 - **Drum Machine**: 4-lane percussion sequencer using Plaits drum engines with per-lane timbre controls
 - **Step Sequencer**: 2 melodic tracks x 8 steps with probability, ratchets, gate modes, 12 playback directions, and flexible clock divisions

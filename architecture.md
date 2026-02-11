@@ -133,15 +133,32 @@ GranularEngine
 ```
 PlaitsSynthesizer
 ├── PlaitsEngine                     // Ported from Mutable Instruments
-│   ├── SynthesisModels[16]
-│   │   ├── VirtualAnalog
+│   ├── SynthesisEngines[24]
+│   │   ├── VirtualAnalogVCF          // Engine2 generation
 │   │   ├── PhaseDistortion
+│   │   ├── SixOpFM (×3 banks)       // DX7 patch (.syx) loading
+│   │   ├── WaveTerrain
+│   │   ├── StringMachine
+│   │   ├── Chiptune
+│   │   ├── VirtualAnalog             // Engine1 generation
+│   │   ├── Waveshaping
 │   │   ├── FM
-│   │   ├── WavetableOsc
-│   │   └── ... (12 more models)
+│   │   ├── Grain
+│   │   ├── Additive
+│   │   ├── Wavetable
+│   │   ├── Chord
+│   │   ├── Speech (LPC)
+│   │   ├── Swarm                     // Triggered/percussion
+│   │   ├── Noise
+│   │   ├── Particle
+│   │   ├── String (physical modeling)
+│   │   ├── Modal (physical modeling)
+│   │   ├── BassDrum
+│   │   ├── SnareDrum
+│   │   └── HiHat
 │   │
 │   └── ParameterSet
-│       ├── ModelIndex
+│       ├── ModelIndex (0-23)
 │       ├── Harmonics (timbre)
 │       ├── Morph (secondary timbre)
 │       ├── Frequency
