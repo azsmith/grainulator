@@ -50,6 +50,7 @@ let package = Package(
                 .headerSearchPath("Synthesis"),
                 .headerSearchPath("Synthesis/Rings"),
                 .headerSearchPath("Synthesis/Plaits"),
+                .headerSearchPath("Synthesis/Plaits/upstream"),
                 .headerSearchPath("Synthesis/Plaits/Core"),
                 .headerSearchPath("Synthesis/Plaits/Engines"),
                 .headerSearchPath("Synthesis/Plaits/stmlib"),
