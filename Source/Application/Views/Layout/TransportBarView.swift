@@ -220,6 +220,7 @@ struct TransportBarView: View {
                 }
             }
         }
+        .frame(maxHeight: .infinity)
     }
 
     // MARK: - Status Section
@@ -249,6 +250,19 @@ struct TransportBarView: View {
                 activeColor: ColorPalette.accentGranular1
             ) {
                 OscilloscopeWindowManager.shared.toggle(
+                    audioEngine: audioEngine,
+                    layoutState: layoutState
+                )
+            }
+
+            // Tuner toggle
+            StatusToggleButton(
+                icon: "tuningfork",
+                label: "TUNER",
+                isActive: layoutState.isTunerWindowOpen,
+                activeColor: ColorPalette.ledGreen
+            ) {
+                TunerWindowManager.shared.toggle(
                     audioEngine: audioEngine,
                     layoutState: layoutState
                 )
@@ -323,6 +337,8 @@ struct WorkspaceTabButton: View {
     var body: some View {
         Button(action: action) {
             VStack(spacing: 0) {
+                Spacer(minLength: 0)
+
                 HStack(spacing: 4) {
                     Image(systemName: tab.icon)
                         .font(.system(size: 10, weight: .medium))
@@ -330,18 +346,20 @@ struct WorkspaceTabButton: View {
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
                 }
                 .foregroundColor(isSelected ? tab.accentColor : (isHovering ? ColorPalette.textSecondary : ColorPalette.textMuted))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
+
+                Spacer(minLength: 0)
 
                 // Underline indicator
                 RoundedRectangle(cornerRadius: 1)
                     .fill(isSelected ? tab.accentColor : Color.clear)
                     .frame(height: 2)
-                    .padding(.horizontal, 6)
             }
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .contentShape(Rectangle())
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onHover { isHovering = $0 }
     }
 }
