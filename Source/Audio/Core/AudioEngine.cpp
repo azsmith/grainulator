@@ -77,7 +77,7 @@ AudioEngine::AudioEngine()
     , m_ringsLevel(0.8f)
     , m_ringsPolyphony(2)
     , m_ringsChord(0)
-    , m_ringsFM(0.0f)
+    , m_ringsFM(0.5f)
     , m_ringsExciterSource(-1)
     , m_currentDaisyDrumEngine(0)
     , m_daisyDrumHarmonics(0.5f)
@@ -298,6 +298,7 @@ bool AudioEngine::initialize(int sampleRate, int bufferSize) {
     }
     m_ringsVoice = std::make_unique<RingsVoice>();
     m_ringsVoice->Init(static_cast<float>(sampleRate));
+    m_ringsVoice->SetFM(m_ringsFM);
 
     // Initialize DaisyDrum voice (manual control from synth tab)
     m_daisyDrumVoice = std::make_unique<DaisyDrumVoice>();

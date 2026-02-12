@@ -555,12 +555,12 @@ class AudioEngineWrapper: ObservableObject {
 
         outputNode = engine.outputNode
 
-        // Use the hardware output sample rate so we avoid unnecessary resampling.
-        let hardwareRate = engine.outputNode.outputFormat(forBus: 0).sampleRate
-        if hardwareRate > 0 {
-            sampleRate = hardwareRate
-            print("Using hardware sample rate: \(hardwareRate) Hz")
-        }
+        // Always use 48kHz as the internal processing rate.
+        // AVAudioEngine resamples to/from the hardware rate automatically.
+        // Reading the hardware rate is unreliable (e.g. AirPods report 24kHz
+        // which causes a 2x sequencer speedup because pulse durations are
+        // calculated in half the samples needed).
+        sampleRate = 48000.0
 
         // Configure audio format at the hardware rate
         audioFormat = AVAudioFormat(
@@ -1506,15 +1506,10 @@ class AudioEngineWrapper: ObservableObject {
             return
         }
 
-        let newRate = engine.outputNode.outputFormat(forBus: 0).sampleRate
-
-        if newRate > 0 && newRate != sampleRate {
-            print("⚡ Audio configuration changed: \(sampleRate) Hz → \(newRate) Hz")
-            print("  Note: C++ engine was initialized at \(sampleRate) Hz. Restart app for optimal quality at new rate.")
-            // Update the published property so the tuner uses the correct rate
-            // for pitch detection on the resampled output.
-            sampleRate = newRate
-        }
+        // Note: We keep the internal processing rate fixed at 48kHz.
+        // AVAudioEngine handles resampling to the hardware output device.
+        // Changing sampleRate here would break sequencer timing (e.g. AirPods
+        // at 24kHz caused a 2x speedup).
 
         // AVAudioEngine stops on config change — restart it
         if !engine.isRunning {
