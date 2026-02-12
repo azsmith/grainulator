@@ -298,7 +298,17 @@ bool AudioEngine::initialize(int sampleRate, int bufferSize) {
     }
     m_ringsVoice = std::make_unique<RingsVoice>();
     m_ringsVoice->Init(static_cast<float>(sampleRate));
+    // Push all stored parameters so voice matches engine state at startup
+    m_ringsVoice->SetStructure(m_ringsStructure);
+    m_ringsVoice->SetBrightness(m_ringsBrightness);
+    m_ringsVoice->SetDamping(m_ringsDamping);
+    m_ringsVoice->SetPosition(m_ringsPosition);
+    m_ringsVoice->SetLevel(m_ringsLevel);
+    m_ringsVoice->SetPolyphony(m_ringsPolyphony);
+    m_ringsVoice->SetChord(m_ringsChord);
     m_ringsVoice->SetFM(m_ringsFM);
+    m_ringsVoice->SetModel(m_currentRingsModel);
+    m_ringsVoice->SetInternalExciter(m_ringsExciterSource < 0);
 
     // Initialize DaisyDrum voice (manual control from synth tab)
     m_daisyDrumVoice = std::make_unique<DaisyDrumVoice>();
@@ -895,76 +905,6 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
             }
         }
 
-        // ========== Channel 1: Rings ==========
-        {
-            int ch = 1;
-            bool shouldPlay = !m_channelMute[ch] && (!anySoloed || m_channelSolo[ch]);
-
-            std::memset(m_voiceBuffer[0], 0, frameCount * sizeof(float));
-            std::memset(m_voiceBuffer[1], 0, frameCount * sizeof(float));
-            if (m_ringsVoice) {
-                // Mix exciter buffer to mono for Rings input (Part expects mono in)
-                float exciterMono[kMaxBufferSize];
-                if (m_ringsExciterSource >= 0) {
-                    for (int i = 0; i < frameCount; ++i) {
-                        exciterMono[i] = (m_ringsExciterBufferL[i] + m_ringsExciterBufferR[i]) * 0.5f;
-                    }
-                } else {
-                    std::memset(exciterMono, 0, frameCount * sizeof(float));
-                }
-                m_ringsVoice->Render(exciterMono, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
-            }
-
-            // Record from Rings (channel 1) pre-mixer
-            processRecordingForChannel(1, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
-
-            // Scope capture: Channel 1 (Rings) — mono mix
-            {
-                size_t wi = m_scopeWriteIndex.load(std::memory_order_relaxed);
-                for (int i = 0; i < frameCount; ++i) {
-                    m_scopeBuffer[1][(wi + i) % kScopeBufferSize] = (m_voiceBuffer[0][i] + m_voiceBuffer[1][i]) * 0.5f;
-                }
-            }
-
-            float gain = m_channelGainSmoothed[ch];
-            float pan = m_channelPanSmoothed[ch];
-            float sendA = m_channelSendASmoothed[ch];
-            float sendB = m_channelSendBSmoothed[ch];
-            float panL = std::cos((pan + 1.0f) * 0.25f * 3.14159265f);
-            float panR = std::sin((pan + 1.0f) * 0.25f * 3.14159265f);
-
-            for (int i = 0; i < frameCount; ++i) {
-                float sampleL = m_voiceBuffer[0][i] * gain;
-                float sampleR = m_voiceBuffer[1][i] * gain;
-                float outL = sampleL * panL;
-                float outR = sampleR * panR;
-                float delayedL = 0.0f;
-                float delayedR = 0.0f;
-                applyChannelDelay(ch, outL, outR, delayedL, delayedR);
-
-                channelPeaks[ch] = std::max(channelPeaks[ch], std::max(std::abs(sampleL), std::abs(sampleR)));
-
-                if (shouldPlay) {
-                    m_processingBuffer[0][i] += delayedL;
-                    m_processingBuffer[1][i] += delayedR;
-                }
-
-                const int outputIndex = frameOffset + i;
-                const float sendAL = delayedL * sendA;
-                const float sendAR = delayedR * sendA;
-                const float sendBL = delayedL * sendB;
-                const float sendBR = delayedR * sendB;
-                m_sendBufferAL[i] += sendAL;
-                m_sendBufferAR[i] += sendAR;
-                m_sendBufferBL[i] += sendBL;
-                m_sendBufferBR[i] += sendBR;
-                m_lastSendBusAL[outputIndex] += sendAL;
-                m_lastSendBusAR[outputIndex] += sendAR;
-                m_lastSendBusBL[outputIndex] += sendBL;
-                m_lastSendBusBR[outputIndex] += sendBR;
-            }
-        }
-
         // ========== Channels 2-5: Track voices ==========
         totalActiveGrains = 0;
         for (int trackIndex = 0; trackIndex < kNumGranularVoices; ++trackIndex) {
@@ -1163,6 +1103,76 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
             if (m_ringsExciterSource == 11) {
                 std::memcpy(m_ringsExciterBufferL, m_voiceBuffer[0], frameCount * sizeof(float));
                 std::memcpy(m_ringsExciterBufferR, m_voiceBuffer[1], frameCount * sizeof(float));
+            }
+
+            float gain = m_channelGainSmoothed[ch];
+            float pan = m_channelPanSmoothed[ch];
+            float sendA = m_channelSendASmoothed[ch];
+            float sendB = m_channelSendBSmoothed[ch];
+            float panL = std::cos((pan + 1.0f) * 0.25f * 3.14159265f);
+            float panR = std::sin((pan + 1.0f) * 0.25f * 3.14159265f);
+
+            for (int i = 0; i < frameCount; ++i) {
+                float sampleL = m_voiceBuffer[0][i] * gain;
+                float sampleR = m_voiceBuffer[1][i] * gain;
+                float outL = sampleL * panL;
+                float outR = sampleR * panR;
+                float delayedL = 0.0f;
+                float delayedR = 0.0f;
+                applyChannelDelay(ch, outL, outR, delayedL, delayedR);
+
+                channelPeaks[ch] = std::max(channelPeaks[ch], std::max(std::abs(sampleL), std::abs(sampleR)));
+
+                if (shouldPlay) {
+                    m_processingBuffer[0][i] += delayedL;
+                    m_processingBuffer[1][i] += delayedR;
+                }
+
+                const int outputIndex = frameOffset + i;
+                const float sendAL = delayedL * sendA;
+                const float sendAR = delayedR * sendA;
+                const float sendBL = delayedL * sendB;
+                const float sendBR = delayedR * sendB;
+                m_sendBufferAL[i] += sendAL;
+                m_sendBufferAR[i] += sendAR;
+                m_sendBufferBL[i] += sendBL;
+                m_sendBufferBR[i] += sendBR;
+                m_lastSendBusAL[outputIndex] += sendAL;
+                m_lastSendBusAR[outputIndex] += sendAR;
+                m_lastSendBusBL[outputIndex] += sendBL;
+                m_lastSendBusBR[outputIndex] += sendBR;
+            }
+        }
+
+        // ========== Channel 1: Rings (after all exciter sources) ==========
+        {
+            int ch = 1;
+            bool shouldPlay = !m_channelMute[ch] && (!anySoloed || m_channelSolo[ch]);
+
+            std::memset(m_voiceBuffer[0], 0, frameCount * sizeof(float));
+            std::memset(m_voiceBuffer[1], 0, frameCount * sizeof(float));
+            if (m_ringsVoice) {
+                // Mix exciter buffer to mono for Rings input (Part expects mono in)
+                float exciterMono[kMaxBufferSize];
+                if (m_ringsExciterSource >= 0) {
+                    for (int i = 0; i < frameCount; ++i) {
+                        exciterMono[i] = (m_ringsExciterBufferL[i] + m_ringsExciterBufferR[i]) * 0.5f;
+                    }
+                } else {
+                    std::memset(exciterMono, 0, frameCount * sizeof(float));
+                }
+                m_ringsVoice->Render(exciterMono, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+            }
+
+            // Record from Rings (channel 1) pre-mixer
+            processRecordingForChannel(1, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+
+            // Scope capture: Channel 1 (Rings) — mono mix
+            {
+                size_t wi = m_scopeWriteIndex.load(std::memory_order_relaxed);
+                for (int i = 0; i < frameCount; ++i) {
+                    m_scopeBuffer[1][(wi + i) % kScopeBufferSize] = (m_voiceBuffer[0][i] + m_voiceBuffer[1][i]) * 0.5f;
+                }
             }
 
             float gain = m_channelGainSmoothed[ch];
@@ -1469,40 +1479,6 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
             }
         }
 
-        // ========== Channel 1: Rings (buffers 2, 3) ==========
-        {
-            std::memset(m_voiceBuffer[0], 0, frameCount * sizeof(float));
-            std::memset(m_voiceBuffer[1], 0, frameCount * sizeof(float));
-
-            if (m_ringsVoice) {
-                // Mix exciter buffer to mono for Rings input (Part expects mono in)
-                float exciterMono[kMaxBufferSize];
-                if (m_ringsExciterSource >= 0) {
-                    for (int i = 0; i < frameCount; ++i) {
-                        exciterMono[i] = (m_ringsExciterBufferL[i] + m_ringsExciterBufferR[i]) * 0.5f;
-                    }
-                } else {
-                    std::memset(exciterMono, 0, frameCount * sizeof(float));
-                }
-                m_ringsVoice->Render(exciterMono, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
-            }
-
-            // Record from Rings (channel 1) pre-output
-            processRecordingForChannel(1, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
-
-            if (channelBuffers[2]) {
-                std::memcpy(channelBuffers[2] + frameOffset, m_voiceBuffer[0], frameCount * sizeof(float));
-            }
-            if (channelBuffers[3]) {
-                std::memcpy(channelBuffers[3] + frameOffset, m_voiceBuffer[1], frameCount * sizeof(float));
-            }
-
-            for (int i = 0; i < frameCount; ++i) {
-                float peak = std::max(std::abs(m_voiceBuffer[0][i]), std::abs(m_voiceBuffer[1][i]));
-                channelPeaks[1] = std::max(channelPeaks[1], peak);
-            }
-        }
-
         // ========== Channels 2-5: Granular/Looper voices (buffers 4-11) ==========
         for (int trackIndex = 0; trackIndex < kNumGranularVoices; ++trackIndex) {
             int bufferBaseIndex = (trackIndex + 2) * 2;  // 4, 6, 8, 10
@@ -1633,6 +1609,40 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
             for (int i = 0; i < frameCount; ++i) {
                 float peak = std::max(std::abs(m_voiceBuffer[0][i]), std::abs(m_voiceBuffer[1][i]));
                 channelPeaks[7] = std::max(channelPeaks[7], peak);
+            }
+        }
+
+        // ========== Channel 1: Rings (buffers 2, 3 — after all exciter sources) ==========
+        {
+            std::memset(m_voiceBuffer[0], 0, frameCount * sizeof(float));
+            std::memset(m_voiceBuffer[1], 0, frameCount * sizeof(float));
+
+            if (m_ringsVoice) {
+                // Mix exciter buffer to mono for Rings input (Part expects mono in)
+                float exciterMono[kMaxBufferSize];
+                if (m_ringsExciterSource >= 0) {
+                    for (int i = 0; i < frameCount; ++i) {
+                        exciterMono[i] = (m_ringsExciterBufferL[i] + m_ringsExciterBufferR[i]) * 0.5f;
+                    }
+                } else {
+                    std::memset(exciterMono, 0, frameCount * sizeof(float));
+                }
+                m_ringsVoice->Render(exciterMono, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+            }
+
+            // Record from Rings (channel 1) pre-output
+            processRecordingForChannel(1, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+
+            if (channelBuffers[2]) {
+                std::memcpy(channelBuffers[2] + frameOffset, m_voiceBuffer[0], frameCount * sizeof(float));
+            }
+            if (channelBuffers[3]) {
+                std::memcpy(channelBuffers[3] + frameOffset, m_voiceBuffer[1], frameCount * sizeof(float));
+            }
+
+            for (int i = 0; i < frameCount; ++i) {
+                float peak = std::max(std::abs(m_voiceBuffer[0][i]), std::abs(m_voiceBuffer[1][i]));
+                channelPeaks[1] = std::max(channelPeaks[1], peak);
             }
         }
 
@@ -2040,7 +2050,8 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
         // ========== Rings Parameters ==========
         case ParameterID::RingsModel:
             if (m_ringsVoice) {
-                const int maxModel = static_cast<int>(rings::RESONATOR_MODEL_LAST) - 1;
+                // 12 models: 0-5 Part resonator, 6-11 StringSynthPart easter egg
+                const int maxModel = 11;
                 const int model = std::clamp(static_cast<int>(clampedValue * maxModel + 0.5f), 0, maxModel);
                 m_currentRingsModel = model;
                 m_ringsVoice->SetModel(model);
@@ -2586,8 +2597,8 @@ float AudioEngine::getParameter(ParameterID id, int voiceIndex) const {
 
         // Existing global state readbacks.
         case ParameterID::RingsModel: {
-            const int maxModel = static_cast<int>(rings::RESONATOR_MODEL_LAST) - 1;
-            if (maxModel <= 0) { return 0.0f; }
+            // 12 models: 0-5 Part resonator, 6-11 StringSynthPart easter egg
+            const int maxModel = 11;
             return clamp01(static_cast<float>(m_currentRingsModel) / static_cast<float>(maxModel));
         }
         case ParameterID::RingsStructure: return clamp01(m_ringsStructure);

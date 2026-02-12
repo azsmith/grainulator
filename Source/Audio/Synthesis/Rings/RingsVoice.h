@@ -8,6 +8,7 @@
 #ifndef RINGSVOICE_H
 #define RINGSVOICE_H
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -15,6 +16,7 @@
 #include "rings/dsp/strummer.h"
 #include "rings/dsp/performance_state.h"
 #include "rings/dsp/patch.h"
+#include "rings/dsp/string_synth_part.h"
 
 namespace Grainulator {
 
@@ -38,7 +40,7 @@ public:
     // Extended parameters
     void SetPolyphony(int polyphony);       // 1, 2, or 4
     void SetChord(int chord);               // 0-10 (11 chords)
-    void SetFM(float fm);                   // 0-1, maps to ±24 semitones
+    void SetFM(float fm);                   // 0-1, maps to ±48 semitones
     void SetInternalExciter(bool internal);
 
     // Render with external excitation input
@@ -53,15 +55,17 @@ public:
 private:
     static constexpr size_t kRenderBlockSize = rings::kMaxBlockSize;
     static constexpr int kMaxNoteQueue = 8;
+    static constexpr int kEasterEggModelOffset = 6;  // Models 6-11 use StringSynthPart
 
     struct NoteEvent {
         float note;
-        float level;
+        float excitation_gain;  // Velocity-derived, scales exciter input
     };
 
     float sample_rate_;
     float note_;
-    float level_;
+    float level_;               // Output gain (LEVEL knob only)
+    float excitation_gain_;     // Velocity-derived, scales exciter input
 
     // Note event queue — allows multiple NoteOns between Render() calls
     // so each gets its own strum in a separate render block.
@@ -81,10 +85,19 @@ private:
     float render_r_[kRenderBlockSize];
     uint16_t reverb_buffer_[32768];
 
+    // Easter egg: polyphonic string synth (shares reverb_buffer_ with Part)
+    rings::StringSynthPart string_synth_part_;
+    bool use_string_synth_;  // true when model >= kEasterEggModelOffset
+
     // Extended parameter state
     int chord_;              // 0-10, default 0
     float fm_;               // 0-1, default 0
     bool internal_exciter_;  // default true
+
+    // Deferred model/polyphony changes — set from UI thread, applied on audio thread
+    // to avoid racing with Part::Process/ConfigureResonators.
+    std::atomic<int> pending_polyphony_{-1};  // -1 = no change pending
+    std::atomic<int> pending_model_{-1};      // -1 = no change pending
 
     // Modulation amounts (0-1, added to base patch values)
     float structure_mod_;

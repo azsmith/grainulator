@@ -3457,16 +3457,24 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
 
     private func ringsModelNormalized(modeText: String) -> Float? {
         let normalized = modeText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().replacingOccurrences(of: "_", with: " ")
-        if normalized == "modal" { return 0.0 / 5.0 }
-        if normalized == "sympathetic" { return 1.0 / 5.0 }
-        if normalized == "string" { return 2.0 / 5.0 }
-        if normalized == "fm voice" { return 3.0 / 5.0 }
+        // Part resonator models (0-5)
+        if normalized == "modal" { return 0.0 / 11.0 }
+        if normalized == "sympathetic" { return 1.0 / 11.0 }
+        if normalized == "string" { return 2.0 / 11.0 }
+        if normalized == "fm voice" { return 3.0 / 11.0 }
         if normalized == "symp quant" || normalized == "quantized string" || normalized == "quantized_string" {
-            return 4.0 / 5.0
+            return 4.0 / 11.0
         }
         if normalized == "string+rev" || normalized == "string rev" || normalized == "string reverb" {
-            return 5.0 / 5.0
+            return 5.0 / 11.0
         }
+        // StringSynthPart easter egg models (6-11)
+        if normalized == "strsyn formant" || normalized == "string synth formant" { return 6.0 / 11.0 }
+        if normalized == "strsyn chorus" || normalized == "string synth chorus" { return 7.0 / 11.0 }
+        if normalized == "strsyn reverb" || normalized == "string synth reverb" { return 8.0 / 11.0 }
+        if normalized == "strsyn form2" || normalized == "string synth formant 2" { return 9.0 / 11.0 }
+        if normalized == "strsyn ensemble" || normalized == "string synth ensemble" { return 10.0 / 11.0 }
+        if normalized == "strsyn rev2" || normalized == "string synth reverb 2" { return 11.0 / 11.0 }
         return nil
     }
 
@@ -3946,9 +3954,16 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             "fm voice",
             "quantized string",
             "string+rev",
+            // Easter egg: StringSynthPart FX variants
+            "strsyn formant",
+            "strsyn chorus",
+            "strsyn reverb",
+            "strsyn form2",
+            "strsyn ensemble",
+            "strsyn rev2",
         ]
         let clamped = clamp01(Double(normalized))
-        let index = min(max(Int((clamped * 5.0).rounded()), 0), names.count - 1)
+        let index = min(max(Int((clamped * 11.0).rounded()), 0), names.count - 1)
         return names[index]
     }
 

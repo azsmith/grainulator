@@ -16,6 +16,7 @@ RingsVoice::RingsVoice()
     : sample_rate_(48000.0f)
     , note_(48.0f)
     , level_(0.8f)
+    , excitation_gain_(1.0f)
     , note_queue_head_(0)
     , note_queue_tail_(0)
     , note_queue_count_(0)
@@ -25,7 +26,8 @@ RingsVoice::RingsVoice()
     , structure_mod_(0.0f)
     , brightness_mod_(0.0f)
     , damping_mod_(0.0f)
-    , position_mod_(0.0f) {
+    , position_mod_(0.0f)
+    , use_string_synth_(false) {
     std::memset(input_buffer_, 0, sizeof(input_buffer_));
     std::memset(render_l_, 0, sizeof(render_l_));
     std::memset(render_r_, 0, sizeof(render_r_));
@@ -50,6 +52,11 @@ void RingsVoice::Init(float sample_rate) {
     part_.set_polyphony(2);
     part_.set_model(rings::RESONATOR_MODEL_MODAL);
 
+    // Initialize StringSynthPart (easter egg mode) — shares reverb buffer with Part
+    string_synth_part_.Init(reverb_buffer_);
+    string_synth_part_.set_polyphony(2);
+    string_synth_part_.set_fx(rings::FX_ENSEMBLE);
+
     // Rings models are tuned for 48k processing with 24-sample control blocks.
     const float controlRate = 48000.0f / static_cast<float>(kRenderBlockSize);
     strummer_.Init(0.01f, controlRate);
@@ -58,11 +65,36 @@ void RingsVoice::Init(float sample_rate) {
     note_queue_tail_ = 0;
     note_queue_count_ = 0;
     patch_ = base_patch_;
+    use_string_synth_ = false;
 }
 
 void RingsVoice::Render(const float* in, float* out, float* aux, size_t size) {
     if (!out || !aux) {
         return;
+    }
+
+    // Apply deferred model/polyphony changes on the audio thread so
+    // ConfigureResonators() doesn't race with Process().
+    int pm = pending_model_.exchange(-1, std::memory_order_relaxed);
+    if (pm >= 0) {
+        if (pm >= kEasterEggModelOffset) {
+            // Easter egg models 6-11 → StringSynthPart with FX type
+            use_string_synth_ = true;
+            int fx_index = pm - kEasterEggModelOffset;
+            string_synth_part_.set_fx(static_cast<rings::FxType>(fx_index));
+        } else {
+            // Normal models 0-5 → Part with ResonatorModel
+            use_string_synth_ = false;
+            part_.set_model(static_cast<rings::ResonatorModel>(pm));
+        }
+    }
+    int pp = pending_polyphony_.exchange(-1, std::memory_order_relaxed);
+    if (pp >= 0) {
+        if (use_string_synth_) {
+            string_synth_part_.set_polyphony(pp);
+        } else {
+            part_.set_polyphony(pp);
+        }
     }
 
     size_t rendered = 0;
@@ -91,17 +123,19 @@ void RingsVoice::Render(const float* in, float* out, float* aux, size_t size) {
             note_queue_head_ = (note_queue_head_ + 1) % kMaxNoteQueue;
             note_queue_count_--;
             note_ = ev.note;
-            level_ = ev.level;
+            excitation_gain_ = ev.excitation_gain;
             strum = true;
         }
 
         performance_.note = note_;
-        performance_.tonic = 0.0f;
-        performance_.fm = fm_ * 48.0f - 24.0f;  // Map 0-1 to ±24 semitones
+        performance_.tonic = 12.0f;  // C0 — matches default Rings hardware tonic
+        performance_.fm = fm_ * 96.0f - 48.0f;  // Map 0-1 to ±48 semitones
         performance_.chord = std::clamp(chord_, 0, rings::kNumChords - 1);
         performance_.strum = strum;
         performance_.internal_exciter = internal_exciter_;
-        performance_.internal_strum = false;
+        // Enable auto-strum when using internal exciter (onset detection
+        // and note-change detection in the Strummer, matching hardware behavior)
+        performance_.internal_strum = internal_exciter_;
 
         strummer_.Process(input_buffer_, block, &performance_);
 
@@ -112,7 +146,19 @@ void RingsVoice::Render(const float* in, float* out, float* aux, size_t size) {
             performance_.strum = true;
         }
 
-        part_.Process(performance_, patch_, input_buffer_, render_l_, render_r_, block);
+        // Scale excitation input by velocity (like striking harder/softer).
+        // Original Rings has no velocity — dynamics come from excitation amplitude.
+        if (excitation_gain_ < 0.999f) {
+            for (size_t i = 0; i < block; ++i) {
+                input_buffer_[i] *= excitation_gain_;
+            }
+        }
+
+        if (use_string_synth_) {
+            string_synth_part_.Process(performance_, patch_, input_buffer_, render_l_, render_r_, block);
+        } else {
+            part_.Process(performance_, patch_, input_buffer_, render_l_, render_r_, block);
+        }
 
         for (size_t i = 0; i < block; ++i) {
             out[rendered + i] = render_l_[i] * level_;
@@ -126,17 +172,18 @@ void RingsVoice::Render(const float* in, float* out, float* aux, size_t size) {
 void RingsVoice::NoteOn(int midiNote, int velocity) {
     float note = std::clamp(static_cast<float>(midiNote), 0.0f, 127.0f);
     float accent = std::clamp(static_cast<float>(velocity) / 127.0f, 0.0f, 1.0f);
-    float level = std::max(0.2f, accent);
+    // Velocity scales excitation amplitude (like striking harder), not output level.
+    float gain = std::max(0.2f, accent);
 
     if (note_queue_count_ < kMaxNoteQueue) {
-        note_queue_[note_queue_tail_] = { note, level };
+        note_queue_[note_queue_tail_] = { note, gain };
         note_queue_tail_ = (note_queue_tail_ + 1) % kMaxNoteQueue;
         note_queue_count_++;
     }
 
-    // Keep note_/level_ updated for non-strum render blocks
+    // Keep note_ updated for non-strum render blocks
     note_ = note;
-    level_ = level;
+    excitation_gain_ = gain;
 }
 
 void RingsVoice::NoteOff(int midiNote) {
@@ -168,8 +215,9 @@ void RingsVoice::SetPosition(float value) {
 }
 
 void RingsVoice::SetModel(int modelIndex) {
-    const int clamped = std::clamp(modelIndex, 0, static_cast<int>(rings::RESONATOR_MODEL_LAST) - 1);
-    part_.set_model(static_cast<rings::ResonatorModel>(clamped));
+    // Models 0-5: Part resonator, 6-11: StringSynthPart easter egg (one per FX type)
+    const int clamped = std::clamp(modelIndex, 0, kEasterEggModelOffset + static_cast<int>(rings::FX_LAST) - 1);
+    pending_model_.store(clamped, std::memory_order_relaxed);
 }
 
 void RingsVoice::SetLevel(float value) {
@@ -197,14 +245,9 @@ void RingsVoice::SetPositionMod(float amount) {
 }
 
 void RingsVoice::SetPolyphony(int polyphony) {
-    // Part supports 1, 2, or 4
-    if (polyphony == 2) {
-        part_.set_polyphony(2);
-    } else if (polyphony >= 4) {
-        part_.set_polyphony(4);
-    } else {
-        part_.set_polyphony(1);
-    }
+    // Part supports 1, 2, or 4. Deferred to audio thread.
+    int poly = (polyphony >= 4) ? 4 : (polyphony == 2) ? 2 : 1;
+    pending_polyphony_.store(poly, std::memory_order_relaxed);
 }
 
 void RingsVoice::SetChord(int chord) {

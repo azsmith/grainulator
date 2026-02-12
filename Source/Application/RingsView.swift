@@ -38,7 +38,14 @@ struct RingsView: View {
         "String",
         "FM Voice",
         "Symp Quant",
-        "String+Rev"
+        "String+Rev",
+        // Easter egg: StringSynthPart with FX variants
+        "StrSyn Formant",
+        "StrSyn Chorus",
+        "StrSyn Reverb",
+        "StrSyn Form2",
+        "StrSyn Ensemble",
+        "StrSyn Rev2"
     ]
 
     private let chordNames = [
