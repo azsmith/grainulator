@@ -37,3 +37,22 @@ Resources/Samples/*
 *.bak
 *~
 temp/
+
+# Distribution builds (signed apps, DMGs, notarization logs)
+dist/
+
+# Generated/external PDFs (markdown sources are tracked)
+*.pdf
+
+# Audio samples (SF2, WAV, etc.)
+samples/
+
+# Icon generation experiments (main AppIcon.icns is tracked)
+Resources/Assets/AppIcon-option*
+scripts/generate-icon-option*.swift
+
+# Reference images and planning docs
+plaits.jpg
+ideas/
+DISTRIBUTION-PLAN.md
+mcp-server-spec.md
