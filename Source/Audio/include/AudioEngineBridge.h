@@ -90,6 +90,10 @@ void AudioEngine_SetClockOutputSlowMode(AudioEngineHandle handle, int outputInde
 float AudioEngine_GetClockOutputValue(AudioEngineHandle handle, int outputIndex);
 float AudioEngine_GetModulationValue(AudioEngineHandle handle, int destination);
 
+// Euclidean rhythm control
+void AudioEngine_SetClockOutputEuclidean(AudioEngineHandle handle, int outputIndex, bool enabled, int steps, const bool* pattern, int patternLength);
+int AudioEngine_GetClockOutputEuclideanStep(AudioEngineHandle handle, int outputIndex);
+
 // Multi-channel ring buffer processing (for AU plugin hosting)
 // These functions enable a producer/consumer pattern where a background thread
 // fills ring buffers and audio callbacks only read from them (no race condition)

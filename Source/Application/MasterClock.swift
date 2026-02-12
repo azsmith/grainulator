@@ -89,7 +89,34 @@ enum ModulationDestination: String, CaseIterable, Identifiable {
     case daisyDrumTimbre = "DRM:TMBR"
     case daisyDrumMorph = "DRM:MRPH"
 
+    // SoundFont Sampler destinations (match C++ enum order)
+    case samplerFilterCutoff = "SMP:FILT"
+    case samplerLevel = "SMP:LEVL"
+
+    // Trigger destinations (fire NoteOn on clock rising edge)
+    case plaitsGate = "MOS:GATE"
+    case ringsGate = "RES:GATE"
+    case ringsInput = "RES:INPT"
+    case daisyDrumGate = "DRM:GATE"
+    case drumLane0Gate = "DL0:GATE"
+    case drumLane1Gate = "DL1:GATE"
+    case drumLane2Gate = "DL2:GATE"
+    case drumLane3Gate = "DL3:GATE"
+    case samplerGate = "SMP:GATE"
+
     var id: String { rawValue }
+
+    /// Returns true if this destination fires triggers rather than CV modulation.
+    var isTriggerDestination: Bool {
+        switch self {
+        case .plaitsGate, .ringsGate, .ringsInput, .daisyDrumGate,
+             .drumLane0Gate, .drumLane1Gate, .drumLane2Gate, .drumLane3Gate,
+             .samplerGate:
+            return true
+        default:
+            return false
+        }
+    }
 
     var displayName: String {
         switch self {
@@ -119,6 +146,18 @@ enum ModulationDestination: String, CaseIterable, Identifiable {
         case .daisyDrumHarmonics: return "Drums Harmonics"
         case .daisyDrumTimbre: return "Drums Timbre"
         case .daisyDrumMorph: return "Drums Morph"
+        case .samplerFilterCutoff: return "Sampler Filter"
+        case .samplerLevel: return "Sampler Level"
+        // Trigger destinations
+        case .plaitsGate: return "Macro Osc Gate"
+        case .ringsGate: return "Resonator Gate"
+        case .ringsInput: return "Resonator Input"
+        case .daisyDrumGate: return "Drums Gate"
+        case .drumLane0Gate: return "Analog Kick Gate"
+        case .drumLane1Gate: return "Synth Kick Gate"
+        case .drumLane2Gate: return "Analog Snare Gate"
+        case .drumLane3Gate: return "Hi-Hat Gate"
+        case .samplerGate: return "Sampler Gate"
         }
     }
 
@@ -131,6 +170,12 @@ enum ModulationDestination: String, CaseIterable, Identifiable {
         case .granular1Speed, .granular1Pitch, .granular1Size, .granular1Density, .granular1Filter: return "Granular 1"
         case .granular2Speed, .granular2Pitch, .granular2Size, .granular2Density, .granular2Filter: return "Granular 2"
         case .daisyDrumHarmonics, .daisyDrumTimbre, .daisyDrumMorph: return "Drums"
+        case .samplerFilterCutoff, .samplerLevel: return "Sampler"
+        case .plaitsGate: return "Triggers"
+        case .ringsGate, .ringsInput: return "Triggers"
+        case .daisyDrumGate: return "Triggers"
+        case .drumLane0Gate, .drumLane1Gate, .drumLane2Gate, .drumLane3Gate: return "Triggers"
+        case .samplerGate: return "Triggers"
         }
     }
 
@@ -174,6 +219,19 @@ enum ModulationDestination: String, CaseIterable, Identifiable {
         case "DRM:HARM": self = .daisyDrumHarmonics
         case "DRM:TMBR": self = .daisyDrumTimbre
         case "DRM:MRPH": self = .daisyDrumMorph
+        // Sampler modulation
+        case "SMP:FILT": self = .samplerFilterCutoff
+        case "SMP:LEVL": self = .samplerLevel
+        // Trigger destinations
+        case "MOS:GATE": self = .plaitsGate
+        case "RES:GATE": self = .ringsGate
+        case "RES:INPT": self = .ringsInput
+        case "DRM:GATE": self = .daisyDrumGate
+        case "DL0:GATE": self = .drumLane0Gate
+        case "DL1:GATE": self = .drumLane1Gate
+        case "DL2:GATE": self = .drumLane2Gate
+        case "DL3:GATE": self = .drumLane3Gate
+        case "SMP:GATE": self = .samplerGate
         default: return nil
         }
     }
@@ -204,6 +262,18 @@ class ClockOutput: ObservableObject, Identifiable {
     // Mute control
     @Published var muted: Bool = false
 
+    // Euclidean rhythm parameters (Clock sub-mode)
+    @Published var euclideanEnabled: Bool = false
+    @Published var euclideanSteps: Int = 8       // 1-32
+    @Published var euclideanFills: Int = 4       // 0-steps
+    @Published var euclideanRotation: Int = 0    // 0 to steps-1
+
+    // Precomputed euclidean pattern (sent to engine)
+    var euclideanPattern: [Bool] = Array(repeating: false, count: 32)
+
+    // Current step (read back from engine for UI display)
+    @Published var euclideanCurrentStep: Int = 0
+
     // Current output value (updated from audio thread)
     @Published var currentValue: Float = 0.0
 
@@ -217,11 +287,90 @@ class ClockOutput: ObservableObject, Identifiable {
         if index < defaultDivisions.count {
             self.division = defaultDivisions[index]
         }
+
+        // Compute initial euclidean pattern
+        euclideanPattern = ClockOutput.computeEuclideanPattern(
+            steps: euclideanSteps, fills: euclideanFills, rotation: euclideanRotation
+        )
     }
 
     /// Frequency multiplier relative to master clock quarter note
     var frequencyMultiplier: Double {
         return division.multiplier
+    }
+
+    // MARK: - Bjorklund Euclidean Pattern
+
+    /// Computes a euclidean rhythm pattern using the Bjorklund algorithm.
+    /// Distributes `fills` active triggers as evenly as possible across `steps` total steps,
+    /// then rotates the result by `rotation` positions.
+    static func computeEuclideanPattern(steps: Int, fills: Int, rotation: Int) -> [Bool] {
+        let totalSteps = max(1, min(steps, 32))
+        let activeFills = max(0, min(fills, totalSteps))
+
+        guard totalSteps > 0 else { return Array(repeating: false, count: 32) }
+        guard activeFills > 0 else {
+            // All silent
+            return Array(repeating: false, count: 32)
+        }
+        guard activeFills < totalSteps else {
+            // All active
+            var pattern = Array(repeating: true, count: 32)
+            for i in totalSteps..<32 { pattern[i] = false }
+            return pattern
+        }
+
+        // Bjorklund algorithm: iterative binary distribution
+        var groups: [[Bool]] = []
+        for i in 0..<totalSteps {
+            groups.append([i < activeFills])
+        }
+
+        var remainderCount = totalSteps - activeFills
+        var distributionCount = activeFills
+
+        while remainderCount > 1 {
+            let numToDistribute = min(distributionCount, remainderCount)
+            for i in 0..<numToDistribute {
+                groups[i].append(contentsOf: groups[groups.count - 1 - (numToDistribute - 1 - i)])
+            }
+            // Remove distributed groups from end
+            groups.removeLast(numToDistribute)
+
+            let newTotal = groups.count
+            remainderCount = newTotal - numToDistribute
+            distributionCount = numToDistribute
+
+            if remainderCount <= 1 { break }
+        }
+
+        // Flatten groups into pattern
+        var raw: [Bool] = []
+        for group in groups {
+            raw.append(contentsOf: group)
+        }
+
+        // Apply rotation — right-shift so triggers move later in time
+        // while the grid ("1" = step 0 = downbeat) stays fixed
+        let rot = ((rotation % totalSteps) + totalSteps) % totalSteps
+        var rotated: [Bool] = []
+        for i in 0..<totalSteps {
+            rotated.append(raw[(i - rot + totalSteps) % totalSteps])
+        }
+
+        // Pad to 32
+        var pattern = Array(repeating: false, count: 32)
+        for i in 0..<totalSteps {
+            pattern[i] = rotated[i]
+        }
+        return pattern
+    }
+
+    /// Recomputes the euclidean pattern from current parameters
+    func recomputeEuclideanPattern() {
+        euclideanPattern = ClockOutput.computeEuclideanPattern(
+            steps: euclideanSteps, fills: euclideanFills, rotation: euclideanRotation
+        )
     }
 }
 
@@ -271,6 +420,9 @@ class MasterClock: ObservableObject {
     // Track whether we're connected to prevent updates before connection
     private var isConnected: Bool = false
 
+    // Timer for polling clock output values + euclidean step from engine
+    private var pollTimer: Timer?
+
     init() {
         // Create 8 outputs
         self.outputs = (0..<8).map { ClockOutput(index: $0) }
@@ -284,6 +436,34 @@ class MasterClock: ObservableObject {
         self.isConnected = true
         // Sync all parameters to the audio engine
         syncAllOutputsToEngine()
+        // Start polling clock output values + euclidean step from engine at 15 Hz
+        startPolling()
+    }
+
+    private func startPolling() {
+        pollTimer?.invalidate()
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 15.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.pollEngineState()
+            }
+        }
+    }
+
+    private func pollEngineState() {
+        guard let engine = audioEngine else { return }
+        for i in 0..<outputs.count {
+            let value = engine.getClockOutputValue(index: i)
+            if outputs[i].currentValue != value {
+                outputs[i].currentValue = value
+            }
+            // Only poll euclidean step if euclidean is active (avoid unnecessary updates)
+            if outputs[i].euclideanEnabled {
+                let step = engine.getClockOutputEuclideanStep(index: i)
+                if outputs[i].euclideanCurrentStep != step {
+                    outputs[i].euclideanCurrentStep = step
+                }
+            }
+        }
     }
 
     func connectSequencer(_ sequencer: StepSequencer) {
@@ -352,6 +532,27 @@ class MasterClock: ObservableObject {
                 .dropFirst()
                 .sink { [weak self] _ in self?.outputSlowModeDidChange(index: index) }
                 .store(in: &outputCancellables)
+
+            // Euclidean parameter observers
+            output.$euclideanEnabled
+                .dropFirst()
+                .sink { [weak self] _ in self?.euclideanDidChange(index: index) }
+                .store(in: &outputCancellables)
+
+            output.$euclideanSteps
+                .dropFirst()
+                .sink { [weak self] _ in self?.euclideanDidChange(index: index) }
+                .store(in: &outputCancellables)
+
+            output.$euclideanFills
+                .dropFirst()
+                .sink { [weak self] _ in self?.euclideanDidChange(index: index) }
+                .store(in: &outputCancellables)
+
+            output.$euclideanRotation
+                .dropFirst()
+                .sink { [weak self] _ in self?.euclideanDidChange(index: index) }
+                .store(in: &outputCancellables)
         }
     }
 
@@ -368,6 +569,28 @@ class MasterClock: ObservableObject {
         // Defer to next run loop iteration so the @Published value is fully stored
         DispatchQueue.main.async { [weak self] in
             self?.sendOutputParametersToEngine(outputIndex: index)
+        }
+    }
+
+    private func euclideanDidChange(index: Int) {
+        // Defer so @Published value is committed, then recompute pattern and send to engine
+        DispatchQueue.main.async { [weak self] in
+            guard let self, index < self.outputs.count else { return }
+            let output = self.outputs[index]
+
+            // Clamp fills and rotation to valid ranges when steps change
+            if output.euclideanFills > output.euclideanSteps {
+                output.euclideanFills = output.euclideanSteps
+            }
+            if output.euclideanRotation >= output.euclideanSteps {
+                output.euclideanRotation = max(0, output.euclideanSteps - 1)
+            }
+
+            // Recompute Bjorklund pattern
+            output.recomputeEuclideanPattern()
+
+            // Send to audio engine
+            self.sendEuclideanToEngine(outputIndex: index)
         }
     }
 
@@ -447,10 +670,22 @@ class MasterClock: ObservableObject {
         )
     }
 
+    private func sendEuclideanToEngine(outputIndex: Int) {
+        guard let engine = audioEngine, outputIndex < outputs.count else { return }
+        let output = outputs[outputIndex]
+        engine.setClockOutputEuclidean(
+            index: outputIndex,
+            enabled: output.euclideanEnabled,
+            steps: output.euclideanSteps,
+            pattern: output.euclideanPattern
+        )
+    }
+
     /// Sync all output parameters to the audio engine
     func syncAllOutputsToEngine() {
         for i in 0..<outputs.count {
             sendOutputParametersToEngine(outputIndex: i)
+            sendEuclideanToEngine(outputIndex: i)
         }
         updateAudioEngine()
     }

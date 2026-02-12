@@ -229,6 +229,11 @@ struct ClockOutputSnapshot: Codable {
     var destination: String     // ModulationDestination raw value
     var modulationAmount: Float
     var muted: Bool
+    // Euclidean rhythm parameters (added in version 4, optional for backward compat)
+    var euclideanEnabled: Bool?
+    var euclideanSteps: Int?
+    var euclideanFills: Int?
+    var euclideanRotation: Int?
 }
 
 // MARK: - AU Plugins Snapshot

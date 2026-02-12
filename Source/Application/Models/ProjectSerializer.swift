@@ -254,7 +254,11 @@ struct ProjectSerializer {
                 width: output.width,
                 destination: output.destination.rawValue,
                 modulationAmount: output.modulationAmount,
-                muted: output.muted
+                muted: output.muted,
+                euclideanEnabled: output.euclideanEnabled,
+                euclideanSteps: output.euclideanSteps,
+                euclideanFills: output.euclideanFills,
+                euclideanRotation: output.euclideanRotation
             )
         }
 
@@ -602,6 +606,13 @@ struct ProjectSerializer {
             output.destination = ModulationDestination(rawValue: outputSnap.destination) ?? .none
             output.modulationAmount = outputSnap.modulationAmount
             output.muted = outputSnap.muted
+
+            // Euclidean rhythm parameters (defaults for old projects without these fields)
+            output.euclideanEnabled = outputSnap.euclideanEnabled ?? false
+            output.euclideanSteps = outputSnap.euclideanSteps ?? 8
+            output.euclideanFills = outputSnap.euclideanFills ?? 4
+            output.euclideanRotation = outputSnap.euclideanRotation ?? 0
+            output.recomputeEuclideanPattern()
         }
     }
 

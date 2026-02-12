@@ -310,8 +310,50 @@ public:
         // SoundFont Sampler
         SamplerFilterCutoff,
         SamplerLevel,
+        // Trigger destinations (fire NoteOn on clock rising edge)
+        PlaitsGate,         // Trigger Macro Osc
+        RingsGate,          // Trigger Resonator
+        RingsInput,         // Trigger Resonator (as exciter/strum)
+        DaisyDrumGate,      // Trigger Drums
+        DrumLane0Gate,      // Trigger Analog Kick
+        DrumLane1Gate,      // Trigger Synth Kick
+        DrumLane2Gate,      // Trigger Analog Snare
+        DrumLane3Gate,      // Trigger Hi-Hat
+        SamplerGate,        // Trigger Sampler
         NumDestinations
     };
+
+    /// Returns true if the destination is a trigger (gate) rather than CV modulation.
+    static inline bool isModDestTrigger(ModulationDestination dest) {
+        return dest >= ModulationDestination::PlaitsGate && dest < ModulationDestination::NumDestinations;
+    }
+
+    /// Returns NoteTarget bitmask for a trigger destination.
+    static inline uint8_t targetMaskForTriggerDest(ModulationDestination dest) {
+        switch (dest) {
+            case ModulationDestination::PlaitsGate:    return TargetPlaits;
+            case ModulationDestination::RingsGate:     return TargetRings;
+            case ModulationDestination::RingsInput:    return TargetRings;
+            case ModulationDestination::DaisyDrumGate: return TargetDaisyDrum;
+            case ModulationDestination::DrumLane0Gate: return TargetDrumLane0;
+            case ModulationDestination::DrumLane1Gate: return TargetDrumLane1;
+            case ModulationDestination::DrumLane2Gate: return TargetDrumLane2;
+            case ModulationDestination::DrumLane3Gate: return TargetDrumLane3;
+            case ModulationDestination::SamplerGate:   return TargetSampler;
+            default: return 0;
+        }
+    }
+
+    /// Returns default MIDI note for a trigger destination.
+    static inline int noteForTriggerDest(ModulationDestination dest) {
+        switch (dest) {
+            case ModulationDestination::DrumLane0Gate: return 36;  // Kick
+            case ModulationDestination::DrumLane1Gate: return 38;  // Snare
+            case ModulationDestination::DrumLane2Gate: return 40;  // Tom
+            case ModulationDestination::DrumLane3Gate: return 42;  // Hi-Hat
+            default: return 60;  // Middle C for melodic targets
+        }
+    }
 
     void setParameter(ParameterID id, int voiceIndex, float value);
     float getParameter(ParameterID id, int voiceIndex) const;
@@ -435,6 +477,11 @@ public:
     void setClockOutputSlowMode(int outputIndex, bool slow);      // Slow mode (/4 multiplier)
     float getClockOutputValue(int outputIndex) const;             // Current output value
     float getModulationValue(int destination) const;              // Current modulation for destination
+
+    // Euclidean rhythm control
+    void setClockOutputEuclidean(int outputIndex, bool enabled, int steps,
+                                  const bool* pattern, int patternLength);
+    int getClockOutputEuclideanStep(int outputIndex) const;
 
 private:
     struct ScheduledNoteEvent {
@@ -708,8 +755,16 @@ private:
         bool muted;                // Mute state
         bool slowMode;             // When true, applies /4 multiplier to rate
 
+        // Euclidean rhythm parameters
+        bool euclideanEnabled;                    // When true, filter triggers through pattern
+        int euclideanSteps;                       // Total pattern length (1-32)
+        std::array<bool, 32> euclideanPattern;    // Precomputed pattern (from Bjorklund)
+        int euclideanCurrentStep;                 // Current step in pattern (runtime)
+
         // Runtime state
+        bool pendingTriggerOnStart;          // Fire trigger at beat 1 (first buffer after start)
         double phaseAccumulator;   // Current phase (0-1)
+        double lastPhaseAccumulator; // Previous phase for wrap detection
         float currentValue;        // Current output value (-1 to +1)
         float sampleHoldValue;     // Held value for S&H waveform
         float smoothedRandomValue; // Smoothed random for interpolation

@@ -347,6 +347,7 @@ struct ClockOutputConfigView: View {
                         Text(mode.rawValue).tag(mode)
                     }
                 }
+                .labelsHidden()
                 .pickerStyle(.segmented)
                 .frame(width: 120)
             }
@@ -363,6 +364,7 @@ struct ClockOutputConfigView: View {
                         Text(div.rawValue).tag(div)
                     }
                 }
+                .labelsHidden()
                 .frame(width: 100)
             }
 
@@ -379,6 +381,7 @@ struct ClockOutputConfigView: View {
                             Text(wf.rawValue).tag(wf)
                         }
                     }
+                    .labelsHidden()
                     .frame(width: 100)
                 }
 
@@ -393,6 +396,7 @@ struct ClockOutputConfigView: View {
                         Text("FAST").tag(false)
                         Text("SLOW").tag(true)
                     }
+                    .labelsHidden()
                     .pickerStyle(.segmented)
                     .frame(width: 120)
                 }
@@ -435,12 +439,90 @@ struct ClockOutputConfigView: View {
                         Text(dest.displayName).tag(dest)
                     }
                 }
+                .labelsHidden()
                 .frame(width: 160)
             }
 
-            // Mod Amount
-            if output.destination != .none {
+            // Mod Amount (only for CV modulation destinations)
+            if output.destination != .none && !output.destination.isTriggerDestination {
                 parameterSlider(label: "Mod Amt", value: $output.modulationAmount, range: 0...1, format: "%.0f%%") { $0 * 100 }
+            }
+
+            // Euclidean section (visible when mode == .clock and destination is a trigger)
+            if output.mode == .clock && output.destination.isTriggerDestination {
+                Divider()
+                    .background(ColorPalette.divider)
+
+                // Euclidean enable toggle
+                HStack {
+                    Text("Euclidean")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundColor(ColorPalette.textMuted)
+                        .frame(width: 70, alignment: .leading)
+
+                    Toggle("", isOn: $output.euclideanEnabled)
+                        .toggleStyle(.switch)
+                        .tint(ClockOutputColors.brightColor(for: index))
+                        .labelsHidden()
+                }
+
+                if output.euclideanEnabled {
+                    // Steps stepper
+                    HStack {
+                        Text("Steps")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundColor(ColorPalette.textMuted)
+                            .frame(width: 70, alignment: .leading)
+
+                        Stepper(value: $output.euclideanSteps, in: 1...32) {
+                            Text("\(output.euclideanSteps)")
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .foregroundColor(.white)
+                                .frame(width: 30)
+                        }
+                    }
+
+                    // Fills stepper
+                    HStack {
+                        Text("Fills")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundColor(ColorPalette.textMuted)
+                            .frame(width: 70, alignment: .leading)
+
+                        Stepper(value: $output.euclideanFills, in: 0...output.euclideanSteps) {
+                            Text("\(output.euclideanFills)")
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .foregroundColor(.white)
+                                .frame(width: 30)
+                        }
+                    }
+
+                    // Rotation stepper
+                    HStack {
+                        Text("Rotate")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundColor(ColorPalette.textMuted)
+                            .frame(width: 70, alignment: .leading)
+
+                        Stepper(value: $output.euclideanRotation, in: 0...max(0, output.euclideanSteps - 1)) {
+                            Text("\(output.euclideanRotation)")
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .foregroundColor(.white)
+                                .frame(width: 30)
+                        }
+                    }
+
+                    // Horizontal bar pattern visualization
+                    EuclideanPatternView(
+                        pattern: output.euclideanPattern,
+                        steps: output.euclideanSteps,
+                        fills: output.euclideanFills,
+                        currentStep: output.euclideanCurrentStep,
+                        accentColor: ClockOutputColors.brightColor(for: index)
+                    )
+                    .frame(height: 28)
+                    .frame(maxWidth: .infinity)
+                }
             }
         }
         .padding(16)
@@ -471,6 +553,50 @@ struct ClockOutputConfigView: View {
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .foregroundColor(ColorPalette.textPanelLabel)
                 .frame(width: 45, alignment: .trailing)
+        }
+    }
+}
+
+// MARK: - Euclidean Pattern Visualization
+
+/// Horizontal bar visualization of a euclidean rhythm pattern.
+/// Each step is a discrete segment: active steps are filled, inactive are dim outlines.
+/// The current playback step is highlighted with a bright border.
+struct EuclideanPatternView: View {
+    let pattern: [Bool]
+    let steps: Int
+    let fills: Int
+    let currentStep: Int
+    let accentColor: Color
+
+    var body: some View {
+        GeometryReader { geo in
+            let totalSteps = max(1, steps)
+            let gap: CGFloat = 1.5
+            let totalGaps = gap * CGFloat(totalSteps - 1)
+            let segWidth = max(2, (geo.size.width - totalGaps) / CGFloat(totalSteps))
+            let height = geo.size.height
+
+            HStack(spacing: gap) {
+                ForEach(0..<totalSteps, id: \.self) { step in
+                    let isActive = step < pattern.count && pattern[step]
+                    // currentStep points to the NEXT step; highlight the one that just played
+                    let lastPlayed = (currentStep - 1 + totalSteps) % totalSteps
+                    let isCurrent = step == lastPlayed
+
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(isActive ? accentColor : accentColor.opacity(0.12))
+                        .frame(width: segWidth, height: height)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 2)
+                                .stroke(
+                                    isCurrent ? Color.white : Color.clear,
+                                    lineWidth: isCurrent ? 1.5 : 0
+                                )
+                        )
+                        .brightness(isCurrent && isActive ? 0.2 : 0)
+                }
+            }
         }
     }
 }

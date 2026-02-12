@@ -58,7 +58,7 @@ struct CompactClockOutputPad: View {
                     .minimumScaleFactor(0.7)
 
                 // Mode label
-                Text(output.mode == .clock ? "CLK" : "LFO")
+                Text(output.euclideanEnabled && output.mode == .clock ? "EUC" : (output.mode == .clock ? "CLK" : "LFO"))
                     .font(.system(size: 6, weight: .bold, design: .monospaced))
                     .foregroundColor(secondaryTextColor)
             }

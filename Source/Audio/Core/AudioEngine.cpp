@@ -226,7 +226,13 @@ AudioEngine::AudioEngine()
         m_clockOutputs[i].modulationAmount = 0.5f;
         m_clockOutputs[i].muted = false;
         m_clockOutputs[i].slowMode = false;
+        m_clockOutputs[i].euclideanEnabled = false;
+        m_clockOutputs[i].euclideanSteps = 8;
+        m_clockOutputs[i].euclideanPattern.fill(false);
+        m_clockOutputs[i].euclideanCurrentStep = 0;
+        m_clockOutputs[i].pendingTriggerOnStart = false;
         m_clockOutputs[i].phaseAccumulator = 0.0;
+        m_clockOutputs[i].lastPhaseAccumulator = 0.0;
         m_clockOutputs[i].currentValue = 0.0f;
         m_clockOutputs[i].sampleHoldValue = 0.0f;
         m_clockOutputs[i].smoothedRandomValue = 0.0f;
@@ -3377,10 +3383,13 @@ void AudioEngine::setClockBPM(float bpm) {
 
 void AudioEngine::setClockRunning(bool running) {
     if (running && !m_clockRunning.load()) {
-        // Starting clock - record start time and reset phases
+        // Starting clock - record start time and reset phases + euclidean counters
         m_clockStartSample = m_currentSampleTime.load(std::memory_order_relaxed);
         for (int i = 0; i < kNumClockOutputs; ++i) {
             m_clockOutputs[i].phaseAccumulator = m_clockOutputs[i].phase;
+            m_clockOutputs[i].lastPhaseAccumulator = m_clockOutputs[i].phase;
+            m_clockOutputs[i].euclideanCurrentStep = 0;
+            m_clockOutputs[i].pendingTriggerOnStart = true;  // Fire trigger on beat 1
         }
     }
     m_clockRunning.store(running);
@@ -3389,9 +3398,12 @@ void AudioEngine::setClockRunning(bool running) {
 void AudioEngine::setClockStartSample(uint64_t startSample) {
     // Set the clock start sample explicitly for synchronization with sequencer
     m_clockStartSample = startSample;
-    // Reset all phase accumulators to their initial phase offset
+    // Reset all phase accumulators to their initial phase offset and euclidean counters
     for (int i = 0; i < kNumClockOutputs; ++i) {
         m_clockOutputs[i].phaseAccumulator = m_clockOutputs[i].phase;
+        m_clockOutputs[i].lastPhaseAccumulator = m_clockOutputs[i].phase;
+        m_clockOutputs[i].euclideanCurrentStep = 0;
+        m_clockOutputs[i].pendingTriggerOnStart = true;  // Fire trigger on beat 1
     }
 }
 
@@ -3487,6 +3499,32 @@ float AudioEngine::getModulationValue(int destination) const {
         return m_modulationValues[destination];
     }
     return 0.0f;
+}
+
+void AudioEngine::setClockOutputEuclidean(int outputIndex, bool enabled, int steps,
+                                           const bool* pattern, int patternLength) {
+    if (outputIndex < 0 || outputIndex >= kNumClockOutputs) return;
+
+    auto& out = m_clockOutputs[outputIndex];
+    out.euclideanEnabled = enabled;
+    out.euclideanSteps = std::clamp(steps, 1, 32);
+
+    // Copy pattern array
+    out.euclideanPattern.fill(false);
+    const int copyLen = std::min(patternLength, 32);
+    for (int i = 0; i < copyLen; ++i) {
+        out.euclideanPattern[i] = pattern[i];
+    }
+
+    // Reset step counter when pattern changes
+    out.euclideanCurrentStep = 0;
+}
+
+int AudioEngine::getClockOutputEuclideanStep(int outputIndex) const {
+    if (outputIndex >= 0 && outputIndex < kNumClockOutputs) {
+        return m_clockOutputs[outputIndex].euclideanCurrentStep;
+    }
+    return 0;
 }
 
 float AudioEngine::generateWaveform(int waveform, double phase, float width, ClockOutputState& state) {
@@ -3604,17 +3642,29 @@ void AudioEngine::processClockOutputs(int numFrames) {
             multiplier *= 0.25f;
         }
 
+        // When euclidean is enabled on a trigger destination, multiply rate by steps
+        // so that "steps" subdivides the clock period (e.g. 16 steps at x1 = 16 pulses per beat)
+        const bool euclideanSubdivide = out.euclideanEnabled
+            && out.euclideanSteps > 1
+            && isModDestTrigger(static_cast<ModulationDestination>(out.destination));
+        if (euclideanSubdivide) {
+            multiplier *= static_cast<float>(out.euclideanSteps);
+        }
+
         const double cyclesPerSample = (beatsPerSecond * static_cast<double>(multiplier)) / static_cast<double>(m_sampleRate);
 
-        // Save starting phase for per-sample scope rendering
+        // Save starting phase for per-sample scope rendering and wrap detection
         const double startPhase = out.phaseAccumulator;
+        out.lastPhaseAccumulator = out.phaseAccumulator;
 
         // Advance phase for this buffer
         out.phaseAccumulator += cyclesPerSample * static_cast<double>(numFrames);
 
-        // Wrap phase to 0-1
+        // Count and apply phase wraps (can wrap multiple times at fast rates)
+        int numWraps = 0;
         while (out.phaseAccumulator >= 1.0) {
             out.phaseAccumulator -= 1.0;
+            numWraps++;
         }
 
         // Generate waveform value (end of buffer — used for modulation and UI readback)
@@ -3666,10 +3716,87 @@ void AudioEngine::processClockOutputs(int numFrames) {
             }
         }
 
-        // Route to modulation destination
+        // Route to modulation or trigger destination
         if (out.destination > 0 && out.destination < static_cast<int>(ModulationDestination::NumDestinations)) {
-            float modValue = finalValue * out.modulationAmount;
-            m_modulationValues[out.destination] += modValue;
+            auto dest = static_cast<ModulationDestination>(out.destination);
+
+            if (isModDestTrigger(dest) && (numWraps > 0 || out.pendingTriggerOnStart)) {
+                // Trigger destination — fire NoteOn on each phase wrap (or on clock start)
+                const uint64_t bufferStart = m_currentSampleTime.load(std::memory_order_relaxed);
+                const uint8_t mask = targetMaskForTriggerDest(dest);
+                const int note = noteForTriggerDest(dest);
+                const int velocity = std::clamp(static_cast<int>(out.level * 127.0f), 1, 127);
+
+                // Fire beat-1 trigger on clock start (before any phase wraps)
+                if (out.pendingTriggerOnStart) {
+                    out.pendingTriggerOnStart = false;
+
+                    // Check euclidean pattern filter for step 0
+                    bool shouldFire = true;
+                    if (out.euclideanEnabled && out.euclideanSteps > 0) {
+                        int step = out.euclideanCurrentStep % out.euclideanSteps;
+                        shouldFire = out.euclideanPattern[step];
+                    }
+
+                    if (shouldFire) {
+                        ScheduledNoteEvent event;
+                        event.sampleTime = bufferStart;  // Exact start of buffer
+                        event.note = static_cast<uint8_t>(note);
+                        event.velocity = static_cast<uint8_t>(velocity);
+                        event.isNoteOn = true;
+                        event.targetMask = mask;
+                        event.trackId = 0;
+                        enqueueScheduledEvent(event);
+                    }
+
+                    // Advance euclidean step for beat 1
+                    if (out.euclideanEnabled && out.euclideanSteps > 0) {
+                        out.euclideanCurrentStep = (out.euclideanCurrentStep + 1) % out.euclideanSteps;
+                    }
+                }
+
+                // Calculate sample offset for each wrap within this buffer
+                double phaseAtStart = out.lastPhaseAccumulator;
+                int wrapsSoFar = 0;
+
+                for (int w = 0; w < numWraps; ++w) {
+                    // Find the sample offset where this wrap occurred
+                    double phaseUntilWrap = static_cast<double>(wrapsSoFar + 1) - phaseAtStart;
+                    int sampleOffset = (cyclesPerSample > 0.0)
+                        ? static_cast<int>(phaseUntilWrap / cyclesPerSample)
+                        : 0;
+                    sampleOffset = std::clamp(sampleOffset, 0, numFrames - 1);
+
+                    // Check euclidean pattern filter
+                    bool shouldFire = true;
+                    if (out.euclideanEnabled && out.euclideanSteps > 0) {
+                        int step = out.euclideanCurrentStep % out.euclideanSteps;
+                        shouldFire = out.euclideanPattern[step];
+                    }
+
+                    if (shouldFire) {
+                        ScheduledNoteEvent event;
+                        event.sampleTime = bufferStart + static_cast<uint64_t>(sampleOffset);
+                        event.note = static_cast<uint8_t>(note);
+                        event.velocity = static_cast<uint8_t>(velocity);
+                        event.isNoteOn = true;
+                        event.targetMask = mask;
+                        event.trackId = 0;
+                        enqueueScheduledEvent(event);
+                    }
+
+                    // Always advance euclidean step (even if muted by pattern)
+                    if (out.euclideanEnabled && out.euclideanSteps > 0) {
+                        out.euclideanCurrentStep = (out.euclideanCurrentStep + 1) % out.euclideanSteps;
+                    }
+
+                    wrapsSoFar++;
+                }
+            } else if (!isModDestTrigger(dest)) {
+                // CV modulation destination
+                float modValue = finalValue * out.modulationAmount;
+                m_modulationValues[out.destination] += modValue;
+            }
         }
     }
 }

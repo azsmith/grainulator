@@ -169,6 +169,13 @@ func AudioEngine_GetClockOutputValue(_ handle: OpaquePointer, _ outputIndex: Int
 @_silgen_name("AudioEngine_GetModulationValue")
 func AudioEngine_GetModulationValue(_ handle: OpaquePointer, _ destination: Int32) -> Float
 
+// Euclidean rhythm control
+@_silgen_name("AudioEngine_SetClockOutputEuclidean")
+func AudioEngine_SetClockOutputEuclidean(_ handle: OpaquePointer, _ outputIndex: Int32, _ enabled: Bool, _ steps: Int32, _ pattern: UnsafePointer<Bool>, _ patternLength: Int32)
+
+@_silgen_name("AudioEngine_GetClockOutputEuclideanStep")
+func AudioEngine_GetClockOutputEuclideanStep(_ handle: OpaquePointer, _ outputIndex: Int32) -> Int32
+
 // Multi-channel ring buffer processing (for AU plugin hosting)
 @_silgen_name("AudioEngine_StartMultiChannelProcessing")
 func AudioEngine_StartMultiChannelProcessing(_ handle: OpaquePointer)
@@ -2691,6 +2698,21 @@ class AudioEngineWrapper: ObservableObject {
     func setClockOutputSlowMode(index: Int, slow: Bool) {
         guard let handle = cppEngineHandle else { return }
         AudioEngine_SetClockOutputSlowMode(handle, Int32(index), slow)
+    }
+
+    /// Configures euclidean rhythm pattern for a clock output
+    func setClockOutputEuclidean(index: Int, enabled: Bool, steps: Int, pattern: [Bool]) {
+        guard let handle = cppEngineHandle else { return }
+        pattern.withUnsafeBufferPointer { bufPtr in
+            guard let baseAddr = bufPtr.baseAddress else { return }
+            AudioEngine_SetClockOutputEuclidean(handle, Int32(index), enabled, Int32(steps), baseAddr, Int32(pattern.count))
+        }
+    }
+
+    /// Gets the current euclidean step index for a clock output
+    func getClockOutputEuclideanStep(index: Int) -> Int {
+        guard let handle = cppEngineHandle else { return 0 }
+        return Int(AudioEngine_GetClockOutputEuclideanStep(handle, Int32(index)))
     }
 
     /// Gets the current modulation value for a destination (bipolar -1 to +1)

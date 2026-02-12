@@ -339,6 +339,19 @@ float AudioEngine_GetModulationValue(AudioEngineHandle handle, int destination) 
     return static_cast<AudioEngine*>(handle)->getModulationValue(destination);
 }
 
+// MARK: - Euclidean Rhythm Control
+
+void AudioEngine_SetClockOutputEuclidean(AudioEngineHandle handle, int outputIndex, bool enabled, int steps, const bool* pattern, int patternLength) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setClockOutputEuclidean(outputIndex, enabled, steps, pattern, patternLength);
+    }
+}
+
+int AudioEngine_GetClockOutputEuclideanStep(AudioEngineHandle handle, int outputIndex) {
+    if (!handle) return 0;
+    return static_cast<AudioEngine*>(handle)->getClockOutputEuclideanStep(outputIndex);
+}
+
 // MARK: - Multi-channel Ring Buffer Processing
 
 void AudioEngine_StartMultiChannelProcessing(AudioEngineHandle handle) {
