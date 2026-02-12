@@ -84,6 +84,7 @@ AudioEngine::AudioEngine()
     , m_daisyDrumTimbre(0.5f)
     , m_daisyDrumMorph(0.5f)
     , m_daisyDrumLevel(0.8f)
+    , m_daisyDrumNoteOffset(0.0f)
     , m_drumSeqLevel{0.8f, 0.8f, 0.8f, 0.8f}
     , m_drumSeqHarmonics{0.5f, 0.5f, 0.5f, 0.5f}
     , m_drumSeqTimbre{0.5f, 0.5f, 0.5f, 0.5f}
@@ -515,7 +516,9 @@ void AudioEngine::noteOnTarget(int note, int velocity, uint8_t targetMask, uint8
     }
 
     if ((targetMask & static_cast<uint8_t>(NoteTarget::TargetDaisyDrum)) != 0 && m_daisyDrumVoice) {
-        m_daisyDrumVoice->SetNote(static_cast<float>(note));
+        // Apply note offset from the NOTE knob to the incoming MIDI note
+        float offsetNote = std::clamp(static_cast<float>(note) + m_daisyDrumNoteOffset, 0.0f, 127.0f);
+        m_daisyDrumVoice->SetNote(offsetNote);
         m_daisyDrumVoice->SetLevel(static_cast<float>(velocity) / 127.0f);
         m_daisyDrumVoice->SetEngine(m_currentDaisyDrumEngine);
         m_daisyDrumVoice->SetHarmonics(m_daisyDrumHarmonics);
@@ -2431,6 +2434,13 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
             }
             break;
 
+        case ParameterID::DaisyDrumNote:
+        {
+            // Map 0-1 to semitone offset: -30 to +30 (0.5 = no offset)
+            m_daisyDrumNoteOffset = (clampedValue - 0.5f) * 60.0f;
+            break;
+        }
+
         // SoundFont sampler parameters
         case ParameterID::SamplerPreset:
             if (m_soundFontVoice) {
@@ -2663,6 +2673,7 @@ float AudioEngine::getParameter(ParameterID id, int voiceIndex) const {
         case ParameterID::DaisyDrumTimbre: return clamp01(m_daisyDrumTimbre);
         case ParameterID::DaisyDrumMorph: return clamp01(m_daisyDrumMorph);
         case ParameterID::DaisyDrumLevel: return clamp01(m_daisyDrumLevel);
+        case ParameterID::DaisyDrumNote: return clamp01((m_daisyDrumNoteOffset + 30.0f) / 60.0f);
 
         // Looper readbacks (tracks 2 & 3)
         case ParameterID::LooperRate: {
@@ -2735,6 +2746,7 @@ void AudioEngine::triggerDaisyDrum(bool state) {
             m_daisyDrumVoice->SetTimbre(m_daisyDrumTimbre);
             m_daisyDrumVoice->SetMorph(m_daisyDrumMorph);
             m_daisyDrumVoice->SetLevel(m_daisyDrumLevel);
+            m_daisyDrumVoice->SetNote(60.0f + m_daisyDrumNoteOffset);
         }
         m_daisyDrumVoice->Trigger(state);
     }

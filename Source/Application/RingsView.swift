@@ -67,7 +67,8 @@ struct RingsView: View {
         SynthPanelView(
             title: "RESONATOR",
             accentColor: ColorPalette.accentRings,
-            width: 280
+            width: 280,
+            onReset: resetToDefaults
         ) {
             VStack(spacing: 6) {
                 // Model selector
@@ -94,6 +95,7 @@ struct RingsView: View {
                         accentColor: ColorPalette.accentRings,
                         size: .large,
                         style: .minimoog,
+                        defaultValue: 0.30,
                         modulationValue: structureMod > 0.001 ? structure + structureMod : nil
                     )
                     ProKnobView(
@@ -102,6 +104,7 @@ struct RingsView: View {
                         accentColor: ColorPalette.accentRings,
                         size: .large,
                         style: .minimoog,
+                        defaultValue: 0.40,
                         modulationValue: brightnessMod > 0.001 ? brightness + brightnessMod : nil
                     )
                 }
@@ -115,6 +118,7 @@ struct RingsView: View {
                         accentColor: ColorPalette.accentRings,
                         size: .medium,
                         style: .minimoog,
+                        defaultValue: 0.39,
                         modulationValue: dampingMod > 0.001 ? damping + dampingMod : nil
                     )
                     ProKnobView(
@@ -123,6 +127,7 @@ struct RingsView: View {
                         accentColor: ColorPalette.accentRings,
                         size: .medium,
                         style: .minimoog,
+                        defaultValue: 0.97,
                         modulationValue: positionMod > 0.001 ? position + positionMod : nil
                     )
                 }
@@ -143,6 +148,7 @@ struct RingsView: View {
                         accentColor: ColorPalette.accentRings,
                         size: .medium,
                         style: .minimoog,
+                        defaultValue: 0.8,
                         valueFormatter: { String(format: "%.0f%%", $0 * 100) }
                     )
                 }
@@ -356,6 +362,30 @@ struct RingsView: View {
                 )
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Reset
+
+    private func resetToDefaults() {
+        structure = 0.30
+        brightness = 0.40
+        damping = 0.39
+        position = 0.97
+        level = 0.8
+        fm = 0.0  // bipolar center
+        polyphony = 1
+        chord = 0
+        exciterSource = 0
+
+        audioEngine.setParameter(id: .ringsStructure, value: 0.30)
+        audioEngine.setParameter(id: .ringsBrightness, value: 0.40)
+        audioEngine.setParameter(id: .ringsDamping, value: 0.39)
+        audioEngine.setParameter(id: .ringsPosition, value: 0.97)
+        audioEngine.setParameter(id: .ringsLevel, value: 0.8)
+        audioEngine.setParameter(id: .ringsFM, value: 0.5)  // normalized center
+        audioEngine.setParameter(id: .ringsPolyphony, value: 0.5)  // 2 voices
+        audioEngine.setParameter(id: .ringsChord, value: 0.0)
+        audioEngine.setParameter(id: .ringsExciterSource, value: 0.0)
     }
 
     // MARK: - Helpers

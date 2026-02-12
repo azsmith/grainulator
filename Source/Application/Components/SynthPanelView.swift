@@ -15,17 +15,20 @@ struct SynthPanelView<Content: View>: View {
     let title: String
     let accentColor: Color
     let width: CGFloat
+    let onReset: (() -> Void)?
     @ViewBuilder let content: () -> Content
 
     init(
         title: String,
         accentColor: Color,
         width: CGFloat = 300,
+        onReset: (() -> Void)? = nil,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.title = title
         self.accentColor = accentColor
         self.width = width
+        self.onReset = onReset
         self.content = content
     }
 
@@ -74,6 +77,18 @@ struct SynthPanelView<Content: View>: View {
                 .shadow(color: Color.white.opacity(0.08), radius: 0, x: 0, y: -1)
 
             Spacer()
+
+            // Reset button (small, out of the way)
+            if let onReset {
+                Button(action: onReset) {
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(ColorPalette.synthPanelLabelDim)
+                }
+                .buttonStyle(.plain)
+                .help("Reset to Defaults")
+                .padding(.trailing, 8)
+            }
 
             // Accent dot indicator
             Circle()

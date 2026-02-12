@@ -373,7 +373,8 @@ struct ProjectSerializer {
             harmonics: engine.getParameter(id: .daisyDrumHarmonics),
             timbre: engine.getParameter(id: .daisyDrumTimbre),
             morph: engine.getParameter(id: .daisyDrumMorph),
-            level: engine.getParameter(id: .daisyDrumLevel)
+            level: engine.getParameter(id: .daisyDrumLevel),
+            note: engine.getParameter(id: .daisyDrumNote)
         )
     }
 
@@ -813,6 +814,7 @@ struct ProjectSerializer {
         engine.setParameter(id: .daisyDrumTimbre, value: snapshot.timbre)
         engine.setParameter(id: .daisyDrumMorph, value: snapshot.morph)
         engine.setParameter(id: .daisyDrumLevel, value: snapshot.level)
+        engine.setParameter(id: .daisyDrumNote, value: snapshot.note ?? 0.5)  // Default to 0 offset (center)
     }
 
     // MARK: - Restore SoundFont Sampler Voice

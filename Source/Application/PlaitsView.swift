@@ -86,7 +86,8 @@ struct PlaitsView: View {
         SynthPanelView(
             title: "MACRO OSC",
             accentColor: ColorPalette.accentPlaits,
-            width: 300
+            width: 300,
+            onReset: resetToDefaults
         ) {
             VStack(spacing: 6) {
                 // Engine selector + MIDI indicator
@@ -231,6 +232,7 @@ struct PlaitsView: View {
                     accentColor: ColorPalette.accentPlaits,
                     size: .large,
                     style: .minimoog,
+                    defaultValue: 0.35,
                     modulationValue: harmonicsMod > 0.001 ? harmonics + harmonicsMod : nil
                 )
                 ProKnobView(
@@ -239,6 +241,7 @@ struct PlaitsView: View {
                     accentColor: ColorPalette.accentPlaits,
                     size: .large,
                     style: .minimoog,
+                    defaultValue: 0.31,
                     modulationValue: timbreMod > 0.001 ? timbre + timbreMod : nil
                 )
             }
@@ -251,6 +254,7 @@ struct PlaitsView: View {
                     accentColor: ColorPalette.accentPlaits,
                     size: .large,
                     style: .minimoog,
+                    defaultValue: 0.51,
                     modulationValue: morphMod > 0.001 ? morph + morphMod : nil
                 )
                 ProKnobView(
@@ -259,6 +263,7 @@ struct PlaitsView: View {
                     accentColor: ColorPalette.accentPlaits,
                     size: .large,
                     style: .minimoog,
+                    defaultValue: 0.8,
                     valueFormatter: { String(format: "%.0f%%", $0 * 100) }
                 )
             }
@@ -279,21 +284,24 @@ struct PlaitsView: View {
                 label: "ATTACK",
                 accentColor: ColorPalette.accentLooper1,
                 size: .medium,
-                style: .minimoog
+                style: .minimoog,
+                defaultValue: 0.0
             )
             ProKnobView(
                 value: $lpgDecay,
                 label: "DECAY",
                 accentColor: ColorPalette.accentLooper1,
                 size: .medium,
-                style: .minimoog
+                style: .minimoog,
+                defaultValue: 0.5
             )
             ProKnobView(
                 value: $lpgColor,
                 label: "COLOR",
                 accentColor: ColorPalette.ledAmber,
                 size: .medium,
-                style: .minimoog
+                style: .minimoog,
+                defaultValue: 0.0
             )
 
             // Bypass toggle
@@ -486,6 +494,28 @@ struct PlaitsView: View {
         }
         .buttonStyle(.plain)
         .shadow(color: isTriggered ? ColorPalette.accentPlaits.opacity(0.4) : .clear, radius: 6)
+    }
+
+    // MARK: - Reset
+
+    private func resetToDefaults() {
+        harmonics = 0.35
+        timbre = 0.31
+        morph = 0.51
+        level = 0.8
+        lpgAttack = 0.0
+        lpgDecay = 0.5
+        lpgColor = 0.0
+        lpgBypass = false
+
+        audioEngine.setParameter(id: .plaitsHarmonics, value: 0.35)
+        audioEngine.setParameter(id: .plaitsTimbre, value: 0.31)
+        audioEngine.setParameter(id: .plaitsMorph, value: 0.51)
+        audioEngine.setParameter(id: .plaitsLevel, value: 0.8)
+        audioEngine.setParameter(id: .plaitsLPGAttack, value: 0.0)
+        audioEngine.setParameter(id: .plaitsLPGDecay, value: 0.5)
+        audioEngine.setParameter(id: .plaitsLPGColor, value: 0.0)
+        audioEngine.setParameter(id: .plaitsLPGBypass, value: 0.0)
     }
 
     // MARK: - Helpers

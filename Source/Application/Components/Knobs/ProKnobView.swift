@@ -424,7 +424,7 @@ struct ProKnobView: View {
     // MARK: - Drag Gesture
 
     private var dragGesture: some Gesture {
-        DragGesture(minimumDistance: 0)
+        DragGesture(minimumDistance: 2)
             .onChanged { gesture in
                 if !isDragging {
                     isDragging = true

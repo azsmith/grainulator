@@ -1850,24 +1850,25 @@ class AudioEngineWrapper: ObservableObject {
         case .daisyDrumTimbre: return 66
         case .daisyDrumMorph: return 67
         case .daisyDrumLevel: return 68
+        case .daisyDrumNote: return 69
 
-        // SoundFont sampler parameters (69-77)
-        case .samplerPreset: return 69
-        case .samplerAttack: return 70
-        case .samplerDecay: return 71
-        case .samplerSustain: return 72
-        case .samplerRelease: return 73
-        case .samplerFilterCutoff: return 74
-        case .samplerFilterResonance: return 75
-        case .samplerTuning: return 76
-        case .samplerLevel: return 77
-        case .samplerMode: return 78
+        // SoundFont sampler parameters (70-79)
+        case .samplerPreset: return 70
+        case .samplerAttack: return 71
+        case .samplerDecay: return 72
+        case .samplerSustain: return 73
+        case .samplerRelease: return 74
+        case .samplerFilterCutoff: return 75
+        case .samplerFilterResonance: return 76
+        case .samplerTuning: return 77
+        case .samplerLevel: return 78
+        case .samplerMode: return 79
 
-        // Rings extended parameters (79-82)
-        case .ringsPolyphony: return 79
-        case .ringsChord: return 80
-        case .ringsFM: return 81
-        case .ringsExciterSource: return 82
+        // Rings extended parameters (80-83)
+        case .ringsPolyphony: return 80
+        case .ringsChord: return 81
+        case .ringsFM: return 82
+        case .ringsExciterSource: return 83
         }
     }
 
@@ -2911,6 +2912,7 @@ enum ParameterID {
     case daisyDrumTimbre
     case daisyDrumMorph
     case daisyDrumLevel
+    case daisyDrumNote
 
     // SoundFont sampler parameters
     case samplerPreset

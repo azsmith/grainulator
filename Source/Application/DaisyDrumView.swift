@@ -16,6 +16,7 @@ struct DaisyDrumView: View {
     @State private var timbre: Float = 0.5
     @State private var morph: Float = 0.5
     @State private var level: Float = 0.8
+    @State private var note: Float = 0.5  // 0-1 bipolar offset: 0.5 = 0 semitones, maps to -30..+30 st
     @State private var isTriggered: Bool = false
 
     // Modulation amounts (updated via timer)
@@ -48,7 +49,8 @@ struct DaisyDrumView: View {
         SynthPanelView(
             title: "DRUMS",
             accentColor: ColorPalette.accentDaisyDrum,
-            width: 280
+            width: 280,
+            onReset: resetToDefaults
         ) {
             VStack(spacing: 6) {
                 // Engine selector
@@ -65,6 +67,7 @@ struct DaisyDrumView: View {
                             accentColor: ColorPalette.accentDaisyDrum,
                             size: .large,
                             style: .minimoog,
+                            defaultValue: 0.5,
                             modulationValue: harmonicsMod > 0.001 ? harmonics + harmonicsMod : nil
                         )
                         ProKnobView(
@@ -73,6 +76,7 @@ struct DaisyDrumView: View {
                             accentColor: ColorPalette.accentDaisyDrum,
                             size: .large,
                             style: .minimoog,
+                            defaultValue: 0.5,
                             modulationValue: timbreMod > 0.001 ? timbre + timbreMod : nil
                         )
                     }
@@ -84,6 +88,7 @@ struct DaisyDrumView: View {
                             accentColor: ColorPalette.accentDaisyDrum,
                             size: .large,
                             style: .minimoog,
+                            defaultValue: 0.5,
                             modulationValue: morphMod > 0.001 ? morph + morphMod : nil
                         )
                         ProKnobView(
@@ -92,10 +97,30 @@ struct DaisyDrumView: View {
                             accentColor: ColorPalette.accentDaisyDrum,
                             size: .large,
                             style: .minimoog,
+                            defaultValue: 0.8,
                             valueFormatter: { String(format: "%.0f%%", $0 * 100) }
                         )
                     }
                 }
+                .padding(.horizontal, 12)
+
+                SynthPanelSectionLabel("PITCH", accentColor: ColorPalette.synthPanelLabelDim)
+
+                // Note offset knob (bipolar: -30 to +30 semitones)
+                ProKnobView(
+                    value: $note,
+                    label: "NOTE",
+                    accentColor: ColorPalette.accentDaisyDrum,
+                    size: .medium,
+                    style: .minimoog,
+                    defaultValue: 0.5,
+                    isBipolar: true,
+                    valueFormatter: { val in
+                        let semitones = Int(round((val - 0.5) * 60.0))
+                        if semitones == 0 { return "0 st" }
+                        return String(format: "%+d st", semitones)
+                    }
+                )
                 .padding(.horizontal, 12)
 
                 // Trigger button
@@ -109,11 +134,30 @@ struct DaisyDrumView: View {
         .onChange(of: timbre) { audioEngine.setParameter(id: .daisyDrumTimbre, value: $0) }
         .onChange(of: morph) { audioEngine.setParameter(id: .daisyDrumMorph, value: $0) }
         .onChange(of: level) { audioEngine.setParameter(id: .daisyDrumLevel, value: $0) }
+        .onChange(of: note) { audioEngine.setParameter(id: .daisyDrumNote, value: $0) }
         .onReceive(modulationTimer) { _ in
             harmonicsMod = audioEngine.getModulationValue(destination: .daisyDrumHarmonics)
             timbreMod = audioEngine.getModulationValue(destination: .daisyDrumTimbre)
             morphMod = audioEngine.getModulationValue(destination: .daisyDrumMorph)
         }
+    }
+
+    // MARK: - Reset
+
+    private func resetToDefaults() {
+        selectedEngine = 0
+        harmonics = 0.5
+        timbre = 0.5
+        morph = 0.5
+        level = 0.8
+        note = 0.5
+
+        audioEngine.setParameter(id: .daisyDrumEngine, value: 0.0)
+        audioEngine.setParameter(id: .daisyDrumHarmonics, value: 0.5)
+        audioEngine.setParameter(id: .daisyDrumTimbre, value: 0.5)
+        audioEngine.setParameter(id: .daisyDrumMorph, value: 0.5)
+        audioEngine.setParameter(id: .daisyDrumLevel, value: 0.8)
+        audioEngine.setParameter(id: .daisyDrumNote, value: 0.5)
     }
 
     // MARK: - Header Section

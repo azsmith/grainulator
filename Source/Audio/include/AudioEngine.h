@@ -237,6 +237,7 @@ public:
         DaisyDrumTimbre,       // 0–1
         DaisyDrumMorph,        // 0–1
         DaisyDrumLevel,        // 0–1
+        DaisyDrumNote,         // 0–1 maps to MIDI 24–84
 
         // SoundFont sampler parameters
         SamplerPreset,          // 0–1 maps to preset index
@@ -609,6 +610,7 @@ private:
     float m_daisyDrumTimbre;
     float m_daisyDrumMorph;
     float m_daisyDrumLevel;
+    float m_daisyDrumNoteOffset;  // Semitone offset (-30 to +30), applied to all trigger sources
 
     // Granular parameters (Mangl-style, for currently selected voice)
     float m_granularSpeed;

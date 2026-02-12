@@ -287,6 +287,7 @@ struct DaisyDrumVoiceSnapshot: Codable {
     var timbre: Float
     var morph: Float
     var level: Float
+    var note: Float?                // Normalized 0-1 (maps to MIDI 24-84), nil for old projects
 }
 
 // MARK: - SoundFont Sampler Voice Snapshot
