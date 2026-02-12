@@ -20,6 +20,9 @@ Grainulator is a real-time synthesis workstation combining granular sampling, wa
 - **Project Save/Load**: Full project serialization with versioned snapshots
 - **MIDI Support**: Note input, CC mapping, pitch bend
 
+## Acknowledgements
+This application has been built with the aid of AI coding tools. It builds on the work and ideas of many talented engineers who have created amazing instruments and systems for music creation, often sharing their work through open source software. These include Émilie Gillet (Mutable Instruments), Brian Crabtree (Monome), engineers at Make Noise, Intellijel, and ALM, among others. I'm also indebted to the community that has grown around monome instruments and the norns platform for many of the ideas found here.
+
 ## Building
 
 ```bash
