@@ -354,20 +354,35 @@ struct RingsView: View {
     // MARK: - Helpers
 
     private func syncToEngine() {
-        audioEngine.setParameter(id: .ringsModel, value: Float(modelIndex) / Float(max(modelNames.count - 1, 1)))
-        audioEngine.setParameter(id: .ringsStructure, value: structure)
-        audioEngine.setParameter(id: .ringsBrightness, value: brightness)
-        audioEngine.setParameter(id: .ringsDamping, value: damping)
-        audioEngine.setParameter(id: .ringsPosition, value: position)
-        audioEngine.setParameter(id: .ringsLevel, value: level)
+        // Read current state FROM the engine so tab switches don't reset parameters
+        let rawModel = audioEngine.getParameter(id: .ringsModel)
+        let idx = Int(round(rawModel * Float(max(modelNames.count - 1, 1))))
+        if idx >= 0 && idx < modelNames.count {
+            modelIndex = idx
+        }
 
-        let polyNorm: Float = [0.0, 0.5, 1.0][polyphony]
-        audioEngine.setParameter(id: .ringsPolyphony, value: polyNorm)
-        audioEngine.setParameter(id: .ringsChord, value: Float(chord) / 10.0)
-        audioEngine.setParameter(id: .ringsFM, value: (fm + 1.0) / 2.0)
-        let channel = exciterSourceChannels[exciterSource]
-        let exciterNorm: Float = channel < 0 ? 0.0 : (Float(channel) + 0.5) / 12.0
-        audioEngine.setParameter(id: .ringsExciterSource, value: exciterNorm)
+        structure = audioEngine.getParameter(id: .ringsStructure)
+        brightness = audioEngine.getParameter(id: .ringsBrightness)
+        damping = audioEngine.getParameter(id: .ringsDamping)
+        position = audioEngine.getParameter(id: .ringsPosition)
+        level = audioEngine.getParameter(id: .ringsLevel)
+
+        let polyNorm = audioEngine.getParameter(id: .ringsPolyphony)
+        polyphony = polyNorm < 0.25 ? 0 : (polyNorm < 0.75 ? 1 : 2)
+
+        let chordNorm = audioEngine.getParameter(id: .ringsChord)
+        chord = min(10, max(0, Int(round(chordNorm * 10.0))))
+
+        let fmNorm = audioEngine.getParameter(id: .ringsFM)
+        fm = fmNorm * 2.0 - 1.0
+
+        let exciterNorm = audioEngine.getParameter(id: .ringsExciterSource)
+        if exciterNorm < 0.01 {
+            exciterSource = 0 // Internal
+        } else {
+            let channel = Int(round(exciterNorm * 12.0 - 0.5))
+            exciterSource = exciterSourceChannels.firstIndex(of: channel) ?? 0
+        }
     }
 }
 

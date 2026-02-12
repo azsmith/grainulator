@@ -454,6 +454,9 @@ class AudioEngineWrapper: ObservableObject {
     /// Serial queue for audio graph mutations (stop/attach/connect/start).
     /// Keeps heavy AVAudioEngine operations off MainActor to prevent UI stalls.
     private let graphMutationQueue = DispatchQueue(label: "com.grainulator.graph-mutation", qos: .userInitiated)
+    /// Set while a graph mutation is in progress to prevent the config-change
+    /// notification handler from restarting the engine on a half-built graph.
+    private var graphMutationInFlight = false
 
     // C++ Audio Engine Bridge
     // Read-only access is thread-safe (set once during init, never changed).
@@ -736,6 +739,7 @@ class AudioEngineWrapper: ObservableObject {
         updateLegacySendReturnGain(busIndex)
 
         // Dispatch heavy engine work off MainActor
+        graphMutationInFlight = true
         graphMutationQueue.async { [weak self] in
             if needsRestart {
                 engine.stop()
@@ -816,6 +820,7 @@ class AudioEngineWrapper: ObservableObject {
             // Update MainActor state after graph work completes
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                self.graphMutationInFlight = false
                 self.isRunning = engine.isRunning
                 if hasPlugin, let au = currentAU, !isBypassed, busIndex < self.legacyAttachedSendAUs.count {
                     self.legacyAttachedSendAUs[busIndex] = au
@@ -1491,6 +1496,16 @@ class AudioEngineWrapper: ObservableObject {
 
     private func handleAudioConfigurationChange() {
         guard let engine = audioEngine else { return }
+
+        // If a graph mutation (send chain rebuild) is in progress, skip the
+        // auto-restart — the mutation block will restart the engine itself once
+        // the graph is fully rewired. Restarting mid-mutation causes distortion
+        // because connections are incomplete.
+        if graphMutationInFlight {
+            print("⚡ Audio config change during graph mutation — skipping auto-restart")
+            return
+        }
+
         let newRate = engine.outputNode.outputFormat(forBus: 0).sampleRate
 
         if newRate > 0 && newRate != sampleRate {

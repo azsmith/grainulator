@@ -529,18 +529,27 @@ struct PlaitsView: View {
     }
 
     private func syncToEngine() {
-        if !engines.indices.contains(selectedEngine) {
-            selectedEngine = 0
+        // Read current state FROM the engine so tab switches don't reset parameters
+        let modelNorm = audioEngine.getParameter(id: .plaitsModel)
+        let internalIndex = Int(round(modelNorm * 23.0))
+        if let uiIndex = engines.firstIndex(where: {
+            $0.internalIndex == internalIndex && !$0.isSixOpCustom
+        }) {
+            selectedEngine = uiIndex
+        } else if let uiIndex = engines.firstIndex(where: {
+            $0.internalIndex == internalIndex && $0.isSixOpCustom && audioEngine.plaitsSixOpCustomEnabled
+        }) {
+            selectedEngine = uiIndex
         }
-        selectEngine(selectedEngine)
-        applyHarmonics(harmonics)
-        audioEngine.setParameter(id: .plaitsTimbre, value: timbre)
-        audioEngine.setParameter(id: .plaitsMorph, value: morph)
-        audioEngine.setParameter(id: .plaitsLevel, value: level)
-        audioEngine.setParameter(id: .plaitsLPGAttack, value: lpgAttack)
-        audioEngine.setParameter(id: .plaitsLPGDecay, value: lpgDecay)
-        audioEngine.setParameter(id: .plaitsLPGColor, value: lpgColor)
-        audioEngine.setParameter(id: .plaitsLPGBypass, value: lpgBypass ? 1.0 : 0.0)
+
+        harmonics = audioEngine.getParameter(id: .plaitsHarmonics)
+        timbre = audioEngine.getParameter(id: .plaitsTimbre)
+        morph = audioEngine.getParameter(id: .plaitsMorph)
+        level = audioEngine.getParameter(id: .plaitsLevel)
+        lpgAttack = audioEngine.getParameter(id: .plaitsLPGAttack)
+        lpgDecay = audioEngine.getParameter(id: .plaitsLPGDecay)
+        lpgColor = audioEngine.getParameter(id: .plaitsLPGColor)
+        lpgBypass = audioEngine.getParameter(id: .plaitsLPGBypass) > 0.5
     }
 }
 
