@@ -14,17 +14,19 @@ struct WorkspaceTabView: View {
     @EnvironmentObject var audioEngine: AudioEngineWrapper
 
     var body: some View {
-        Group {
-            switch layoutState.currentTab {
-            case .sequencer:
-                SequencerTabView()
-            case .synths:
-                SynthsTabView()
-            case .granular:
-                GranularTabView()
-            case .drums:
-                DrumsTabView()
-            }
+        ZStack {
+            SequencerTabView()
+                .opacity(layoutState.currentTab == .sequencer ? 1 : 0)
+                .allowsHitTesting(layoutState.currentTab == .sequencer)
+            SynthsTabView()
+                .opacity(layoutState.currentTab == .synths ? 1 : 0)
+                .allowsHitTesting(layoutState.currentTab == .synths)
+            GranularTabView()
+                .opacity(layoutState.currentTab == .granular ? 1 : 0)
+                .allowsHitTesting(layoutState.currentTab == .granular)
+            DrumsTabView()
+                .opacity(layoutState.currentTab == .drums ? 1 : 0)
+                .allowsHitTesting(layoutState.currentTab == .drums)
         }
         .animation(.easeInOut(duration: 0.2), value: layoutState.currentTab)
     }
