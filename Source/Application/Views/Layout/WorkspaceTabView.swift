@@ -24,6 +24,8 @@ struct WorkspaceTabView: View {
                 GranularTabView()
             case .drums:
                 DrumsTabView()
+            case .scramble:
+                ScrambleTabView()
             }
         }
         .animation(.easeInOut(duration: 0.2), value: layoutState.currentTab)
@@ -222,6 +224,16 @@ struct GranularVoiceTabButton: View {
 struct DrumsTabView: View {
     var body: some View {
         DrumSequencerView()
+    }
+}
+
+// MARK: - Scramble Tab View
+
+struct ScrambleTabView: View {
+    var body: some View {
+        ScrollView {
+            ScrambleView()
+        }
     }
 }
 

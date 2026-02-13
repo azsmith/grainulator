@@ -213,6 +213,9 @@ struct ColorPalette {
     /// Master - gold
     static let accentMaster = Color(hex: "#FFD700")
 
+    /// Scramble - dark turquoise
+    static let accentScramble = Color(hex: "#00CED1")
+
     // MARK: - Text Colors
 
     /// Primary text - white
