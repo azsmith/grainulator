@@ -23,6 +23,7 @@ struct GrainulatorApp: App {
     @StateObject private var chordSequencer = ChordSequencer()
     @StateObject private var arcManager = MonomeArcManager()
     @StateObject private var gridManager = MonomeGridManager()
+    @StateObject private var scrambleManager = ScrambleManager()
 
     var body: some Scene {
         WindowGroup {
@@ -39,6 +40,7 @@ struct GrainulatorApp: App {
                 .environmentObject(chordSequencer)
                 .environmentObject(arcManager)
                 .environmentObject(gridManager)
+                .environmentObject(scrambleManager)
                 .frame(minWidth: 1200, minHeight: 600)
                 .onAppear {
                     // Ensure we get a proper menu bar when launched from terminal
@@ -84,6 +86,8 @@ struct GrainulatorApp: App {
                     setupMIDICallbacks()
                     arcManager.connect(audioEngine: audioEngine, appState: appState)
                     gridManager.connect(sequencer: sequencer, chordSequencer: chordSequencer, masterClock: masterClock, audioEngine: audioEngine, appState: appState)
+                    scrambleManager.connect(audioEngine: audioEngine, masterClock: masterClock, sequencer: sequencer)
+                    masterClock.connectScrambleManager(scrambleManager)
 
                     // Wire sequencer tempo/transport to AU host context for plugin sync
                     wireAUHostContext()
