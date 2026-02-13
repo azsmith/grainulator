@@ -121,4 +121,79 @@ final class ScrambleEngineTests: XCTestCase {
         XCTAssertEqual(out.value, 0.5, accuracy: 1e-10)
         XCTAssertFalse(out.triggered)
     }
+
+    // MARK: - Task 2: T Generator
+
+    func testComplementaryBernoulliGatesNeverBothTrue() {
+        var engine = ScrambleEngine()
+        engine.tSection.mode = .complementaryBernoulli
+
+        for _ in 0..<200 {
+            let out = engine.generateT()
+            // T1 and T2 are complementary — never both true simultaneously
+            XCTAssertFalse(out.t1 && out.t2, "Complementary gates T1 and T2 must never both be true")
+        }
+    }
+
+    func testComplementaryBernoulliT3IsOR() {
+        var engine = ScrambleEngine()
+        engine.tSection.mode = .complementaryBernoulli
+
+        for _ in 0..<200 {
+            let out = engine.generateT()
+            // T3 should always be the OR of T1 and T2
+            XCTAssertEqual(out.t3, out.t1 || out.t2, "T3 must be OR of T1 and T2")
+        }
+    }
+
+    func testIndependentBernoulliZeroBiasProducesNoGates() {
+        var engine = ScrambleEngine()
+        engine.tSection.mode = .independentBernoulli
+        engine.tSection.bias = 0.0
+
+        var anyGate = false
+        for _ in 0..<200 {
+            let out = engine.generateT()
+            if out.t1 || out.t2 || out.t3 {
+                anyGate = true
+            }
+        }
+        XCTAssertFalse(anyGate, "With bias=0, independent Bernoulli should produce no gates")
+    }
+
+    func testIndependentBernoulliFullBiasProducesAllGates() {
+        var engine = ScrambleEngine()
+        engine.tSection.mode = .independentBernoulli
+        engine.tSection.bias = 1.0
+
+        var allTrue = true
+        for _ in 0..<200 {
+            let out = engine.generateT()
+            if !out.t1 || !out.t2 || !out.t3 {
+                allTrue = false
+            }
+        }
+        XCTAssertTrue(allTrue, "With bias=1, independent Bernoulli should produce all gates")
+    }
+
+    func testDividerProducesRegularPattern() {
+        var engine = ScrambleEngine()
+        engine.tSection.mode = .divider
+        engine.tSection.bias = 0.5
+
+        var results: [ScrambleEngine.TOutput] = []
+        for _ in 0..<24 {
+            results.append(engine.generateT())
+        }
+
+        // Divider should produce a regular pattern, not all-on or all-off
+        let t1Count = results.filter { $0.t1 }.count
+        let t2Count = results.filter { $0.t2 }.count
+
+        // T1 fires every 2 steps, T2 every 3 steps
+        XCTAssertGreaterThan(t1Count, 0, "Divider T1 should fire some steps")
+        XCTAssertGreaterThan(t2Count, 0, "Divider T2 should fire some steps")
+        XCTAssertLessThan(t1Count, 24, "Divider T1 should not fire every step")
+        XCTAssertLessThan(t2Count, 24, "Divider T2 should not fire every step")
+    }
 }

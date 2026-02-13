@@ -190,4 +190,131 @@ struct ScrambleEngine: Codable {
 
     private var tStepCount: Int = 0
     private var yDividerCount: Int = 0
+    private var markovState: Int = 0
+    private var burstPhase: Int = 0
+    private var inBurst: Bool = false
+
+    // MARK: - Helpers
+
+    private static func fract(_ x: Double) -> Double {
+        return x - x.rounded(.down)
+    }
+
+    // MARK: - T Generator
+
+    mutating func generateT() -> TOutput {
+        let r = tSequence.next(
+            dejaVu: tSection.dejaVu,
+            amount: tSection.dejaVuAmount
+        ) { Double.random(in: 0.0...1.0) }
+
+        tStepCount += 1
+        let bias = tSection.bias
+
+        switch tSection.mode {
+        case .complementaryBernoulli:
+            return generateComplementaryBernoulli(r: r, bias: bias)
+        case .independentBernoulli:
+            return generateIndependentBernoulli(r: r, bias: bias)
+        case .threeStates:
+            return generateThreeStates(r: r, bias: bias)
+        case .drums:
+            return generateDrums(bias: bias)
+        case .markov:
+            return generateMarkov(r: r, bias: bias)
+        case .clusters:
+            return generateClusters(r: r, bias: bias)
+        case .divider:
+            return generateDivider(bias: bias)
+        }
+    }
+
+    private func generateComplementaryBernoulli(r: Double, bias: Double) -> TOutput {
+        let t1 = r >= bias
+        let t2 = !t1
+        let t3 = t1 || t2
+        return TOutput(t1: t1, t2: t2, t3: t3)
+    }
+
+    private func generateIndependentBernoulli(r: Double, bias: Double) -> TOutput {
+        let r1 = ScrambleEngine.fract(r)
+        let r2 = ScrambleEngine.fract(r + 0.333)
+        let r3 = ScrambleEngine.fract(r + 0.666)
+        let t1 = r1 < bias
+        let t2 = r2 < bias
+        let t3 = r3 < bias
+        return TOutput(t1: t1, t2: t2, t3: t3)
+    }
+
+    private func generateThreeStates(r: Double, bias: Double) -> TOutput {
+        let pNone = 0.75 - abs(bias - 0.5)
+        if r < pNone {
+            return TOutput(t1: false, t2: false, t3: false)
+        } else if r < pNone + (1.0 - pNone) * bias {
+            return TOutput(t1: true, t2: false, t3: true)
+        } else {
+            return TOutput(t1: false, t2: true, t3: true)
+        }
+    }
+
+    private func generateDrums(bias: Double) -> TOutput {
+        // 8 preset patterns; bias selects which one
+        let patterns: [[Bool]] = [
+            [true, false, false, false, true, false, false, false],  // four-on-floor
+            [true, false, true, false, true, false, true, false],    // 8ths
+            [true, false, false, true, false, false, true, false],   // tresillo
+            [true, false, false, false, false, false, false, false], // sparse
+            [true, false, true, false, false, true, false, true],    // funk
+            [false, true, false, true, false, true, false, true],    // offbeat
+            [true, false, false, true, false, true, false, false],   // syncopated
+            [true, false, false, false, false, false, false, false], // halftime
+        ]
+        let patternIndex = min(Int(bias * 8.0), 7)
+        let stepInPattern = (tStepCount - 1) % 8
+        let t1 = patterns[patternIndex][stepInPattern]
+        let t2 = patterns[patternIndex][(stepInPattern + 2) % 8]
+        let t3 = patterns[patternIndex][(stepInPattern + 4) % 8]
+        return TOutput(t1: t1, t2: t2, t3: t3)
+    }
+
+    private mutating func generateMarkov(r: Double, bias: Double) -> TOutput {
+        // 8-state machine, transition probability controlled by bias
+        if r < bias {
+            markovState = (markovState + 1) % 8
+        }
+        let t1 = markovState == 0
+        let t2 = markovState == 4
+        let t3 = t1 || t2
+        return TOutput(t1: t1, t2: t2, t3: t3)
+    }
+
+    private mutating func generateClusters(r: Double, bias: Double) -> TOutput {
+        if !inBurst && r < bias {
+            inBurst = true
+            burstPhase = 0
+        }
+
+        if inBurst {
+            let t1 = burstPhase == 0
+            let t2 = burstPhase == 1 || burstPhase == 2
+            let t3 = true
+            burstPhase += 1
+            if burstPhase >= 3 {
+                inBurst = false
+            }
+            return TOutput(t1: t1, t2: t2, t3: t3)
+        }
+
+        return TOutput()
+    }
+
+    private func generateDivider(bias: Double) -> TOutput {
+        // T1 every 2, T2 every 3, T3 every 4, shifted by bias
+        let shift = Int(bias * 4.0)
+        let step = tStepCount - 1
+        let t1 = (step + shift) % 2 == 0
+        let t2 = (step + shift) % 3 == 0
+        let t3 = (step + shift) % 4 == 0
+        return TOutput(t1: t1, t2: t2, t3: t3)
+    }
 }
