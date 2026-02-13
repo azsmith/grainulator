@@ -14,7 +14,6 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
     case synths = "SYNTHS"
     case granular = "GRANULAR"
     case drums = "DRUMS"
-    case scramble = "SCRAMBLE"
 
     var id: String { rawValue }
 
@@ -24,7 +23,6 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
         case .synths: return "waveform"
         case .granular: return "waveform.path"
         case .drums: return "drum.fill"
-        case .scramble: return "dice"
         }
     }
 
@@ -34,7 +32,6 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
         case .synths: return "SYNTH"
         case .granular: return "GRAN"
         case .drums: return "DRUM"
-        case .scramble: return "SCRM"
         }
     }
 
@@ -44,7 +41,6 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
         case .synths: return ColorPalette.accentPlaits
         case .granular: return ColorPalette.accentGranular1
         case .drums: return ColorPalette.accentDaisyDrum
-        case .scramble: return ColorPalette.accentScramble
         }
     }
 }

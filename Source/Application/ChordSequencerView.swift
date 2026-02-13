@@ -73,26 +73,6 @@ struct ChordSequencerView: View {
             }
             .buttonStyle(.plain)
 
-            // Toggle chord-driven scale mode
-            Button(action: {
-                if isChordScaleActive {
-                    // Revert to Major (index 0)
-                    sequencer.setScaleIndex(0)
-                } else {
-                    sequencer.setScaleIndex(StepSequencer.chordSequencerScaleIndex)
-                }
-            }) {
-                Text("USE CHORDS")
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundColor(isChordScaleActive ? .white : ColorPalette.metalSteel)
-                    .padding(.horizontal, 6)
-                    .frame(height: 18)
-                    .background(isChordScaleActive ? trackColor : ColorPalette.backgroundTertiary)
-                    .cornerRadius(3)
-            }
-            .buttonStyle(.plain)
-            .help(isChordScaleActive ? "Using chord progression as scale — click to revert" : "Use chord progression to drive sequencer scale")
-
             Spacer()
 
             Button(action: { chordSequencer.clearAll() }) {

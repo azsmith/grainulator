@@ -1,25 +1,55 @@
 // ScrambleEngine.swift — Probabilistic sequencer inspired by Marbles
 //
-// Generates gate patterns (T), quantized notes (X), and CV values (Y)
+// Generates gate patterns, quantized notes, and modulation CV values
 // using various probabilistic algorithms with Deja Vu looping support.
+
+import Foundation
 
 struct ScrambleEngine: Codable {
 
     // MARK: - Enums
 
-    enum TMode: String, CaseIterable, Identifiable, Codable {
-        case complementaryBernoulli
-        case independentBernoulli
-        case threeStates
+    enum GateMode: String, CaseIterable, Identifiable, Codable {
+        case coinToss
+        case ratio
+        case alternating
         case drums
         case markov
         case clusters
         case divider
 
         var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .coinToss: return "Coin Toss"
+            case .ratio: return "Ratio"
+            case .alternating: return "Alternating"
+            case .drums: return "Drums"
+            case .markov: return "Markov"
+            case .clusters: return "Clusters"
+            case .divider: return "Divider"
+            }
+        }
+
+        // Backward-compatible decoding from old T/X/Y names
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            let raw = try container.decode(String.self)
+            switch raw {
+            case "complementaryBernoulli": self = .coinToss
+            case "independentBernoulli": self = .ratio
+            case "threeStates": self = .alternating
+            default:
+                guard let mode = GateMode(rawValue: raw) else {
+                    throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown GateMode: \(raw)")
+                }
+                self = mode
+            }
+        }
     }
 
-    enum XControlMode: String, CaseIterable, Identifiable, Codable {
+    enum NoteControlMode: String, CaseIterable, Identifiable, Codable {
         case identical
         case bump
         case tilt
@@ -27,7 +57,7 @@ struct ScrambleEngine: Codable {
         var id: String { rawValue }
     }
 
-    enum XRange: String, CaseIterable, Identifiable, Codable {
+    enum NoteRange: String, CaseIterable, Identifiable, Codable {
         case oneOctave
         case twoOctaves
         case fourOctaves
@@ -51,14 +81,7 @@ struct ScrambleEngine: Codable {
         var id: String { rawValue }
     }
 
-    enum XClockSource: String, CaseIterable, Identifiable, Codable {
-        case t1
-        case t2
-        case t3
-        case combined
-
-        var id: String { rawValue }
-    }
+    // NoteClockSource removed — notes are now clocked by their respective gate outputs
 
     // MARK: - RandomSequence
 
@@ -69,16 +92,18 @@ struct ScrambleEngine: Codable {
         private var isLocked: Bool = false
         private var playIndex: Int = 0
 
-        mutating func record(_ value: Double) {
+        mutating func record(_ value: Double, loopLength: Int = 16) {
+            let maxLen = max(1, min(loopLength, 16))
             buffer[writeIndex] = value
-            writeIndex = (writeIndex + 1) % 16
-            if length < 16 {
+            writeIndex = (writeIndex + 1) % maxLen
+            if length < maxLen {
                 length += 1
             }
         }
 
-        func replay(at index: Int) -> Double {
-            let wrappedIndex = index % 16
+        func replay(at index: Int, loopLength: Int = 16) -> Double {
+            let maxLen = max(1, min(loopLength, 16))
+            let wrappedIndex = index % maxLen
             return buffer[wrappedIndex]
         }
 
@@ -99,62 +124,68 @@ struct ScrambleEngine: Codable {
             playIndex = 0
         }
 
-        mutating func next(dejaVu: DejaVuState, amount: Double, generate: () -> Double) -> Double {
+        mutating func next(dejaVu: DejaVuState, amount: Double, loopLength: Int = 16, generate: () -> Double) -> Double {
+            let maxLen = max(1, min(loopLength, 16))
+
             switch dejaVu {
             case .off:
                 let value = generate()
-                record(value)
+                record(value, loopLength: maxLen)
                 return value
 
             case .on:
+                let effectiveLength = min(length, maxLen)
                 let useRecorded = Double.random(in: 0...1) < amount
-                if useRecorded && length > 0 {
-                    let index = playIndex % max(length, 1)
-                    playIndex = (playIndex + 1) % max(length, 1)
-                    return replay(at: index)
+                if useRecorded && effectiveLength > 0 {
+                    let index = playIndex % max(effectiveLength, 1)
+                    playIndex = (playIndex + 1) % max(effectiveLength, 1)
+                    return replay(at: index, loopLength: maxLen)
                 } else {
                     let value = generate()
-                    record(value)
+                    record(value, loopLength: maxLen)
                     return value
                 }
 
             case .locked:
-                if length == 0 {
+                let effectiveLength = min(length, maxLen)
+                if effectiveLength == 0 {
                     let value = generate()
-                    record(value)
+                    record(value, loopLength: maxLen)
                     return value
                 }
-                let index = playIndex % max(length, 1)
-                playIndex = (playIndex + 1) % max(length, 1)
-                return replay(at: index)
+                let index = playIndex % max(effectiveLength, 1)
+                playIndex = (playIndex + 1) % max(effectiveLength, 1)
+                return replay(at: index, loopLength: maxLen)
             }
         }
     }
 
     // MARK: - Section Structs
 
-    struct TSection: Codable {
-        var mode: TMode = .complementaryBernoulli
+    struct GateSection: Codable {
+        var mode: GateMode = .coinToss
         var bias: Double = 0.5
         var jitter: Double = 0.0
+        var gateLength: Double = 0.5       // Task 2: duty cycle 0.0–1.0
         var dejaVu: DejaVuState = .off
         var dejaVuAmount: Double = 0.5
+        var dejaVuLoopLength: Int = 16     // Task 5: Deja Vu loop length 1–16
         var dividerRatio: Int = 1
     }
 
-    struct XSection: Codable {
+    struct NoteSection: Codable {
         var spread: Double = 0.5
         var bias: Double = 0.5
-        var steps: Double = 0.0
-        var controlMode: XControlMode = .identical
-        var range: XRange = .twoOctaves
-        var clockSource: XClockSource = .t1
+        var steps: Double = 0.0      // 0=bypass, <0.45=smooth, >0.55=quantize
+        var controlMode: NoteControlMode = .tilt
+        var range: NoteRange = .twoOctaves
         var dejaVu: DejaVuState = .off
         var dejaVuAmount: Double = 0.5
+        var dejaVuLoopLength: Int = 16     // Task 5: Deja Vu loop length 1–16
         var dividerRatio: Int = 1
     }
 
-    struct YSection: Codable {
+    struct ModSection: Codable {
         var spread: Double = 0.5
         var bias: Double = 0.5
         var steps: Double = 0.0
@@ -163,45 +194,138 @@ struct ScrambleEngine: Codable {
 
     // MARK: - Output Structs
 
-    struct TOutput {
-        var t1: Bool = false
-        var t2: Bool = false
-        var t3: Bool = false
+    struct GateOutput {
+        var gate1: Bool = false
+        var gate2: Bool = false
+        var gate3: Bool = false
     }
 
-    struct XOutput {
-        var x1: UInt8 = 60
-        var x2: UInt8 = 60
-        var x3: UInt8 = 60
+    struct NoteOutput {
+        var note1: UInt8 = 60
+        var note2: UInt8 = 60
+        var note3: UInt8 = 60
     }
 
-    struct YOutput {
+    struct ModOutput {
         var value: Double = 0.5
         var triggered: Bool = false
     }
 
     // MARK: - State
 
-    var tSection: TSection = TSection()
-    var xSection: XSection = XSection()
-    var ySection: YSection = YSection()
+    var gateSection: GateSection = GateSection()
+    var noteSection: NoteSection = NoteSection()
+    var modSection: ModSection = ModSection()
 
-    var tSequence: RandomSequence = RandomSequence()
-    var xSequence: RandomSequence = RandomSequence()
-    var ySequence: RandomSequence = RandomSequence()
+    var gateSequence: RandomSequence = RandomSequence()
+    var noteSequence: RandomSequence = RandomSequence()
+    var modSequence: RandomSequence = RandomSequence()
 
-    private var tStepCount: Int = 0
-    private var tDividerCount: Int = 0
-    private var xDividerCount: Int = 0
-    private var yDividerCount: Int = 0
+    private var gateStepCount: Int = 0
+    private var gateDividerCount: Int = 0
+    private var noteDividerCount: Int = 0
+    private var modDividerCount: Int = 0
     private var markovState: Int = 0
     private var burstPhase: Int = 0
     private var inBurst: Bool = false
 
     // Only persist section parameters and sequences; runtime counters are excluded.
     enum CodingKeys: String, CodingKey {
-        case tSection, xSection, ySection
-        case tSequence, xSequence, ySequence
+        // New names
+        case gateSection, noteSection, modSection
+        case gateSequence, noteSequence, modSequence
+    }
+
+    // Backward-compatible decoding: try new names first, fall back to old T/X/Y names
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        // Try new names, fall back to old names via dynamic key lookup
+        if let gs = try? container.decode(GateSection.self, forKey: .gateSection) {
+            gateSection = gs
+        } else if let gs = try? ScrambleEngine.decodeLegacy(GateSection.self, from: decoder, key: "tSection") {
+            gateSection = gs
+        }
+
+        if let ns = try? container.decode(NoteSection.self, forKey: .noteSection) {
+            noteSection = ns
+        } else if let ns = try? ScrambleEngine.decodeLegacy(NoteSection.self, from: decoder, key: "xSection") {
+            noteSection = ns
+        }
+
+        if let ms = try? container.decode(ModSection.self, forKey: .modSection) {
+            modSection = ms
+        } else if let ms = try? ScrambleEngine.decodeLegacy(ModSection.self, from: decoder, key: "ySection") {
+            modSection = ms
+        }
+
+        if let seq = try? container.decode(RandomSequence.self, forKey: .gateSequence) {
+            gateSequence = seq
+        } else if let seq = try? ScrambleEngine.decodeLegacy(RandomSequence.self, from: decoder, key: "tSequence") {
+            gateSequence = seq
+        }
+
+        if let seq = try? container.decode(RandomSequence.self, forKey: .noteSequence) {
+            noteSequence = seq
+        } else if let seq = try? ScrambleEngine.decodeLegacy(RandomSequence.self, from: decoder, key: "xSequence") {
+            noteSequence = seq
+        }
+
+        if let seq = try? container.decode(RandomSequence.self, forKey: .modSequence) {
+            modSequence = seq
+        } else if let seq = try? ScrambleEngine.decodeLegacy(RandomSequence.self, from: decoder, key: "ySequence") {
+            modSequence = seq
+        }
+    }
+
+    init() {}
+
+    /// Dynamic coding key for backward-compatible decoding.
+    private struct LegacyCodingKey: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { return nil }
+    }
+
+    /// Helper to decode a value using an arbitrary string key (for backward compat with old T/X/Y names).
+    private static func decodeLegacy<T: Decodable>(_ type: T.Type, from decoder: Decoder, key: String) -> T? {
+        guard let container = try? decoder.container(keyedBy: LegacyCodingKey.self) else { return nil }
+        return try? container.decode(T.self, forKey: LegacyCodingKey(stringValue: key))
+    }
+
+    // MARK: - Runtime State (not persisted)
+
+    /// Task 6: Held notes — returned when divider skips a step
+    private var heldNotes: NoteOutput = NoteOutput()
+    /// Task 9: Previous values for STEPS smoothing
+    private var prevNoteValue: Double = 0.5
+    private var prevModValue: Double = 0.5
+
+    // Internal counters (not persisted, but mutated by generateGates/Notes/Mod)
+    // Already declared above: gateStepCount, gateDividerCount, noteDividerCount, modDividerCount,
+    //                         markovState, burstPhase, inBurst
+
+    // Exclude runtime state from Codable
+    // (already excluded via CodingKeys — these are private and not in CodingKeys)
+
+    /// Copies only runtime state (sequences, counters, held notes) from another engine instance.
+    /// Used by ScrambleManager to sync clock-queue mutations back without overwriting
+    /// UI-controlled section parameters (which would cause slider snapping).
+    mutating func syncRuntimeState(from other: ScrambleEngine) {
+        gateSequence = other.gateSequence
+        noteSequence = other.noteSequence
+        modSequence = other.modSequence
+        gateStepCount = other.gateStepCount
+        gateDividerCount = other.gateDividerCount
+        noteDividerCount = other.noteDividerCount
+        modDividerCount = other.modDividerCount
+        markovState = other.markovState
+        burstPhase = other.burstPhase
+        inBurst = other.inBurst
+        heldNotes = other.heldNotes
+        prevNoteValue = other.prevNoteValue
+        prevModValue = other.prevModValue
     }
 
     // MARK: - Helpers
@@ -210,29 +334,90 @@ struct ScrambleEngine: Codable {
         return x - x.rounded(.down)
     }
 
-    // MARK: - T Generator
+    // MARK: - Task 7: SPREAD Distribution Shaping
 
-    mutating func generateT() -> TOutput {
-        tDividerCount += 1
-        guard tDividerCount % tSection.dividerRatio == 0 else {
-            return TOutput()
+    /// Shapes a uniform random value according to spread parameter.
+    /// spread=0: tight bell curve around center; spread=0.5: uniform; spread=1.0: bimodal (extremes)
+    static func shapedBySpread(_ raw: Double, spread: Double) -> Double {
+        if spread < 0.5 {
+            // Tighten distribution toward center using averaged random values
+            let narrowing = 1.0 - spread * 2.0  // 1.0 at spread=0, 0.0 at spread=0.5
+            // Triangle distribution approximation: average with 0.5
+            let shaped = raw * (1.0 - narrowing) + 0.5 * narrowing
+            return shaped
+        } else if spread > 0.5 {
+            // Bimodal: push toward extremes
+            let bimodal = (spread - 0.5) * 2.0  // 0.0 at spread=0.5, 1.0 at spread=1.0
+            let pushed: Double
+            if raw < 0.5 {
+                pushed = raw * (1.0 - bimodal)
+            } else {
+                pushed = 1.0 - (1.0 - raw) * (1.0 - bimodal)
+            }
+            return pushed
+        } else {
+            return raw  // spread=0.5: uniform passthrough
+        }
+    }
+
+    // MARK: - Task 8: BIAS as Probability Skew
+
+    /// Power-curve skew: bias < 0.5 favors low values, bias > 0.5 favors high values.
+    static func skewedByBias(_ value: Double, bias: Double) -> Double {
+        let clamped = value.clamped(to: 0.0...1.0)
+        guard clamped > 0.0 && clamped < 1.0 else { return clamped }
+        let exponent = pow(2.0, (bias - 0.5) * -4.0)
+        return pow(clamped, exponent)
+    }
+
+    // MARK: - Task 9: STEPS Dual Behavior (Smooth ← → Quantize)
+
+    /// steps = 0.0: bypass (no processing)
+    /// steps > 0.0 and < 0.45: smoothing (slew between consecutive values)
+    /// steps 0.45–0.55: dead zone / light smoothing
+    /// steps > 0.55: quantization (snap to 2–16 discrete levels)
+    static func applySteps(_ value: Double, steps: Double, prev: Double) -> Double {
+        if steps < 0.01 {
+            return value  // Bypass at zero — no smoothing or quantization
+        } else if steps < 0.45 {
+            // Smoothing: interpolate between previous and new value
+            // At steps=0.01 → very light smoothing, steps=0.44 → heavy smoothing
+            let smoothAmount = steps / 0.45  // 0.0 at steps=0, 1.0 at steps=0.45
+            return prev * smoothAmount + value * (1.0 - smoothAmount)
+        } else if steps > 0.55 {
+            // Quantization: snap to discrete levels
+            let t = (steps - 0.55) / 0.45  // 0.0 at steps=0.55, 1.0 at steps=1.0
+            let levelCount = max(2.0, (t * 14.0 + 2.0).rounded())  // 2–16 levels
+            return (value * levelCount).rounded(.down) / levelCount
+        } else {
+            return value  // Dead zone around 0.5: bypass
+        }
+    }
+
+    // MARK: - Gate Generator
+
+    mutating func generateGates() -> GateOutput {
+        gateDividerCount += 1
+        guard gateDividerCount % gateSection.dividerRatio == 0 else {
+            return GateOutput()
         }
 
-        let r = tSequence.next(
-            dejaVu: tSection.dejaVu,
-            amount: tSection.dejaVuAmount
+        let r = gateSequence.next(
+            dejaVu: gateSection.dejaVu,
+            amount: gateSection.dejaVuAmount,
+            loopLength: gateSection.dejaVuLoopLength
         ) { Double.random(in: 0.0...1.0) }
 
-        tStepCount += 1
-        let bias = tSection.bias
+        gateStepCount += 1
+        let bias = gateSection.bias
 
-        switch tSection.mode {
-        case .complementaryBernoulli:
-            return generateComplementaryBernoulli(r: r, bias: bias)
-        case .independentBernoulli:
-            return generateIndependentBernoulli(r: r, bias: bias)
-        case .threeStates:
-            return generateThreeStates(r: r, bias: bias)
+        switch gateSection.mode {
+        case .coinToss:
+            return generateCoinToss(r: r, bias: bias)
+        case .ratio:
+            return generateRatio(r: r, bias: bias)
+        case .alternating:
+            return generateAlternating(r: r, bias: bias)
         case .drums:
             return generateDrums(bias: bias)
         case .markov:
@@ -244,35 +429,40 @@ struct ScrambleEngine: Codable {
         }
     }
 
-    private func generateComplementaryBernoulli(r: Double, bias: Double) -> TOutput {
-        let t1 = r >= bias
-        let t2 = !t1
-        let t3 = t1 || t2
-        return TOutput(t1: t1, t2: t2, t3: t3)
+    // Task 3: In all modes, gate2 = master clock (always true).
+    // gate1 fires probabilistically, gate3 = complement of gate1.
+
+    private func generateCoinToss(r: Double, bias: Double) -> GateOutput {
+        // gate1 fires with probability = bias, gate3 = !gate1, gate2 = master clock
+        let gate1 = r < bias
+        let gate3 = !gate1
+        return GateOutput(gate1: gate1, gate2: true, gate3: gate3)
     }
 
-    private func generateIndependentBernoulli(r: Double, bias: Double) -> TOutput {
-        let r1 = ScrambleEngine.fract(r)
-        let r2 = ScrambleEngine.fract(r + 0.333)
-        let r3 = ScrambleEngine.fract(r + 0.666)
-        let t1 = r1 < bias
-        let t2 = r2 < bias
-        let t3 = r3 < bias
-        return TOutput(t1: t1, t2: t2, t3: t3)
+    private func generateRatio(r: Double, bias: Double) -> GateOutput {
+        // gate1 fires every N steps (bias selects N from 1–8), gate3 = complementary
+        let n = max(1, Int(bias * 8.0) + 1)
+        let gate1 = (gateStepCount % n) == 0
+        let gate3 = !gate1
+        return GateOutput(gate1: gate1, gate2: true, gate3: gate3)
     }
 
-    private func generateThreeStates(r: Double, bias: Double) -> TOutput {
-        let pNone = 0.75 - abs(bias - 0.5)
-        if r < pNone {
-            return TOutput(t1: false, t2: false, t3: false)
-        } else if r < pNone + (1.0 - pNone) * bias {
-            return TOutput(t1: true, t2: false, t3: true)
-        } else {
-            return TOutput(t1: false, t2: true, t3: true)
+    private func generateAlternating(r: Double, bias: Double) -> GateOutput {
+        // Cycle: gate1 only → both → gate3 only → both, with bias weighting
+        let phase = gateStepCount % 4
+        let gate1: Bool
+        let gate3: Bool
+        switch phase {
+        case 0: gate1 = true;  gate3 = false  // gate1 only
+        case 1: gate1 = true;  gate3 = true   // both
+        case 2: gate1 = false; gate3 = true   // gate3 only
+        case 3: gate1 = true;  gate3 = true   // both
+        default: gate1 = false; gate3 = false
         }
+        return GateOutput(gate1: gate1, gate2: true, gate3: gate3)
     }
 
-    private func generateDrums(bias: Double) -> TOutput {
+    private func generateDrums(bias: Double) -> GateOutput {
         // 8 preset patterns; bias selects which one
         let patterns: [[Bool]] = [
             [true, false, false, false, true, false, false, false],  // four-on-floor
@@ -285,55 +475,51 @@ struct ScrambleEngine: Codable {
             [true, false, false, false, false, false, false, false], // halftime
         ]
         let patternIndex = min(Int(bias * 8.0), 7)
-        let stepInPattern = (tStepCount - 1) % 8
-        let t1 = patterns[patternIndex][stepInPattern]
-        let t2 = patterns[patternIndex][(stepInPattern + 2) % 8]
-        let t3 = patterns[patternIndex][(stepInPattern + 4) % 8]
-        return TOutput(t1: t1, t2: t2, t3: t3)
+        let stepInPattern = (gateStepCount - 1) % 8
+        let gate1 = patterns[patternIndex][stepInPattern]
+        let gate3 = patterns[patternIndex][(stepInPattern + 4) % 8]
+        return GateOutput(gate1: gate1, gate2: true, gate3: gate3)
     }
 
-    private mutating func generateMarkov(r: Double, bias: Double) -> TOutput {
+    private mutating func generateMarkov(r: Double, bias: Double) -> GateOutput {
         // 8-state machine, transition probability controlled by bias
         if r < bias {
             markovState = (markovState + 1) % 8
         }
-        let t1 = markovState == 0
-        let t2 = markovState == 4
-        let t3 = t1 || t2
-        return TOutput(t1: t1, t2: t2, t3: t3)
+        let gate1 = markovState == 0
+        let gate3 = markovState >= 4
+        return GateOutput(gate1: gate1, gate2: true, gate3: gate3)
     }
 
-    private mutating func generateClusters(r: Double, bias: Double) -> TOutput {
+    private mutating func generateClusters(r: Double, bias: Double) -> GateOutput {
         if !inBurst && r < bias {
             inBurst = true
             burstPhase = 0
         }
 
         if inBurst {
-            let t1 = burstPhase == 0
-            let t2 = burstPhase == 1 || burstPhase == 2
-            let t3 = true
+            let gate1 = burstPhase == 0
+            let gate3 = burstPhase == 1 || burstPhase == 2
             burstPhase += 1
             if burstPhase >= 3 {
                 inBurst = false
             }
-            return TOutput(t1: t1, t2: t2, t3: t3)
+            return GateOutput(gate1: gate1, gate2: true, gate3: gate3)
         }
 
-        return TOutput()
+        return GateOutput(gate1: false, gate2: true, gate3: false)
     }
 
-    private func generateDivider(bias: Double) -> TOutput {
-        // T1 every 2, T2 every 3, T3 every 4, shifted by bias
+    private func generateDivider(bias: Double) -> GateOutput {
+        // Gate 1 every N steps (bias-selected), Gate 3 every M steps, gate2 = master
         let shift = Int(bias * 4.0)
-        let step = tStepCount - 1
-        let t1 = (step + shift) % 2 == 0
-        let t2 = (step + shift) % 3 == 0
-        let t3 = (step + shift) % 4 == 0
-        return TOutput(t1: t1, t2: t2, t3: t3)
+        let step = gateStepCount - 1
+        let gate1 = (step + shift) % 2 == 0
+        let gate3 = (step + shift) % 4 == 0
+        return GateOutput(gate1: gate1, gate2: true, gate3: gate3)
     }
 
-    // MARK: - X Generator
+    // MARK: - Note Generator
 
     static func quantizeToScale(rawValue: Double, scaleIntervals: [Int], rootMidi: UInt8, range: Int) -> UInt8 {
         guard !scaleIntervals.isEmpty else { return rootMidi }
@@ -372,96 +558,99 @@ struct ScrambleEngine: Codable {
         return UInt8(bestNote.clamped(to: 0...127))
     }
 
-    mutating func generateX(scaleIntervals: [Int], rootMidi: UInt8) -> XOutput {
-        xDividerCount += 1
-        guard xDividerCount % xSection.dividerRatio == 0 else {
-            return XOutput()
+    /// Generate notes gated by their respective gate outputs.
+    /// Each note only updates when its corresponding gate fires; otherwise it holds.
+    /// Gate 2 (master clock) triggers the random sequence to advance.
+    mutating func generateNotes(gates: GateOutput, scaleIntervals: [Int], rootMidi: UInt8) -> NoteOutput {
+        noteDividerCount += 1
+        guard noteDividerCount % noteSection.dividerRatio == 0 else {
+            // Task 6: Return held notes instead of defaults when divider skips
+            return heldNotes
         }
 
-        let rawValue = xSequence.next(
-            dejaVu: xSection.dejaVu,
-            amount: xSection.dejaVuAmount
-        ) { Double.random(in: 0.0...1.0) }
+        // Only advance the random sequence when gate2 (master clock) fires
+        if gates.gate2 {
+            let rawValue = noteSequence.next(
+                dejaVu: noteSection.dejaVu,
+                amount: noteSection.dejaVuAmount,
+                loopLength: noteSection.dejaVuLoopLength
+            ) { Double.random(in: 0.0...1.0) }
 
-        let spread = xSection.spread
-        let bias = xSection.bias
-        let range = xSection.range.semitones
+            let spread = noteSection.spread
+            let bias = noteSection.bias
+            let steps = noteSection.steps
 
-        let centered = (rawValue - 0.5) * spread + bias
+            // SPREAD → BIAS → STEPS pipeline
+            let shaped = ScrambleEngine.shapedBySpread(rawValue, spread: spread)
+            let biased = ScrambleEngine.skewedByBias(shaped, bias: bias)
+            let stepped = ScrambleEngine.applySteps(biased, steps: steps, prev: prevNoteValue)
+            prevNoteValue = stepped
 
-        let v1: Double
-        let v2: Double
-        let v3: Double
+            let range = noteSection.range.semitones
 
-        switch xSection.controlMode {
-        case .identical:
-            v1 = centered
-            v2 = centered
-            v3 = centered
+            let v1: Double
+            let v2: Double
+            let v3: Double
 
-        case .bump:
-            v2 = centered
-            v1 = 1.0 - centered
-            v3 = 1.0 - centered
+            switch noteSection.controlMode {
+            case .identical:
+                v1 = stepped; v2 = stepped; v3 = stepped
+            case .bump:
+                v2 = stepped; v1 = 1.0 - stepped; v3 = 1.0 - stepped
+            case .tilt:
+                v2 = stepped; v1 = stepped - 0.15; v3 = stepped + 0.15
+            }
 
-        case .tilt:
-            v2 = centered
-            v1 = centered - 0.15
-            v3 = centered + 0.15
+            // Only update each note when its respective gate fires
+            if gates.gate1 {
+                heldNotes.note1 = ScrambleEngine.quantizeToScale(
+                    rawValue: v1.clamped(to: 0.0...1.0),
+                    scaleIntervals: scaleIntervals, rootMidi: rootMidi, range: range)
+            }
+            // gate2 always true (master), so note2 always updates
+            heldNotes.note2 = ScrambleEngine.quantizeToScale(
+                rawValue: v2.clamped(to: 0.0...1.0),
+                scaleIntervals: scaleIntervals, rootMidi: rootMidi, range: range)
+            if gates.gate3 {
+                heldNotes.note3 = ScrambleEngine.quantizeToScale(
+                    rawValue: v3.clamped(to: 0.0...1.0),
+                    scaleIntervals: scaleIntervals, rootMidi: rootMidi, range: range)
+            }
         }
 
-        let x1 = ScrambleEngine.quantizeToScale(
-            rawValue: v1.clamped(to: 0.0...1.0),
-            scaleIntervals: scaleIntervals,
-            rootMidi: rootMidi,
-            range: range
-        )
-        let x2 = ScrambleEngine.quantizeToScale(
-            rawValue: v2.clamped(to: 0.0...1.0),
-            scaleIntervals: scaleIntervals,
-            rootMidi: rootMidi,
-            range: range
-        )
-        let x3 = ScrambleEngine.quantizeToScale(
-            rawValue: v3.clamped(to: 0.0...1.0),
-            scaleIntervals: scaleIntervals,
-            rootMidi: rootMidi,
-            range: range
-        )
-
-        return XOutput(x1: x1, x2: x2, x3: x3)
+        return heldNotes
     }
 
-    // MARK: - Y Generator
+    // MARK: - Mod Generator
 
-    mutating func generateY() -> YOutput {
-        yDividerCount += 1
+    mutating func generateMod() -> ModOutput {
+        modDividerCount += 1
 
-        let triggered = yDividerCount % ySection.dividerRatio == 0
+        let triggered = modDividerCount % modSection.dividerRatio == 0
         guard triggered else {
-            return YOutput(value: 0.5, triggered: false)
+            return ModOutput(value: 0.5, triggered: false)
         }
 
-        let rawValue = ySequence.next(
+        let rawValue = modSequence.next(
             dejaVu: .off,
             amount: 0.0
         ) { Double.random(in: 0.0...1.0) }
 
-        let spread = ySection.spread
-        let bias = ySection.bias
-        let steps = ySection.steps
+        let spread = modSection.spread
+        let bias = modSection.bias
+        let steps = modSection.steps
 
-        var shaped = (rawValue - 0.5) * spread + bias
+        // Task 7: SPREAD distribution shaping
+        let shaped = ScrambleEngine.shapedBySpread(rawValue, spread: spread)
+        // Task 8: BIAS probability skew
+        let biased = ScrambleEngine.skewedByBias(shaped, bias: bias)
+        // Task 9: STEPS dual behavior
+        let stepped = ScrambleEngine.applySteps(biased, steps: steps, prev: prevModValue)
+        prevModValue = stepped
 
-        // Steps quantization: if steps > threshold, snap to discrete levels
-        if steps > 0.01 {
-            let levelCount = max(2.0, (steps * 16.0).rounded())
-            shaped = (shaped * levelCount).rounded(.down) / levelCount
-        }
+        let result = stepped.clamped(to: 0.0...1.0)
 
-        shaped = shaped.clamped(to: 0.0...1.0)
-
-        return YOutput(value: shaped, triggered: true)
+        return ModOutput(value: result, triggered: true)
     }
 }
 

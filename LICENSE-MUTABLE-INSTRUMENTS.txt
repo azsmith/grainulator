@@ -35,7 +35,11 @@ THE SOFTWARE.
 ATTRIBUTION
 
 The Plaits synthesis engine and supporting libraries were created by
-Émilie Gillet for Mutable Instruments. This implementation adapts the
+Emilie Gillet for Mutable Instruments. This implementation adapts the
 original embedded firmware code for use in Grainulator.
+
+The Scramble probabilistic sequencer module is inspired by the design
+of Mutable Instruments Marbles. The implementation is original code;
+no Marbles firmware source was used.
 
 Mutable Instruments: https://mutable-instruments.net/

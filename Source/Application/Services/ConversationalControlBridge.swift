@@ -990,7 +990,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                     "scramble.x.steps",
                     "scramble.x.controlMode",
                     "scramble.x.range",
-                    "scramble.x.clockSource",
+                    // clockSource removed — notes clocked by respective gates
                     "scramble.x.dejaVu",
                     "scramble.x.dejaVuAmount",
                     "scramble.y.spread",
@@ -3204,15 +3204,24 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.enabled requires boolean value"))
 
         // T section float params
-        case "t.bias", "t.jitter", "t.dejaVuAmount":
+        case "t.bias", "t.jitter", "t.gateLength", "t.dejaVuAmount":
             guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
                 return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.\(suffix) must be within [0.0, 1.0]"))
             }
             return (true, nil)
 
+        case "t.dejaVuLoopLength":
+            guard let value = feedbackValueFromAction(action) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.t.dejaVuLoopLength requires a numeric value"))
+            }
+            guard (1...16).contains(Int(value.rounded())) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.t.dejaVuLoopLength must be within [1, 16]"))
+            }
+            return (true, nil)
+
         case "t.mode":
-            guard let text = modeTextFromAction(action), scrambleTModeFromText(text) != nil else {
-                let available = ScrambleEngine.TMode.allCases.map { scrambleTModeDisplayName($0) }.joined(separator: ", ")
+            guard let text = modeTextFromAction(action), scrambleGateModeFromText(text) != nil else {
+                let available = ScrambleEngine.GateMode.allCases.map { scrambleGateModeDisplayName($0) }.joined(separator: ", ")
                 return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid scramble T mode. Available: \(available)"))
             }
             return (true, nil)
@@ -3237,26 +3246,31 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return (true, nil)
 
         case "x.controlMode":
-            guard let text = modeTextFromAction(action), scrambleXControlModeFromText(text) != nil else {
+            guard let text = modeTextFromAction(action), scrambleNoteControlModeFromText(text) != nil else {
                 return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.x.controlMode must be IDENT, BUMP, or TILT"))
             }
             return (true, nil)
 
         case "x.range":
-            guard let text = modeTextFromAction(action), scrambleXRangeFromText(text) != nil else {
+            guard let text = modeTextFromAction(action), scrambleNoteRangeFromText(text) != nil else {
                 return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.x.range must be '1 OCT', '2 OCT', or '4 OCT'"))
             }
             return (true, nil)
 
-        case "x.clockSource":
-            guard let text = modeTextFromAction(action), scrambleXClockSourceFromText(text) != nil else {
-                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.x.clockSource must be T1, T2, T3, or ALL"))
-            }
-            return (true, nil)
+        // x.clockSource removed — notes clocked by respective gates
 
         case "x.dejaVu":
             guard let text = modeTextFromAction(action), scrambleDejaVuFromText(text) != nil else {
                 return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.x.dejaVu must be OFF, ON, or LOCK"))
+            }
+            return (true, nil)
+
+        case "x.dejaVuLoopLength":
+            guard let value = feedbackValueFromAction(action) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.x.dejaVuLoopLength requires a numeric value"))
+            }
+            guard (1...16).contains(Int(value.rounded())) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.x.dejaVuLoopLength must be within [1, 16]"))
             }
             return (true, nil)
 
@@ -3327,7 +3341,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
                 return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.t.bias must be within [0.0, 1.0]"))
             }
-            writeScramble { $0.engine.tSection.bias = value }
+            writeScramble { $0.engine.gateSection.bias = value }
             recordMutation(
                 changedPaths: ["scramble.t.bias"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "t.bias", "value": value])]
@@ -3338,21 +3352,32 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
                 return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.t.jitter must be within [0.0, 1.0]"))
             }
-            writeScramble { $0.engine.tSection.jitter = value }
+            writeScramble { $0.engine.gateSection.jitter = value }
             recordMutation(
                 changedPaths: ["scramble.t.jitter"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "t.jitter", "value": value])]
             )
             return (true, nil)
 
+        case "t.gateLength":
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.t.gateLength must be within [0.0, 1.0]"))
+            }
+            writeScramble { $0.engine.gateSection.gateLength = value }
+            recordMutation(
+                changedPaths: ["scramble.t.gateLength"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "t.gateLength", "value": value])]
+            )
+            return (true, nil)
+
         case "t.mode":
-            guard let text = modeTextFromAction(action), let mode = scrambleTModeFromText(text) else {
+            guard let text = modeTextFromAction(action), let mode = scrambleGateModeFromText(text) else {
                 return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid scramble T mode"))
             }
-            writeScramble { $0.engine.tSection.mode = mode }
+            writeScramble { $0.engine.gateSection.mode = mode }
             recordMutation(
                 changedPaths: ["scramble.t.mode"],
-                additionalEvents: [(type: "scramble.updated", payload: ["field": "t.mode", "value": scrambleTModeDisplayName(mode)])]
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "t.mode", "value": scrambleGateModeDisplayName(mode)])]
             )
             return (true, nil)
 
@@ -3371,7 +3396,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let text = modeTextFromAction(action), let state = scrambleDejaVuFromText(text) else {
                 return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.t.dejaVu must be OFF, ON, or LOCK"))
             }
-            writeScramble { $0.engine.tSection.dejaVu = state }
+            writeScramble { $0.engine.gateSection.dejaVu = state }
             recordMutation(
                 changedPaths: ["scramble.t.dejaVu"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "t.dejaVu", "value": scrambleDejaVuDisplayName(state)])]
@@ -3382,10 +3407,25 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
                 return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.t.dejaVuAmount must be within [0.0, 1.0]"))
             }
-            writeScramble { $0.engine.tSection.dejaVuAmount = value }
+            writeScramble { $0.engine.gateSection.dejaVuAmount = value }
             recordMutation(
                 changedPaths: ["scramble.t.dejaVuAmount"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "t.dejaVuAmount", "value": value])]
+            )
+            return (true, nil)
+
+        case "t.dejaVuLoopLength":
+            guard let value = feedbackValueFromAction(action) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.t.dejaVuLoopLength requires a numeric value"))
+            }
+            let intValue = Int(value.rounded())
+            guard (1...16).contains(intValue) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.t.dejaVuLoopLength must be within [1, 16]"))
+            }
+            writeScramble { $0.engine.gateSection.dejaVuLoopLength = intValue }
+            recordMutation(
+                changedPaths: ["scramble.t.dejaVuLoopLength"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "t.dejaVuLoopLength", "value": intValue])]
             )
             return (true, nil)
 
@@ -3394,7 +3434,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
                 return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.x.spread must be within [0.0, 1.0]"))
             }
-            writeScramble { $0.engine.xSection.spread = value }
+            writeScramble { $0.engine.noteSection.spread = value }
             recordMutation(
                 changedPaths: ["scramble.x.spread"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "x.spread", "value": value])]
@@ -3405,7 +3445,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
                 return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.x.bias must be within [0.0, 1.0]"))
             }
-            writeScramble { $0.engine.xSection.bias = value }
+            writeScramble { $0.engine.noteSection.bias = value }
             recordMutation(
                 changedPaths: ["scramble.x.bias"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "x.bias", "value": value])]
@@ -3416,7 +3456,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
                 return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.x.steps must be within [0.0, 1.0]"))
             }
-            writeScramble { $0.engine.xSection.steps = value }
+            writeScramble { $0.engine.noteSection.steps = value }
             recordMutation(
                 changedPaths: ["scramble.x.steps"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "x.steps", "value": value])]
@@ -3424,43 +3464,34 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return (true, nil)
 
         case "x.controlMode":
-            guard let text = modeTextFromAction(action), let mode = scrambleXControlModeFromText(text) else {
+            guard let text = modeTextFromAction(action), let mode = scrambleNoteControlModeFromText(text) else {
                 return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid scramble X control mode"))
             }
-            writeScramble { $0.engine.xSection.controlMode = mode }
+            writeScramble { $0.engine.noteSection.controlMode = mode }
             recordMutation(
                 changedPaths: ["scramble.x.controlMode"],
-                additionalEvents: [(type: "scramble.updated", payload: ["field": "x.controlMode", "value": scrambleXControlModeDisplayName(mode)])]
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "x.controlMode", "value": scrambleNoteControlModeDisplayName(mode)])]
             )
             return (true, nil)
 
         case "x.range":
-            guard let text = modeTextFromAction(action), let range = scrambleXRangeFromText(text) else {
+            guard let text = modeTextFromAction(action), let range = scrambleNoteRangeFromText(text) else {
                 return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid scramble X range"))
             }
-            writeScramble { $0.engine.xSection.range = range }
+            writeScramble { $0.engine.noteSection.range = range }
             recordMutation(
                 changedPaths: ["scramble.x.range"],
-                additionalEvents: [(type: "scramble.updated", payload: ["field": "x.range", "value": scrambleXRangeDisplayName(range)])]
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "x.range", "value": scrambleNoteRangeDisplayName(range)])]
             )
             return (true, nil)
 
-        case "x.clockSource":
-            guard let text = modeTextFromAction(action), let source = scrambleXClockSourceFromText(text) else {
-                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid scramble X clock source"))
-            }
-            writeScramble { $0.engine.xSection.clockSource = source }
-            recordMutation(
-                changedPaths: ["scramble.x.clockSource"],
-                additionalEvents: [(type: "scramble.updated", payload: ["field": "x.clockSource", "value": scrambleXClockSourceDisplayName(source)])]
-            )
-            return (true, nil)
+        // x.clockSource removed — notes clocked by respective gates
 
         case "x.dejaVu":
             guard let text = modeTextFromAction(action), let state = scrambleDejaVuFromText(text) else {
                 return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.x.dejaVu must be OFF, ON, or LOCK"))
             }
-            writeScramble { $0.engine.xSection.dejaVu = state }
+            writeScramble { $0.engine.noteSection.dejaVu = state }
             recordMutation(
                 changedPaths: ["scramble.x.dejaVu"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "x.dejaVu", "value": scrambleDejaVuDisplayName(state)])]
@@ -3471,10 +3502,25 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
                 return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.x.dejaVuAmount must be within [0.0, 1.0]"))
             }
-            writeScramble { $0.engine.xSection.dejaVuAmount = value }
+            writeScramble { $0.engine.noteSection.dejaVuAmount = value }
             recordMutation(
                 changedPaths: ["scramble.x.dejaVuAmount"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "x.dejaVuAmount", "value": value])]
+            )
+            return (true, nil)
+
+        case "x.dejaVuLoopLength":
+            guard let value = feedbackValueFromAction(action) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.x.dejaVuLoopLength requires a numeric value"))
+            }
+            let intValue = Int(value.rounded())
+            guard (1...16).contains(intValue) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.x.dejaVuLoopLength must be within [1, 16]"))
+            }
+            writeScramble { $0.engine.noteSection.dejaVuLoopLength = intValue }
+            recordMutation(
+                changedPaths: ["scramble.x.dejaVuLoopLength"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "x.dejaVuLoopLength", "value": intValue])]
             )
             return (true, nil)
 
@@ -3483,7 +3529,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
                 return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.y.spread must be within [0.0, 1.0]"))
             }
-            writeScramble { $0.engine.ySection.spread = value }
+            writeScramble { $0.engine.modSection.spread = value }
             recordMutation(
                 changedPaths: ["scramble.y.spread"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "y.spread", "value": value])]
@@ -3494,7 +3540,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
                 return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.y.bias must be within [0.0, 1.0]"))
             }
-            writeScramble { $0.engine.ySection.bias = value }
+            writeScramble { $0.engine.modSection.bias = value }
             recordMutation(
                 changedPaths: ["scramble.y.bias"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "y.bias", "value": value])]
@@ -3505,7 +3551,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
                 return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.y.steps must be within [0.0, 1.0]"))
             }
-            writeScramble { $0.engine.ySection.steps = value }
+            writeScramble { $0.engine.modSection.steps = value }
             recordMutation(
                 changedPaths: ["scramble.y.steps"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "y.steps", "value": value])]
@@ -3520,7 +3566,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard (1...16).contains(intValue) else {
                 return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.y.divider must be within [1, 16]"))
             }
-            writeScramble { $0.engine.ySection.dividerRatio = intValue }
+            writeScramble { $0.engine.modSection.dividerRatio = intValue }
             recordMutation(
                 changedPaths: ["scramble.y.divider"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "y.divider", "value": intValue])]
@@ -3531,7 +3577,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
                 return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.y.amount must be within [0.0, 1.0]"))
             }
-            writeScramble { $0.yAmount = value }
+            writeScramble { $0.modAmount = value }
             recordMutation(
                 changedPaths: ["scramble.y.amount"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "y.amount", "value": value])]
@@ -3543,7 +3589,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let text = modeTextFromAction(action), let dest = ModulationDestination(rawValue: text) else {
                 return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid ModulationDestination rawValue"))
             }
-            writeScramble { $0.t1Destination = dest }
+            writeScramble { $0.gate1Destination = dest }
             recordMutation(
                 changedPaths: ["scramble.t1.destination"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "t1.destination", "value": dest.rawValue])]
@@ -3554,7 +3600,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let text = modeTextFromAction(action), let dest = ModulationDestination(rawValue: text) else {
                 return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid ModulationDestination rawValue"))
             }
-            writeScramble { $0.t2Destination = dest }
+            writeScramble { $0.gate2Destination = dest }
             recordMutation(
                 changedPaths: ["scramble.t2.destination"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "t2.destination", "value": dest.rawValue])]
@@ -3565,7 +3611,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let text = modeTextFromAction(action), let dest = ModulationDestination(rawValue: text) else {
                 return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid ModulationDestination rawValue"))
             }
-            writeScramble { $0.t3Destination = dest }
+            writeScramble { $0.gate3Destination = dest }
             recordMutation(
                 changedPaths: ["scramble.t3.destination"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "t3.destination", "value": dest.rawValue])]
@@ -3577,7 +3623,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let text = modeTextFromAction(action), let dest = ScrambleNoteTarget(rawValue: text) else {
                 return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid ScrambleNoteTarget rawValue"))
             }
-            writeScramble { $0.x1Destination = dest }
+            writeScramble { $0.note1Destination = dest }
             recordMutation(
                 changedPaths: ["scramble.x1.destination"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "x1.destination", "value": dest.rawValue])]
@@ -3588,7 +3634,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let text = modeTextFromAction(action), let dest = ScrambleNoteTarget(rawValue: text) else {
                 return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid ScrambleNoteTarget rawValue"))
             }
-            writeScramble { $0.x2Destination = dest }
+            writeScramble { $0.note2Destination = dest }
             recordMutation(
                 changedPaths: ["scramble.x2.destination"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "x2.destination", "value": dest.rawValue])]
@@ -3599,7 +3645,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let text = modeTextFromAction(action), let dest = ScrambleNoteTarget(rawValue: text) else {
                 return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid ScrambleNoteTarget rawValue"))
             }
-            writeScramble { $0.x3Destination = dest }
+            writeScramble { $0.note3Destination = dest }
             recordMutation(
                 changedPaths: ["scramble.x3.destination"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "x3.destination", "value": dest.rawValue])]
@@ -3611,7 +3657,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             guard let text = modeTextFromAction(action), let dest = ModulationDestination(rawValue: text) else {
                 return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid ModulationDestination rawValue"))
             }
-            writeScramble { $0.yDestination = dest }
+            writeScramble { $0.modDestination = dest }
             recordMutation(
                 changedPaths: ["scramble.y.destination"],
                 additionalEvents: [(type: "scramble.updated", payload: ["field": "y.destination", "value": dest.rawValue])]
@@ -3658,11 +3704,11 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
 
     // MARK: - Scramble Enum Conversion Helpers
 
-    private func scrambleTModeFromText(_ text: String) -> ScrambleEngine.TMode? {
+    private func scrambleGateModeFromText(_ text: String) -> ScrambleEngine.GateMode? {
         switch text.uppercased().trimmingCharacters(in: .whitespacesAndNewlines) {
-        case "COMP": return .complementaryBernoulli
-        case "INDEP": return .independentBernoulli
-        case "3-STATE": return .threeStates
+        case "COMP": return .coinToss
+        case "INDEP": return .ratio
+        case "3-STATE": return .alternating
         case "DRUMS": return .drums
         case "MARKOV": return .markov
         case "CLUSTER": return .clusters
@@ -3671,11 +3717,11 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func scrambleTModeDisplayName(_ mode: ScrambleEngine.TMode) -> String {
+    private func scrambleGateModeDisplayName(_ mode: ScrambleEngine.GateMode) -> String {
         switch mode {
-        case .complementaryBernoulli: return "COMP"
-        case .independentBernoulli: return "INDEP"
-        case .threeStates: return "3-STATE"
+        case .coinToss: return "COMP"
+        case .ratio: return "INDEP"
+        case .alternating: return "3-STATE"
         case .drums: return "DRUMS"
         case .markov: return "MARKOV"
         case .clusters: return "CLUSTER"
@@ -3700,7 +3746,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func scrambleXControlModeFromText(_ text: String) -> ScrambleEngine.XControlMode? {
+    private func scrambleNoteControlModeFromText(_ text: String) -> ScrambleEngine.NoteControlMode? {
         switch text.uppercased().trimmingCharacters(in: .whitespacesAndNewlines) {
         case "IDENT": return .identical
         case "BUMP": return .bump
@@ -3709,7 +3755,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func scrambleXControlModeDisplayName(_ mode: ScrambleEngine.XControlMode) -> String {
+    private func scrambleNoteControlModeDisplayName(_ mode: ScrambleEngine.NoteControlMode) -> String {
         switch mode {
         case .identical: return "IDENT"
         case .bump: return "BUMP"
@@ -3717,7 +3763,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func scrambleXRangeFromText(_ text: String) -> ScrambleEngine.XRange? {
+    private func scrambleNoteRangeFromText(_ text: String) -> ScrambleEngine.NoteRange? {
         switch text.uppercased().trimmingCharacters(in: .whitespacesAndNewlines) {
         case "1 OCT": return .oneOctave
         case "2 OCT": return .twoOctaves
@@ -3726,7 +3772,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func scrambleXRangeDisplayName(_ range: ScrambleEngine.XRange) -> String {
+    private func scrambleNoteRangeDisplayName(_ range: ScrambleEngine.NoteRange) -> String {
         switch range {
         case .oneOctave: return "1 OCT"
         case .twoOctaves: return "2 OCT"
@@ -3734,24 +3780,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func scrambleXClockSourceFromText(_ text: String) -> ScrambleEngine.XClockSource? {
-        switch text.uppercased().trimmingCharacters(in: .whitespacesAndNewlines) {
-        case "T1": return .t1
-        case "T2": return .t2
-        case "T3": return .t3
-        case "ALL": return .combined
-        default: return nil
-        }
-    }
-
-    private func scrambleXClockSourceDisplayName(_ source: ScrambleEngine.XClockSource) -> String {
-        switch source {
-        case .t1: return "T1"
-        case .t2: return "T2"
-        case .t3: return "T3"
-        case .combined: return "ALL"
-        }
-    }
+    // scrambleNoteClockSource helpers removed — notes clocked by respective gates
 
     private func canonicalScrambleStatePayload() -> [String: Any] {
         let readBlock: () -> [String: Any] = { [weak self] in
@@ -3762,39 +3791,39 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                 return [
                     "enabled": mgr.enabled,
                     "t": [
-                        "mode": self?.scrambleTModeDisplayName(mgr.engine.tSection.mode) ?? "COMP",
-                        "bias": mgr.engine.tSection.bias,
-                        "jitter": mgr.engine.tSection.jitter,
+                        "mode": self?.scrambleGateModeDisplayName(mgr.engine.gateSection.mode) ?? "COMP",
+                        "bias": mgr.engine.gateSection.bias,
+                        "jitter": mgr.engine.gateSection.jitter,
                         "division": mgr.division.rawValue,
-                        "dejaVu": self?.scrambleDejaVuDisplayName(mgr.engine.tSection.dejaVu) ?? "OFF",
-                        "dejaVuAmount": mgr.engine.tSection.dejaVuAmount,
+                        "dejaVu": self?.scrambleDejaVuDisplayName(mgr.engine.gateSection.dejaVu) ?? "OFF",
+                        "dejaVuAmount": mgr.engine.gateSection.dejaVuAmount,
                     ] as [String: Any],
                     "x": [
-                        "spread": mgr.engine.xSection.spread,
-                        "bias": mgr.engine.xSection.bias,
-                        "steps": mgr.engine.xSection.steps,
-                        "controlMode": self?.scrambleXControlModeDisplayName(mgr.engine.xSection.controlMode) ?? "IDENT",
-                        "range": self?.scrambleXRangeDisplayName(mgr.engine.xSection.range) ?? "2 OCT",
-                        "clockSource": self?.scrambleXClockSourceDisplayName(mgr.engine.xSection.clockSource) ?? "T1",
-                        "dejaVu": self?.scrambleDejaVuDisplayName(mgr.engine.xSection.dejaVu) ?? "OFF",
-                        "dejaVuAmount": mgr.engine.xSection.dejaVuAmount,
+                        "spread": mgr.engine.noteSection.spread,
+                        "bias": mgr.engine.noteSection.bias,
+                        "steps": mgr.engine.noteSection.steps,
+                        "controlMode": self?.scrambleNoteControlModeDisplayName(mgr.engine.noteSection.controlMode) ?? "IDENT",
+                        "range": self?.scrambleNoteRangeDisplayName(mgr.engine.noteSection.range) ?? "2 OCT",
+                        // clockSource removed — notes clocked by respective gates
+                        "dejaVu": self?.scrambleDejaVuDisplayName(mgr.engine.noteSection.dejaVu) ?? "OFF",
+                        "dejaVuAmount": mgr.engine.noteSection.dejaVuAmount,
                     ] as [String: Any],
                     "y": [
-                        "spread": mgr.engine.ySection.spread,
-                        "bias": mgr.engine.ySection.bias,
-                        "steps": mgr.engine.ySection.steps,
-                        "divider": mgr.engine.ySection.dividerRatio,
-                        "destination": mgr.yDestination.rawValue,
-                        "amount": mgr.yAmount,
+                        "spread": mgr.engine.modSection.spread,
+                        "bias": mgr.engine.modSection.bias,
+                        "steps": mgr.engine.modSection.steps,
+                        "divider": mgr.engine.modSection.dividerRatio,
+                        "destination": mgr.modDestination.rawValue,
+                        "amount": mgr.modAmount,
                     ] as [String: Any],
                     "routing": [
-                        "t1Destination": mgr.t1Destination.rawValue,
-                        "t2Destination": mgr.t2Destination.rawValue,
-                        "t3Destination": mgr.t3Destination.rawValue,
-                        "x1Destination": mgr.x1Destination.rawValue,
-                        "x2Destination": mgr.x2Destination.rawValue,
-                        "x3Destination": mgr.x3Destination.rawValue,
-                        "yDestination": mgr.yDestination.rawValue,
+                        "t1Destination": mgr.gate1Destination.rawValue,
+                        "t2Destination": mgr.gate2Destination.rawValue,
+                        "t3Destination": mgr.gate3Destination.rawValue,
+                        "x1Destination": mgr.note1Destination.rawValue,
+                        "x2Destination": mgr.note2Destination.rawValue,
+                        "x3Destination": mgr.note3Destination.rawValue,
+                        "yDestination": mgr.modDestination.rawValue,
                     ] as [String: Any],
                 ] as [String: Any]
             }
@@ -5001,57 +5030,62 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
         case "scramble.enabled":
             return readScrambleProperty { $0.enabled }
         case "scramble.t.mode":
-            return readScrambleProperty { [weak self] mgr in self?.scrambleTModeDisplayName(mgr.engine.tSection.mode) ?? "COMP" }
+            return readScrambleProperty { [weak self] mgr in self?.scrambleGateModeDisplayName(mgr.engine.gateSection.mode) ?? "COMP" }
         case "scramble.t.bias":
-            return readScrambleProperty { $0.engine.tSection.bias }
+            return readScrambleProperty { $0.engine.gateSection.bias }
         case "scramble.t.jitter":
-            return readScrambleProperty { $0.engine.tSection.jitter }
+            return readScrambleProperty { $0.engine.gateSection.jitter }
+        case "scramble.t.gateLength":
+            return readScrambleProperty { $0.engine.gateSection.gateLength }
         case "scramble.t.division":
             return readScrambleProperty { $0.division.rawValue }
         case "scramble.t.dejaVu":
-            return readScrambleProperty { [weak self] mgr in self?.scrambleDejaVuDisplayName(mgr.engine.tSection.dejaVu) ?? "OFF" }
+            return readScrambleProperty { [weak self] mgr in self?.scrambleDejaVuDisplayName(mgr.engine.gateSection.dejaVu) ?? "OFF" }
         case "scramble.t.dejaVuAmount":
-            return readScrambleProperty { $0.engine.tSection.dejaVuAmount }
+            return readScrambleProperty { $0.engine.gateSection.dejaVuAmount }
+        case "scramble.t.dejaVuLoopLength":
+            return readScrambleProperty { $0.engine.gateSection.dejaVuLoopLength }
         case "scramble.x.spread":
-            return readScrambleProperty { $0.engine.xSection.spread }
+            return readScrambleProperty { $0.engine.noteSection.spread }
         case "scramble.x.bias":
-            return readScrambleProperty { $0.engine.xSection.bias }
+            return readScrambleProperty { $0.engine.noteSection.bias }
         case "scramble.x.steps":
-            return readScrambleProperty { $0.engine.xSection.steps }
+            return readScrambleProperty { $0.engine.noteSection.steps }
         case "scramble.x.controlMode":
-            return readScrambleProperty { [weak self] mgr in self?.scrambleXControlModeDisplayName(mgr.engine.xSection.controlMode) ?? "IDENT" }
+            return readScrambleProperty { [weak self] mgr in self?.scrambleNoteControlModeDisplayName(mgr.engine.noteSection.controlMode) ?? "IDENT" }
         case "scramble.x.range":
-            return readScrambleProperty { [weak self] mgr in self?.scrambleXRangeDisplayName(mgr.engine.xSection.range) ?? "2 OCT" }
-        case "scramble.x.clockSource":
-            return readScrambleProperty { [weak self] mgr in self?.scrambleXClockSourceDisplayName(mgr.engine.xSection.clockSource) ?? "T1" }
+            return readScrambleProperty { [weak self] mgr in self?.scrambleNoteRangeDisplayName(mgr.engine.noteSection.range) ?? "2 OCT" }
+        // scramble.x.clockSource removed — notes clocked by respective gates
         case "scramble.x.dejaVu":
-            return readScrambleProperty { [weak self] mgr in self?.scrambleDejaVuDisplayName(mgr.engine.xSection.dejaVu) ?? "OFF" }
+            return readScrambleProperty { [weak self] mgr in self?.scrambleDejaVuDisplayName(mgr.engine.noteSection.dejaVu) ?? "OFF" }
         case "scramble.x.dejaVuAmount":
-            return readScrambleProperty { $0.engine.xSection.dejaVuAmount }
+            return readScrambleProperty { $0.engine.noteSection.dejaVuAmount }
+        case "scramble.x.dejaVuLoopLength":
+            return readScrambleProperty { $0.engine.noteSection.dejaVuLoopLength }
         case "scramble.y.spread":
-            return readScrambleProperty { $0.engine.ySection.spread }
+            return readScrambleProperty { $0.engine.modSection.spread }
         case "scramble.y.bias":
-            return readScrambleProperty { $0.engine.ySection.bias }
+            return readScrambleProperty { $0.engine.modSection.bias }
         case "scramble.y.steps":
-            return readScrambleProperty { $0.engine.ySection.steps }
+            return readScrambleProperty { $0.engine.modSection.steps }
         case "scramble.y.divider":
-            return readScrambleProperty { $0.engine.ySection.dividerRatio }
+            return readScrambleProperty { $0.engine.modSection.dividerRatio }
         case "scramble.y.destination":
-            return readScrambleProperty { $0.yDestination.rawValue }
+            return readScrambleProperty { $0.modDestination.rawValue }
         case "scramble.y.amount":
-            return readScrambleProperty { $0.yAmount }
+            return readScrambleProperty { $0.modAmount }
         case "scramble.t1.destination":
-            return readScrambleProperty { $0.t1Destination.rawValue }
+            return readScrambleProperty { $0.gate1Destination.rawValue }
         case "scramble.t2.destination":
-            return readScrambleProperty { $0.t2Destination.rawValue }
+            return readScrambleProperty { $0.gate2Destination.rawValue }
         case "scramble.t3.destination":
-            return readScrambleProperty { $0.t3Destination.rawValue }
+            return readScrambleProperty { $0.gate3Destination.rawValue }
         case "scramble.x1.destination":
-            return readScrambleProperty { $0.x1Destination.rawValue }
+            return readScrambleProperty { $0.note1Destination.rawValue }
         case "scramble.x2.destination":
-            return readScrambleProperty { $0.x2Destination.rawValue }
+            return readScrambleProperty { $0.note2Destination.rawValue }
         case "scramble.x3.destination":
-            return readScrambleProperty { $0.x3Destination.rawValue }
+            return readScrambleProperty { $0.note3Destination.rawValue }
 
         default:
             // Drum sequencer lane/step paths

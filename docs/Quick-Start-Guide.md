@@ -90,6 +90,7 @@ The default view is the **SEQ** (sequencer) tab.
 
 Now that you have the basics, dig into these features:
 
+- **Scramble** -- Marbles-inspired probabilistic sequencer with 7 gate modes, 3 note outputs with Spread/Bias/Quantize shaping, Deja Vu looping, and flexible routing to any engine (SEQ tab)
 - **Resonator** -- physical-modeling resonator with 6 models, polyphony, and 11 chord types (SYNTH tab)
 - **DaisyDrums** -- 5 percussive engines with a 4-lane x 16-step drum sequencer (DRUM tab)
 - **Looper** -- 2 MLRE-inspired looper voices with rate control, reverse, and cut buttons (GRAN tab)

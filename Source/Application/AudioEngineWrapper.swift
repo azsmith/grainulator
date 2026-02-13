@@ -387,8 +387,16 @@ class AudioEngineWrapper: ObservableObject {
         "Looper 2", "Granular 4", "DaisyDrum", "Sampler",
         "Master",
         "Clock 1", "Clock 2", "Clock 3", "Clock 4",
-        "Clock 5", "Clock 6", "Clock 7", "Clock 8"
+        "Clock 5", "Clock 6", "Clock 7", "Clock 8",
+        // Scramble scope sources (indices 17-20, Swift-side ring buffers)
+        "Gate Pattern", "Note 1", "Note 2", "Mod"
     ]
+
+    /// First index for Scramble scope sources (Swift-side, not in C++ engine)
+    static let scrambleScopeStartIndex = 17
+
+    /// Reference to ScrambleManager for scope data (set during app startup)
+    weak var scrambleManager: ScrambleManager?
 
     // MARK: - SoundFont Sampler
 
@@ -1708,20 +1716,28 @@ class AudioEngineWrapper: ObservableObject {
         guard let handle = cppEngineHandle else { return }
         let numFrames = Int32(scopeTimeScale)
 
-        var buffer = [Float](repeating: 0, count: Int(numFrames))
-        buffer.withUnsafeMutableBufferPointer { ptr in
-            AudioEngine_ReadScopeBuffer(handle, Int32(scopeSource), ptr.baseAddress, numFrames)
-        }
-        scopeWaveform = buffer
+        scopeWaveform = readScopeSource(scopeSource, numFrames: numFrames, handle: handle)
 
         if scopeSourceB >= 0 {
-            var bufferB = [Float](repeating: 0, count: Int(numFrames))
-            bufferB.withUnsafeMutableBufferPointer { ptr in
-                AudioEngine_ReadScopeBuffer(handle, Int32(scopeSourceB), ptr.baseAddress, numFrames)
-            }
-            scopeWaveformB = bufferB
+            scopeWaveformB = readScopeSource(scopeSourceB, numFrames: numFrames, handle: handle)
         } else if !scopeWaveformB.isEmpty {
             scopeWaveformB = []
+        }
+    }
+
+    /// Read scope data from either C++ engine or Scramble Swift-side ring buffers.
+    private func readScopeSource(_ sourceIndex: Int, numFrames: Int32, handle: OpaquePointer) -> [Float] {
+        let scrambleStart = Self.scrambleScopeStartIndex
+        if sourceIndex >= scrambleStart, let mgr = scrambleManager {
+            // Scramble sources: 17=Gate Pattern, 18=Note 1, 19=Note 2, 20=Mod
+            let scrambleIndex = sourceIndex - scrambleStart
+            return mgr.readScopeBuffer(scrambleIndex: scrambleIndex, numFrames: Int(numFrames))
+        } else {
+            var buffer = [Float](repeating: 0, count: Int(numFrames))
+            buffer.withUnsafeMutableBufferPointer { ptr in
+                AudioEngine_ReadScopeBuffer(handle, Int32(sourceIndex), ptr.baseAddress, numFrames)
+            }
+            return buffer
         }
     }
 

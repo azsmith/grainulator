@@ -456,6 +456,9 @@ final class StepSequencer: ObservableObject {
         releaseAllHeldTieNotes()
         let startSample = (audioEngine?.currentSampleTime() ?? 0) + secondsToSamples(schedulerLeadInSeconds)
         resetRuntimeState(startSample: startSample)
+
+        // Reset Scramble in sync with sequencer, re-aligned to the same start sample
+        masterClock?.resetScramble(startSample: startSample)
     }
 
     func applySyncDebugPreset() {

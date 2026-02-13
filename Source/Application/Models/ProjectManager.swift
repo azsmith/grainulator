@@ -103,14 +103,14 @@ class ProjectManager: ObservableObject {
             scrambleMgr.enabled = false
             scrambleMgr.reset()
             scrambleMgr.division = .x1
-            scrambleMgr.t1Destination = .plaitsGate
-            scrambleMgr.t2Destination = .ringsGate
-            scrambleMgr.t3Destination = .daisyDrumGate
-            scrambleMgr.x1Destination = .plaits
-            scrambleMgr.x2Destination = .rings
-            scrambleMgr.x3Destination = .none
-            scrambleMgr.yDestination = .plaitsTimbre
-            scrambleMgr.yAmount = 0.5
+            scrambleMgr.gate1Destination = .plaitsGate
+            scrambleMgr.gate2Destination = .ringsGate
+            scrambleMgr.gate3Destination = .daisyDrumGate
+            scrambleMgr.note1Destination = .plaits
+            scrambleMgr.note2Destination = .rings
+            scrambleMgr.note3Destination = .none
+            scrambleMgr.modDestination = .plaitsTimbre
+            scrambleMgr.modAmount = 0.5
         }
 
         // Reset master clock

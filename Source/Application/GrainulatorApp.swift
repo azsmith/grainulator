@@ -88,6 +88,7 @@ struct GrainulatorApp: App {
                     arcManager.connect(audioEngine: audioEngine, appState: appState)
                     gridManager.connect(sequencer: sequencer, chordSequencer: chordSequencer, masterClock: masterClock, audioEngine: audioEngine, appState: appState)
                     scrambleManager.connect(audioEngine: audioEngine, masterClock: masterClock, sequencer: sequencer)
+                    audioEngine.scrambleManager = scrambleManager  // Scope visualization bridge
                     masterClock.connectScrambleManager(scrambleManager)
 
                     // Wire sequencer tempo/transport to AU host context for plugin sync

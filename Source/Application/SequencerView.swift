@@ -14,6 +14,8 @@ struct SequencerView: View {
     @EnvironmentObject var gridManager: MonomeGridManager
     @EnvironmentObject var masterClock: MasterClock
 
+    @EnvironmentObject var scrambleManager: ScrambleManager
+
     var body: some View {
         ConsoleModuleView(
             title: "SEQ",
@@ -22,12 +24,15 @@ struct SequencerView: View {
             VStack(spacing: 10) {
                 header
 
+                // Chord sequencer track
+                ChordSequencerView(chordSequencer: chordSequencer)
+
                 ForEach(Array(sequencer.tracks.indices), id: \.self) { trackIndex in
                     trackSection(trackIndex: trackIndex)
                 }
 
-                // Chord sequencer track
-                ChordSequencerView(chordSequencer: chordSequencer)
+                // Scramble probabilistic sequencer
+                ScrambleView()
             }
             .padding(12)
         }
@@ -122,48 +127,24 @@ struct SequencerView: View {
             }
             .buttonStyle(.plain)
 
-            // Sequence octave (compact stepper-like)
-            HStack(spacing: 2) {
-                Text("OCT")
-                    .font(.system(size: 8, weight: .medium, design: .monospaced))
-                    .foregroundColor(ColorPalette.textDimmed)
-                Button(action: { sequencer.setSequenceOctave(sequencer.sequenceOctave - 1) }) {
-                    Image(systemName: "minus")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(ColorPalette.textMuted)
-                        .frame(width: 18, height: 18)
+            // Toggle chord-driven scale mode
+            Button(action: {
+                if isChordScaleActive {
+                    sequencer.setScaleIndex(0)
+                } else {
+                    sequencer.setScaleIndex(StepSequencer.chordSequencerScaleIndex)
                 }
-                .buttonStyle(.plain)
-                .disabled(sequencer.sequenceOctave <= -4)
-
-                Text("\(sequencer.sequenceOctave >= 0 ? "+" : "")\(sequencer.sequenceOctave)")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(ColorPalette.ledAmber)
-                    .frame(width: 24)
-
-                Button(action: { sequencer.setSequenceOctave(sequencer.sequenceOctave + 1) }) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(ColorPalette.textMuted)
-                        .frame(width: 18, height: 18)
-                }
-                .buttonStyle(.plain)
-                .disabled(sequencer.sequenceOctave >= 4)
+            }) {
+                Text("USE CHORDS")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundColor(isChordScaleActive ? .white : ColorPalette.metalSteel)
+                    .padding(.horizontal, 6)
+                    .frame(height: 26)
+                    .background(isChordScaleActive ? ColorPalette.ledBlue : ColorPalette.panelBackground)
+                    .cornerRadius(4)
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
-            .background(ColorPalette.backgroundSecondary)
-            .cornerRadius(4)
-
-            // BPM (draggable)
-            DraggableBPMView(
-                value: Binding(
-                    get: { sequencer.tempoBPM },
-                    set: { sequencer.setTempoBPM($0) }
-                ),
-                range: 40...240,
-                accentColor: ColorPalette.ledAmber
-            )
+            .buttonStyle(.plain)
+            .help(isChordScaleActive ? "Using chord progression as scale — click to revert" : "Use chord progression to drive sequencer scale")
 
             Spacer()
         }
@@ -177,10 +158,6 @@ struct SequencerView: View {
         guard !sequencer.scaleOptions.isEmpty else { return "Major" }
         let index = min(max(sequencer.scaleIndex, 0), sequencer.scaleOptions.count - 1)
         return sequencer.scaleOptions[index].name
-    }
-
-    private var controlLabelColor: Color {
-        ColorPalette.metalChrome
     }
 
     // MARK: - Track Section

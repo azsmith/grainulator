@@ -8,7 +8,7 @@
 
 Grainulator is a macOS synthesizer and sequencer that combines granular synthesis, wavetable playback, physical-modeling engines (Mutable Instruments Macro Osc and Resonator), a drum machine, a multi-track step sequencer, effects, and an HTTP API for AI-powered conversational control. It is designed for musicians and producers who want deep sound-design capabilities in a single integrated environment.
 
-The application blends two worlds: the flexible, experimental character of hardware modular synthesizers with the recall and automation advantages of software. At its core are two synthesis lineages -- Mutable Instruments' open-source Macro Osc and Resonator DSP code (ported from the original C++ firmware) providing 17+6 synthesis models, and a custom four-voice granular engine with nine analog-modeled Moog ladder filter variants. A step sequencer with advanced direction modes, per-step probability and ratchets, and a chord progression engine ties everything together musically, while eight clock outputs with modulation routing let you animate any parameter from slow sweeps to audio-rate FM.
+The application blends two worlds: the flexible, experimental character of hardware modular synthesizers with the recall and automation advantages of software. At its core are two synthesis lineages -- Mutable Instruments' open-source Macro Osc and Resonator DSP code (ported from the original C++ firmware) providing 17+6 synthesis models, and a custom four-voice granular engine with nine analog-modeled Moog ladder filter variants. A step sequencer with advanced direction modes, per-step probability and ratchets, a chord progression engine, and Scramble -- a Marbles-inspired probabilistic sequencer with gate patterns, note generation, and Deja Vu looping -- tie everything together musically, while eight clock outputs with modulation routing let you animate any parameter from slow sweeps to audio-rate FM.
 
 ### 1.2 System Requirements
 
@@ -573,6 +573,135 @@ Four built-in presets populate the 8-step grid:
 
 ---
 
+## 7b. Scramble (Probabilistic Sequencer)
+
+### 7b.1 Overview
+
+Scramble is a probabilistic sequencer inspired by Mutable Instruments Marbles. It generates gate patterns, quantized note sequences, and modulation CV using controllable randomness, Deja Vu looping, and flexible routing to any synthesis engine.
+
+Scramble complements the step sequencer: while the step sequencer plays deterministic patterns, Scramble introduces controlled unpredictability. The two are transport-synced — they start, stop, and reset together, phase-aligned on the downbeat.
+
+The Scramble panel is displayed in the SEQ tab alongside the step sequencer. It is organized into three columns: **Gate Generator**, **Note Generator**, and **Mod Generator**.
+
+### 7b.2 Gate Generator
+
+The gate generator produces three simultaneous gate outputs per step:
+
+| Output | Role |
+|---|---|
+| **Gate 1** | Probabilistic gate (controlled by Bias and Mode) |
+| **Gate 2** | Master clock (always fires every step) |
+| **Gate 3** | Complementary / pattern-based (varies by mode) |
+
+#### Gate Modes (7)
+
+| Mode | Behavior |
+|---|---|
+| **Coin Toss** | Gate 1 fires with probability = Bias. Gate 3 = complement of Gate 1. |
+| **Ratio** | Gate 1 fires every N steps (Bias selects N from 1-8). Gate 3 = complement. |
+| **Alternating** | Cycles through Gate 1 only, both, Gate 3 only, both. |
+| **Drums** | 8 preset rhythmic patterns (Bias selects which pattern). |
+| **Markov** | 8-state Markov chain. Bias controls transition probability. |
+| **Clusters** | Burst generator. Bias controls burst trigger probability. |
+| **Divider** | Gate 1 every N steps, Gate 3 every M steps (Bias controls phase). |
+
+#### Gate Parameters
+
+| Parameter | Description |
+|---|---|
+| **Bias** | Probability/density control (meaning varies per mode) |
+| **Length** | Gate duty cycle (0-100% of step duration) |
+| **Jitter** | Timing randomization — offsets each step's scheduling time by a random amount |
+| **Deja Vu** | Off / On / Locked — controls whether gate patterns are recorded and replayed |
+| **DV Amt** | Deja Vu replay probability (when On) |
+| **Loop** | Deja Vu loop length (1-16 steps) |
+| **Divider** | Clock divider — only fire every Nth master clock step |
+
+#### Gate Routing
+
+Each gate output can be routed to any trigger destination (Macro Osc, Resonator, Drums lanes, Sampler). The routing is configured in the Gate Outputs section below the generator parameters.
+
+The gate pattern visualization shows three rows (G1, G2, G3) of 16 dots representing the recent gate history.
+
+### 7b.3 Note Generator
+
+The note generator produces three note outputs, quantized to the current scale and root note from the step sequencer. Notes are clocked by their respective gate outputs — Note 1 only updates when Gate 1 fires, Note 2 updates every step (Gate 2 = master clock), and Note 3 only updates when Gate 3 fires. This means the three note outputs naturally change on different schedules.
+
+#### Note Parameters
+
+| Parameter | Description |
+|---|---|
+| **Ctrl** | Control mode: how the three note outputs relate to each other (see below) |
+| **Spread** | Distribution shape. 0 = narrow (clustered around center), 0.5 = uniform random, 1.0 = bimodal (extremes only) |
+| **Bias** | Probability skew. < 0.5 favors lower notes, > 0.5 favors higher notes |
+| **S / Q** | Dual-mode control. Left = Smooth (slew between consecutive values), Center = Off, Right = Quantize (snap to 2-16 discrete pitch zones) |
+| **Range** | Note range: 1 octave, 2 octaves, or 4 octaves centered on root |
+| **Deja Vu** | Off / On / Locked — controls note sequence recording and replay |
+| **DV Amt** | Deja Vu replay probability |
+| **Loop** | Deja Vu loop length (1-16 steps) |
+| **Divider** | Note clock divider — only generate new notes every Nth step |
+
+#### Control Modes (3)
+
+| Mode | Behavior |
+|---|---|
+| **Identical** | All three notes get the same value. Unison. |
+| **Tilt** | Note 2 = center value, Note 1 = offset down, Note 3 = offset up. Creates a fan/spread effect with parallel melodic motion. |
+| **Bump** | Note 2 = generated value, Notes 1 & 3 = inverse. Creates contrary motion. |
+
+#### S / Q (Smooth / Quantize)
+
+This dual-mode slider processes the raw random value before scale quantization:
+
+- **Off** (0): Raw values pass through unchanged — maximum melodic variety.
+- **Smooth** (left side, S 1%-100%): Slews between consecutive values, creating stepwise melodic motion instead of random leaps. Higher values = heavier smoothing.
+- **Quantize** (right side, Q 2-16): Snaps the raw value to a grid of 2-16 evenly-spaced zones before scale quantization. Q2 = only 2 possible pitch regions, Q4 = 4 zones, etc. Constrains melodic vocabulary.
+
+#### Note Routing
+
+Each note output can be routed to a synthesis target (Macro Osc, Resonator, Drums, Sampler, or None).
+
+### 7b.4 Mod Generator
+
+The mod generator produces a single modulation CV value using the same Spread/Bias/S-Q pipeline as the note generator.
+
+| Parameter | Description |
+|---|---|
+| **Spread** | Distribution shape (same as note generator) |
+| **Bias** | Probability skew (same as note generator) |
+| **S / Q** | Smooth/Quantize (same as note generator) |
+| **Divider** | Mod clock divider |
+
+The mod output is routed to a single modulation destination with an adjustable amount.
+
+### 7b.5 Deja Vu
+
+Deja Vu is a pattern memory system shared between the gate and note generators:
+
+| State | Behavior |
+|---|---|
+| **Off** | Fresh random values every step. No recording. |
+| **On** | Records values into a loop buffer. Each step has a probability (DV Amt) of replaying a recorded value instead of generating a new one. At 50%, you get a mix of familiar and new. |
+| **Locked** | Only replays recorded values. The sequence is frozen and loops deterministically. |
+
+The **Loop** parameter (1-16) controls the loop length. Shorter loops create more repetitive patterns; longer loops create more variation before repeating.
+
+### 7b.6 Transport Sync
+
+Scramble is fully synced with the master transport:
+
+- **Play**: Scramble starts from the same sample position as the step sequencer.
+- **Stop**: Scramble stops.
+- **Reset**: The sequencer reset button (or Return key) resets both the step sequencer and Scramble simultaneously, re-aligning them on the downbeat.
+
+The clock division selector in the Scramble header sets the step rate relative to the master BPM, using the same 20 division options as the step sequencer.
+
+### 7b.7 Scope Visualization
+
+Scramble adds four sources to the oscilloscope: Gate Pattern, Note 1, Note 2, and Mod. These appear in a "Scramble" section of the scope source picker.
+
+---
+
 ## 8. Drum Sequencer
 
 ### 8.1 Overview
@@ -824,6 +953,7 @@ A project snapshot includes:
 - Step sequencer patterns (both tracks, all step data)
 - Chord sequencer patterns
 - Drum sequencer patterns
+- Scramble state (engine parameters, routing, Deja Vu sequences)
 - Mixer state (levels, pans, sends)
 - Effects parameters (delay, reverb, master filter)
 - Clock output configuration (all 8 outputs)
@@ -936,7 +1066,7 @@ The oscilloscope opens as a **floating window** and provides a real-time wavefor
 | Feature | Description |
 |---|---|
 | **Dual-source overlay** | Display two audio sources simultaneously for comparison |
-| **Source selection** | Choose which engine/channel to visualize |
+| **Source selection** | Choose which engine/channel to visualize (includes Scramble gate, note, and mod sources) |
 | **Time scale** | Adjust the horizontal zoom level |
 | **Per-sample clock waveforms** | Visualize clock output signals alongside audio |
 
@@ -1094,6 +1224,15 @@ For full API details, see `ai-conversational-control-api-spec.md` and the OpenAP
 4. Toggle between tracks to switch melodic focus.
 5. Use chord mode on the grid to change harmonic context on the fly.
 6. The grid's LED feedback shows the current playhead and active notes for visual orientation.
+
+### Generative Melody with Scramble
+1. Enable Scramble (RUN) in the SEQ tab.
+2. Set Ctrl to **Tilt** so Notes 1 and 3 fan above/below Note 2.
+3. Route Note 1 to Macro Osc, Note 3 to Resonator.
+4. Set Gate mode to **Ratio** with Bias around 0.6 for a rhythmically interesting pattern.
+5. Turn Deja Vu to **On** with DV Amt around 0.5 and Loop = 4 for short, semi-repeating phrases.
+6. Use the **S / Q** slider on the quantize side (Q4-Q8) to limit the melodic range to a few pitch zones.
+7. Run the step sequencer simultaneously for a deterministic bass line underneath the generative melody.
 
 ### Using the Chord Sequencer for Composition
 1. Start with a preset (Pop, Jazz, Blues, Emotional) as a foundation.

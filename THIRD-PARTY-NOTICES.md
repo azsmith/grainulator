@@ -20,6 +20,22 @@ See `LICENSE-MUTABLE-INSTRUMENTS.txt` for the full license text.
 
 ---
 
+## Mutable Instruments — Marbles (Design Inspiration)
+
+**License:** MIT
+**Copyright:** 2015-2018 Emilie Gillet
+**Source:** https://github.com/pichenettes/eurorack (marbles/)
+**Location in project:** `Source/Application/ScrambleEngine.swift`, `Source/Application/ScrambleManager.swift`
+
+The Scramble probabilistic sequencer is inspired by the design and concepts of
+Mutable Instruments Marbles by Emilie Gillet. The implementation is original
+Swift code — no firmware source code from the Marbles module was used. Concepts
+adapted include: probabilistic gate generation with complementary outputs,
+Deja Vu pattern memory with variable loop length, distribution shaping (Spread),
+probability skew (Bias), and the three-output note generator with control modes.
+
+---
+
 ## DaisySP — Drum Synthesis
 
 **License:** MIT

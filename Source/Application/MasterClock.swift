@@ -805,6 +805,19 @@ class MasterClock: ObservableObject {
         scrambleManager?.stop()
     }
 
+    /// Reset Scramble engine state and re-sync with transport (called by sequencer reset).
+    /// If transport is running, stops Scramble, resets, then restarts from the new start sample
+    /// so gate patterns are phase-aligned with the sequencer.
+    func resetScramble(startSample: UInt64? = nil) {
+        guard let mgr = scrambleManager else { return }
+        let wasRunning = isRunning
+        if wasRunning { mgr.stop() }
+        mgr.reset()
+        if wasRunning, let sample = startSample ?? audioEngine?.currentSampleTime() {
+            mgr.start(startSample: sample)
+        }
+    }
+
     func toggle() {
         if isRunning {
             stop()

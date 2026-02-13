@@ -2,7 +2,7 @@
 //  ScrambleView.swift
 //  Grainulator
 //
-//  Scramble probabilistic sequencer UI — horizontal 3-column layout (T | X | Y)
+//  Scramble probabilistic sequencer UI — horizontal 3-column layout (Gate | Note | Mod)
 //  inspired by Mutable Instruments Marbles.
 //
 
@@ -42,7 +42,7 @@ struct ScrambleView: View {
                     Circle()
                         .fill(scrambleManager.enabled ? accent : ColorPalette.textMuted)
                         .frame(width: 8, height: 8)
-                    Text(scrambleManager.enabled ? "ON" : "OFF")
+                    Text(scrambleManager.enabled ? "RUN" : "STOP")
                         .font(Typography.buttonSmall)
                 }
                 .foregroundColor(scrambleManager.enabled ? .white : ColorPalette.textMuted)
@@ -104,11 +104,11 @@ struct ScrambleView: View {
 
     private var columnsSection: some View {
         HStack(alignment: .top, spacing: 16) {
-            tColumn
+            gateColumn
             verticalDivider
-            xColumn
+            noteColumn
             verticalDivider
-            yColumn
+            modColumn
         }
     }
 
@@ -120,131 +120,124 @@ struct ScrambleView: View {
             .padding(.vertical, 8)
     }
 
-    // MARK: - T Column
+    // MARK: - Gate Column
 
-    private var tColumn: some View {
+    private var gateColumn: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionLabel("T GENERATOR")
+            sectionLabel("GATE GENERATOR")
 
             parameterRow("MODE") {
-                menuPicker(scrambleManager.engine.tSection.mode.rawValue) {
-                    ForEach(ScrambleEngine.TMode.allCases) { mode in
-                        Button(mode.rawValue) {
-                            scrambleManager.engine.tSection.mode = mode
+                menuPicker(scrambleManager.engine.gateSection.mode.displayName) {
+                    ForEach(ScrambleEngine.GateMode.allCases) { mode in
+                        Button(mode.displayName) {
+                            scrambleManager.engine.gateSection.mode = mode
                         }
                     }
                 }
             }
 
-            sliderRow("BIAS", value: $scrambleManager.engine.tSection.bias, range: 0...1)
-            sliderRow("JITTER", value: $scrambleManager.engine.tSection.jitter, range: 0...1)
+            sliderRow("BIAS", value: $scrambleManager.engine.gateSection.bias, range: 0...1)
+            sliderRow("LENGTH", value: $scrambleManager.engine.gateSection.gateLength, range: 0...1)
+            sliderRow("JITTER", value: $scrambleManager.engine.gateSection.jitter, range: 0...1)
 
             dejaVuControls(
-                state: $scrambleManager.engine.tSection.dejaVu,
-                amount: $scrambleManager.engine.tSection.dejaVuAmount
+                state: $scrambleManager.engine.gateSection.dejaVu,
+                amount: $scrambleManager.engine.gateSection.dejaVuAmount,
+                loopLength: $scrambleManager.engine.gateSection.dejaVuLoopLength
             )
 
-            dividerRow("DIVIDER", value: $scrambleManager.engine.tSection.dividerRatio)
+            dividerRow("DIVIDER", value: $scrambleManager.engine.gateSection.dividerRatio)
 
             sectionDivider
 
-            sectionLabel("T OUTPUTS")
+            sectionLabel("GATE OUTPUTS")
 
-            triggerDestinationRow("T1", destination: $scrambleManager.t1Destination, active: scrambleManager.lastTOutput.t1)
-            triggerDestinationRow("T2", destination: $scrambleManager.t2Destination, active: scrambleManager.lastTOutput.t2)
-            triggerDestinationRow("T3", destination: $scrambleManager.t3Destination, active: scrambleManager.lastTOutput.t3)
+            triggerDestinationRow("GATE 1", destination: $scrambleManager.gate1Destination, active: scrambleManager.lastGateOutput.gate1)
+            triggerDestinationRow("GATE 2", destination: $scrambleManager.gate2Destination, active: scrambleManager.lastGateOutput.gate2)
+            triggerDestinationRow("GATE 3", destination: $scrambleManager.gate3Destination, active: scrambleManager.lastGateOutput.gate3)
 
             sectionDivider
 
-            tPatternViz
+            gatePatternViz
         }
         .frame(minWidth: 200)
     }
 
-    // MARK: - X Column
+    // MARK: - Note Column
 
-    private var xColumn: some View {
+    private var noteColumn: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionLabel("X GENERATOR")
+            sectionLabel("NOTE GENERATOR")
 
             parameterRow("CTRL") {
-                menuPicker(scrambleManager.engine.xSection.controlMode.rawValue) {
-                    ForEach(ScrambleEngine.XControlMode.allCases) { mode in
+                menuPicker(scrambleManager.engine.noteSection.controlMode.rawValue) {
+                    ForEach(ScrambleEngine.NoteControlMode.allCases) { mode in
                         Button(mode.rawValue) {
-                            scrambleManager.engine.xSection.controlMode = mode
+                            scrambleManager.engine.noteSection.controlMode = mode
                         }
                     }
                 }
             }
 
-            sliderRow("SPREAD", value: $scrambleManager.engine.xSection.spread, range: 0...1)
-            sliderRow("BIAS", value: $scrambleManager.engine.xSection.bias, range: 0...1)
-            sliderRow("STEPS", value: $scrambleManager.engine.xSection.steps, range: 0...1)
+            sliderRow("SPREAD", value: $scrambleManager.engine.noteSection.spread, range: 0...1)
+            sliderRow("BIAS", value: $scrambleManager.engine.noteSection.bias, range: 0...1)
+            smoothQuantizeRow(value: $scrambleManager.engine.noteSection.steps)
 
             parameterRow("RANGE") {
-                menuPicker(scrambleManager.engine.xSection.range.rawValue) {
-                    ForEach(ScrambleEngine.XRange.allCases) { range in
+                menuPicker(scrambleManager.engine.noteSection.range.rawValue) {
+                    ForEach(ScrambleEngine.NoteRange.allCases) { range in
                         Button(range.rawValue) {
-                            scrambleManager.engine.xSection.range = range
-                        }
-                    }
-                }
-            }
-
-            parameterRow("CLK SRC") {
-                menuPicker(scrambleManager.engine.xSection.clockSource.rawValue) {
-                    ForEach(ScrambleEngine.XClockSource.allCases) { src in
-                        Button(src.rawValue) {
-                            scrambleManager.engine.xSection.clockSource = src
+                            scrambleManager.engine.noteSection.range = range
                         }
                     }
                 }
             }
 
             dejaVuControls(
-                state: $scrambleManager.engine.xSection.dejaVu,
-                amount: $scrambleManager.engine.xSection.dejaVuAmount
+                state: $scrambleManager.engine.noteSection.dejaVu,
+                amount: $scrambleManager.engine.noteSection.dejaVuAmount,
+                loopLength: $scrambleManager.engine.noteSection.dejaVuLoopLength
             )
 
-            dividerRow("DIVIDER", value: $scrambleManager.engine.xSection.dividerRatio)
+            dividerRow("DIVIDER", value: $scrambleManager.engine.noteSection.dividerRatio)
 
             sectionDivider
 
-            sectionLabel("X OUTPUTS")
+            sectionLabel("NOTE OUTPUTS")
 
-            noteTargetRow("X1", destination: $scrambleManager.x1Destination, note: scrambleManager.lastXOutput.x1)
-            noteTargetRow("X2", destination: $scrambleManager.x2Destination, note: scrambleManager.lastXOutput.x2)
-            noteTargetRow("X3", destination: $scrambleManager.x3Destination, note: scrambleManager.lastXOutput.x3)
+            noteTargetRow("NOTE 1", destination: $scrambleManager.note1Destination, note: scrambleManager.lastNoteOutput.note1)
+            noteTargetRow("NOTE 2", destination: $scrambleManager.note2Destination, note: scrambleManager.lastNoteOutput.note2)
+            noteTargetRow("NOTE 3", destination: $scrambleManager.note3Destination, note: scrambleManager.lastNoteOutput.note3)
 
             sectionDivider
 
-            xNotesViz
+            noteValuesViz
         }
         .frame(minWidth: 200)
     }
 
-    // MARK: - Y Column
+    // MARK: - Mod Column
 
-    private var yColumn: some View {
+    private var modColumn: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionLabel("Y GENERATOR")
+            sectionLabel("MOD GENERATOR")
 
-            sliderRow("SPREAD", value: $scrambleManager.engine.ySection.spread, range: 0...1)
-            sliderRow("BIAS", value: $scrambleManager.engine.ySection.bias, range: 0...1)
-            sliderRow("STEPS", value: $scrambleManager.engine.ySection.steps, range: 0...1)
+            sliderRow("SPREAD", value: $scrambleManager.engine.modSection.spread, range: 0...1)
+            sliderRow("BIAS", value: $scrambleManager.engine.modSection.bias, range: 0...1)
+            smoothQuantizeRow(value: $scrambleManager.engine.modSection.steps)
 
-            dividerRow("DIVIDER", value: $scrambleManager.engine.ySection.dividerRatio)
-
-            sectionDivider
-
-            sectionLabel("Y OUTPUT")
-
-            cvDestinationRow("Y", destination: $scrambleManager.yDestination)
-            sliderRow("AMOUNT", value: $scrambleManager.yAmount, range: 0...1)
+            dividerRow("DIVIDER", value: $scrambleManager.engine.modSection.dividerRatio)
 
             sectionDivider
 
-            yCVViz
+            sectionLabel("MOD OUTPUT")
+
+            cvDestinationRow("MOD", destination: $scrambleManager.modDestination)
+            sliderRow("AMOUNT", value: $scrambleManager.modAmount, range: 0...1)
+
+            sectionDivider
+
+            modCVViz
         }
         .frame(minWidth: 200)
     }
@@ -306,6 +299,39 @@ struct ScrambleView: View {
         }
     }
 
+    /// Dual-mode slider: left = smooth (slew), center = bypass, right = quantize (snap to steps)
+    private func smoothQuantizeRow(value: Binding<Double>) -> some View {
+        HStack(spacing: 8) {
+            Text("S / Q")
+                .font(Typography.parameterLabel)
+                .foregroundColor(ColorPalette.textMuted)
+                .frame(width: 54, alignment: .trailing)
+            Slider(value: value, in: 0...1)
+                .tint(accent)
+                .frame(maxWidth: 120)
+            Text(stepsDisplayLabel(value.wrappedValue))
+                .font(Typography.valueTiny)
+                .foregroundColor(ColorPalette.textSecondary)
+                .frame(width: 42, alignment: .trailing)
+        }
+        .help("Left = Smooth (slew), Center = Off, Right = Quantize (snap)")
+    }
+
+    /// Display label for the smooth/quantize slider
+    private func stepsDisplayLabel(_ value: Double) -> String {
+        if value < 0.01 {
+            return "OFF"
+        } else if value < 0.45 {
+            return "S \(Int(value / 0.45 * 100))%"
+        } else if value > 0.55 {
+            let t = (value - 0.55) / 0.45
+            let levels = max(2, Int((t * 14.0 + 2.0).rounded()))
+            return "Q \(levels)"
+        } else {
+            return "OFF"
+        }
+    }
+
     private func dividerRow(_ label: String, value: Binding<Int>) -> some View {
         parameterRow(label) {
             HStack(spacing: 6) {
@@ -345,7 +371,7 @@ struct ScrambleView: View {
         }
     }
 
-    private func dejaVuControls(state: Binding<ScrambleEngine.DejaVuState>, amount: Binding<Double>) -> some View {
+    private func dejaVuControls(state: Binding<ScrambleEngine.DejaVuState>, amount: Binding<Double>, loopLength: Binding<Int>) -> some View {
         VStack(spacing: 4) {
             parameterRow("DEJA VU") {
                 HStack(spacing: 4) {
@@ -370,6 +396,7 @@ struct ScrambleView: View {
 
             if state.wrappedValue != .off {
                 sliderRow("DV AMT", value: amount, range: 0...1)
+                dividerRow("LOOP", value: loopLength)
             }
         }
     }
@@ -385,7 +412,7 @@ struct ScrambleView: View {
             Text(label)
                 .font(Typography.channelLabel)
                 .foregroundColor(active ? .white : ColorPalette.textMuted)
-                .frame(width: 20, alignment: .leading)
+                .frame(width: 44, alignment: .leading)
 
             Image(systemName: "arrow.right")
                 .font(.system(size: 8))
@@ -427,7 +454,7 @@ struct ScrambleView: View {
             Text(label)
                 .font(Typography.channelLabel)
                 .foregroundColor(ColorPalette.textMuted)
-                .frame(width: 20, alignment: .leading)
+                .frame(width: 44, alignment: .leading)
 
             Image(systemName: "arrow.right")
                 .font(.system(size: 8))
@@ -460,7 +487,7 @@ struct ScrambleView: View {
             Text(label)
                 .font(Typography.channelLabel)
                 .foregroundColor(ColorPalette.textMuted)
-                .frame(width: 20, alignment: .leading)
+                .frame(width: 32, alignment: .leading)
 
             Image(systemName: "arrow.right")
                 .font(.system(size: 8))
@@ -490,24 +517,35 @@ struct ScrambleView: View {
 
     // MARK: - Visualization
 
-    private var tPatternViz: some View {
+    private var gatePatternViz: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("PATTERN")
                 .font(Typography.parameterLabelSmall)
                 .foregroundColor(ColorPalette.textMuted)
 
-            HStack(spacing: 3) {
-                ForEach(0..<16, id: \.self) { i in
-                    let active = i < scrambleManager.tHistory.count && scrambleManager.tHistory[i].t1
-                    Circle()
-                        .fill(active ? accent : ColorPalette.textMuted.opacity(0.3))
-                        .frame(width: 10, height: 10)
-                }
+            gatePatternRow("G1", keyPath: \.gate1)
+            gatePatternRow("G2", keyPath: \.gate2)
+            gatePatternRow("G3", keyPath: \.gate3)
+        }
+    }
+
+    private func gatePatternRow(_ label: String, keyPath: KeyPath<ScrambleEngine.GateOutput, Bool>) -> some View {
+        HStack(spacing: 3) {
+            Text(label)
+                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                .foregroundColor(ColorPalette.textMuted)
+                .frame(width: 18, alignment: .leading)
+
+            ForEach(0..<16, id: \.self) { i in
+                let active = i < scrambleManager.gateHistory.count && scrambleManager.gateHistory[i][keyPath: keyPath]
+                Circle()
+                    .fill(active ? accent : ColorPalette.textMuted.opacity(0.3))
+                    .frame(width: 8, height: 8)
             }
         }
     }
 
-    private var xNotesViz: some View {
+    private var noteValuesViz: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("NOTES")
                 .font(Typography.parameterLabelSmall)
@@ -515,10 +553,10 @@ struct ScrambleView: View {
 
             HStack(alignment: .bottom, spacing: 3) {
                 ForEach(0..<16, id: \.self) { i in
-                    let note: UInt8 = i < scrambleManager.xHistory.count ? scrambleManager.xHistory[i] : 60
+                    let note: UInt8 = i < scrambleManager.noteHistory.count ? scrambleManager.noteHistory[i] : 60
                     let height = max(4, CGFloat(note - 36) * 0.8)
                     RoundedRectangle(cornerRadius: 1)
-                        .fill(i < scrambleManager.xHistory.count ? accent : ColorPalette.textMuted.opacity(0.3))
+                        .fill(i < scrambleManager.noteHistory.count ? accent : ColorPalette.textMuted.opacity(0.3))
                         .frame(width: 8, height: height)
                 }
             }
@@ -526,7 +564,7 @@ struct ScrambleView: View {
         }
     }
 
-    private var yCVViz: some View {
+    private var modCVViz: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("CV")
                 .font(Typography.parameterLabelSmall)
@@ -534,10 +572,10 @@ struct ScrambleView: View {
 
             HStack(alignment: .bottom, spacing: 3) {
                 ForEach(0..<16, id: \.self) { i in
-                    let value: Double = i < scrambleManager.yHistory.count ? scrambleManager.yHistory[i] : 0.5
+                    let value: Double = i < scrambleManager.modHistory.count ? scrambleManager.modHistory[i] : 0.5
                     let height = max(4, CGFloat(value) * 50)
                     RoundedRectangle(cornerRadius: 1)
-                        .fill(i < scrambleManager.yHistory.count ? accent : ColorPalette.textMuted.opacity(0.3))
+                        .fill(i < scrambleManager.modHistory.count ? accent : ColorPalette.textMuted.opacity(0.3))
                         .frame(width: 8, height: height)
                 }
             }

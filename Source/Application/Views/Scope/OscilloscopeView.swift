@@ -142,6 +142,11 @@ struct OscilloscopeView: View {
                     Text(AudioEngineWrapper.scopeSourceNames[i]).tag(i)
                 }
             }
+            Section(header: Text("Scramble")) {
+                ForEach(17..<21, id: \.self) { i in
+                    Text(AudioEngineWrapper.scopeSourceNames[i]).tag(i)
+                }
+            }
         }
         .pickerStyle(.menu)
         .labelsHidden()
