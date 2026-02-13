@@ -12,6 +12,14 @@ struct ConversationalRoutingCore {
         let bar: Int
         let beat: Double
         let bpm: Double
+        let quarterNotesPerBar: Double
+
+        init(bar: Int, beat: Double, bpm: Double, quarterNotesPerBar: Double = 4.0) {
+            self.bar = bar
+            self.beat = beat
+            self.bpm = bpm
+            self.quarterNotesPerBar = quarterNotesPerBar
+        }
     }
 
     struct TimeSpec: Equatable {
@@ -31,7 +39,7 @@ struct ConversationalRoutingCore {
         return type
     }
 
-    static func quantizationStepBeats(_ quantization: String?) -> Double? {
+    static func quantizationStepBeats(_ quantization: String?, quarterNotesPerBar: Double = 4.0) -> Double? {
         guard let quantization else { return nil }
         switch quantization {
         case "off":
@@ -43,7 +51,7 @@ struct ConversationalRoutingCore {
         case "1/4":
             return 1.0
         case "1_bar", "1 bar":
-            return 4.0
+            return quarterNotesPerBar
         default:
             return nil
         }
@@ -64,7 +72,8 @@ struct ConversationalRoutingCore {
         current: TransportSnapshot,
         timeSpec: TimeSpec?
     ) -> (bar: Int, beat: Double, beatsDelta: Double) {
-        let currentTotalBeats = (Double(max(1, current.bar) - 1) * 4.0) + (current.beat - 1.0)
+        let qnPerBar = current.quarterNotesPerBar
+        let currentTotalBeats = (Double(max(1, current.bar) - 1) * qnPerBar) + (current.beat - 1.0)
         let anchor = timeSpec?.anchor ?? "now"
 
         var targetTotalBeats = currentTotalBeats
@@ -72,20 +81,20 @@ struct ConversationalRoutingCore {
         case "next_beat":
             targetTotalBeats = floor(currentTotalBeats) + 1.0
         case "next_bar":
-            targetTotalBeats = floor(currentTotalBeats / 4.0) * 4.0 + 4.0
+            targetTotalBeats = floor(currentTotalBeats / qnPerBar) * qnPerBar + qnPerBar
         case "at_transport_position":
             targetTotalBeats = currentTotalBeats
         default:
             targetTotalBeats = currentTotalBeats
         }
 
-        if let step = quantizationStepBeats(timeSpec?.quantization), step > 0 {
+        if let step = quantizationStepBeats(timeSpec?.quantization, quarterNotesPerBar: qnPerBar), step > 0 {
             targetTotalBeats = ceil(targetTotalBeats / step) * step
         }
 
         let beatsDelta = max(0.0, targetTotalBeats - currentTotalBeats)
-        let bar = Int(floor(targetTotalBeats / 4.0)) + 1
-        let beat = targetTotalBeats.truncatingRemainder(dividingBy: 4.0) + 1.0
+        let bar = Int(floor(targetTotalBeats / qnPerBar)) + 1
+        let beat = targetTotalBeats.truncatingRemainder(dividingBy: qnPerBar) + 1.0
         return (max(1, bar), beat, beatsDelta)
     }
 }

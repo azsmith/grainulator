@@ -119,6 +119,9 @@ struct TransportBarView: View {
             }
             .fixedSize()
 
+            // Bar:Beat counter
+            barBeatCounter
+
             // BPM display
             bpmDisplay
 
@@ -195,6 +198,36 @@ struct TransportBarView: View {
             return String(format: "%.0f", bpm)
         }
         return String(format: "%.1f", bpm)
+    }
+
+    // MARK: - Bar:Beat Counter
+
+    private var barBeatCounter: some View {
+        HStack(spacing: 0) {
+            Text("\(masterClock.currentBar)")
+                .font(.system(size: 16, weight: .bold, design: .monospaced))
+                .foregroundColor(ColorPalette.lcdAmber)
+                .monospacedDigit()
+                .frame(minWidth: 16, alignment: .trailing)
+            Text(":")
+                .font(.system(size: 16, weight: .bold, design: .monospaced))
+                .foregroundColor(ColorPalette.lcdAmber.opacity(0.6))
+            Text("\(masterClock.currentBeat)")
+                .font(.system(size: 16, weight: .bold, design: .monospaced))
+                .foregroundColor(ColorPalette.lcdAmber)
+                .monospacedDigit()
+                .frame(minWidth: 12, alignment: .leading)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(ColorPalette.backgroundPrimary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(ColorPalette.divider.opacity(0.5), lineWidth: 0.5)
+                )
+        )
     }
 
     // MARK: - Clock Outputs Section

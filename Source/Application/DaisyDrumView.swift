@@ -135,6 +135,9 @@ struct DaisyDrumView: View {
         .onChange(of: morph) { audioEngine.setParameter(id: .daisyDrumMorph, value: $0) }
         .onChange(of: level) { audioEngine.setParameter(id: .daisyDrumLevel, value: $0) }
         .onChange(of: note) { audioEngine.setParameter(id: .daisyDrumNote, value: $0) }
+        .onAppear {
+            syncToEngine()
+        }
         .onReceive(modulationTimer) { _ in
             harmonicsMod = audioEngine.getModulationValue(destination: .daisyDrumHarmonics)
             timbreMod = audioEngine.getModulationValue(destination: .daisyDrumTimbre)
@@ -158,6 +161,22 @@ struct DaisyDrumView: View {
         audioEngine.setParameter(id: .daisyDrumMorph, value: 0.5)
         audioEngine.setParameter(id: .daisyDrumLevel, value: 0.8)
         audioEngine.setParameter(id: .daisyDrumNote, value: 0.5)
+    }
+
+    // MARK: - Sync State from Engine
+
+    private func syncToEngine() {
+        // Read current state FROM the engine so tab switches don't reset parameters
+        let engineNorm = audioEngine.getParameter(id: .daisyDrumEngine)
+        if engineNorm.isFinite {
+            selectedEngine = Int(round(engineNorm * Float(engineNames.count - 1)))
+            selectedEngine = min(selectedEngine, engineNames.count - 1)
+        }
+        harmonics = audioEngine.getParameter(id: .daisyDrumHarmonics)
+        timbre = audioEngine.getParameter(id: .daisyDrumTimbre)
+        morph = audioEngine.getParameter(id: .daisyDrumMorph)
+        level = audioEngine.getParameter(id: .daisyDrumLevel)
+        note = audioEngine.getParameter(id: .daisyDrumNote)
     }
 
     // MARK: - Header Section

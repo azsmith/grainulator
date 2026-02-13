@@ -214,6 +214,9 @@ struct MasterClockSnapshot: Codable {
     var swing: Float
     var externalSync: Bool
     var outputs: [ClockOutputSnapshot]
+    // Time signature (added for bar/beat awareness, optional for backward compat)
+    var timeSignatureNumerator: Int?
+    var timeSignatureDenominator: Int?
 }
 
 struct ClockOutputSnapshot: Codable {
@@ -234,6 +237,8 @@ struct ClockOutputSnapshot: Codable {
     var euclideanSteps: Int?
     var euclideanFills: Int?
     var euclideanRotation: Int?
+    // Clock output quantize mode (added for bar/beat awareness, optional for backward compat)
+    var quantize: String?  // ClockQuantizeMode raw value
 }
 
 // MARK: - AU Plugins Snapshot
@@ -260,6 +265,9 @@ struct DrumSequencerSnapshot: Codable {
     var lanes: [DrumLaneSnapshot]
     var stepDivision: String        // SequencerClockDivision raw value
     var syncToTransport: Bool
+    // Drum sequencer loop points (added for bar/beat awareness, optional for backward compat)
+    var loopStart: Int?
+    var loopEnd: Int?
 }
 
 struct DrumLaneSnapshot: Codable {

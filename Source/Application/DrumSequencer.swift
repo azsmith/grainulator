@@ -91,6 +91,8 @@ class DrumSequencer: ObservableObject {
     @Published var currentStep: Int = 0
     @Published var stepDivision: SequencerClockDivision = .x4  // 16th notes
     @Published var syncToTransport: Bool = true  // When true, drums start/stop with master transport
+    @Published var loopStart: Int = 0       // First step in loop range (inclusive)
+    @Published var loopEnd: Int = 15        // Last step in loop range (inclusive)
 
     // MARK: - Private Scheduling
 
@@ -102,6 +104,8 @@ class DrumSequencer: ObservableObject {
         let transportToken: UInt64
         let sampleRate: Double
         let lookaheadSamples: UInt64
+        let loopStart: Int
+        let loopEnd: Int
     }
 
     /// Mutable scheduling state protected by schedulingLock.
@@ -283,7 +287,9 @@ class DrumSequencer: ObservableObject {
             division: stepDivision,
             transportToken: transportToken,
             sampleRate: sr,
-            lookaheadSamples: secondsToSamples(schedulerLookaheadSeconds)
+            lookaheadSamples: secondsToSamples(schedulerLookaheadSeconds),
+            loopStart: loopStart,
+            loopEnd: loopEnd
         )
     }
 
@@ -348,24 +354,26 @@ class DrumSequencer: ObservableObject {
 
         guard sps > 0 else { return }
 
-        // Compute the currently-playing step from the actual audio clock position
+        // Compute the currently-playing step from the actual audio clock position,
+        // wrapping within the loop range (loopStart...loopEnd) to match scheduling
         let nowSample = AudioEngine_GetCurrentSampleTime(handle)
         if nowSample >= startSample {
             let elapsed = nowSample - startSample
-            let stepIndex = Int((elapsed / sps) % UInt64(DrumSequencer.numSteps))
-            currentStep = stepIndex
+            let loopLen = max(1, loopEnd - loopStart + 1)
+            let stepInLoop = Int((elapsed / sps) % UInt64(loopLen))
+            currentStep = loopStart + stepInLoop
         }
     }
 
     private func resetSchedulingState(startSample: UInt64) {
         schedulingLock.lock()
-        schedulingState.currentStep = 0
+        schedulingState.currentStep = loopStart
         schedulingState.nextStepSample = startSample
         schedulingState.transportStartSample = startSample
         schedulingState.samplesPerStep = 0
         schedulingLock.unlock()
 
-        currentStep = 0
+        currentStep = loopStart
     }
 
     // MARK: - Clock Queue Scheduling
@@ -430,8 +438,15 @@ class DrumSequencer: ObservableObject {
                 )
             }
 
-            // Advance to next step
-            state.currentStep = (stepIndex + 1) % DrumSequencer.numSteps
+            // Advance to next step, respecting loop range
+            let loopS = max(0, min(snapshot.loopStart, DrumSequencer.numSteps - 1))
+            let loopE = max(loopS, min(snapshot.loopEnd, DrumSequencer.numSteps - 1))
+            let nextStep = stepIndex + 1
+            if nextStep > loopE {
+                state.currentStep = loopS
+            } else {
+                state.currentStep = nextStep
+            }
             state.nextStepSample += samplesPerStep
         }
 

@@ -12,6 +12,7 @@ struct SequencerView: View {
     @EnvironmentObject var sequencer: StepSequencer
     @EnvironmentObject var chordSequencer: ChordSequencer
     @EnvironmentObject var gridManager: MonomeGridManager
+    @EnvironmentObject var masterClock: MasterClock
 
     var body: some View {
         ConsoleModuleView(
@@ -196,6 +197,13 @@ struct SequencerView: View {
             // Step grid (click any step to open popover editor)
             HStack(spacing: 5) {
                 ForEach(track.stages.indices, id: \.self) { stageIndex in
+                    // Bar boundary marker (subtle vertical line at bar boundaries)
+                    if stageIndex > 0 && isBarBoundary(stageIndex: stageIndex, division: track.division) {
+                        Rectangle()
+                            .fill(ColorPalette.lcdAmber.opacity(0.3))
+                            .frame(width: 1)
+                            .padding(.vertical, 4)
+                    }
                     SequencerStepColumn(
                         sequencer: sequencer,
                         trackIndex: trackIndex,
@@ -214,6 +222,18 @@ struct SequencerView: View {
                         .stroke(ColorPalette.consoleBorder, lineWidth: 1)
                 )
         )
+    }
+
+    // MARK: - Bar Boundary Helper
+
+    /// Returns true if the given stage index falls on a bar boundary (for visual markers).
+    /// Bar boundaries occur at every `quarterNotesPerBar / division.multiplier` steps.
+    private func isBarBoundary(stageIndex: Int, division: SequencerClockDivision) -> Bool {
+        let qnPerBar = masterClock.quarterNotesPerBar
+        let stepsPerBar = qnPerBar * division.multiplier
+        guard stepsPerBar > 0 else { return false }
+        let remainder = Double(stageIndex).truncatingRemainder(dividingBy: stepsPerBar)
+        return remainder < 0.01 // Floating point tolerance
     }
 
     // MARK: - Track Header Row

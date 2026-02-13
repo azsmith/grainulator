@@ -476,6 +476,7 @@ public:
     void setClockOutputModAmount(int outputIndex, float amount);  // 0-1
     void setClockOutputMuted(int outputIndex, bool muted);
     void setClockOutputSlowMode(int outputIndex, bool slow);      // Slow mode (/4 multiplier)
+    void resetClockOutput(int outputIndex);                       // Reset phase & euclidean step to 1
     float getClockOutputValue(int outputIndex) const;             // Current output value
     float getModulationValue(int destination) const;              // Current modulation for destination
 
@@ -483,6 +484,18 @@ public:
     void setClockOutputEuclidean(int outputIndex, bool enabled, int steps,
                                   const bool* pattern, int patternLength);
     int getClockOutputEuclideanStep(int outputIndex) const;
+
+    // Clock start sample (for bar:beat calculation)
+    uint64_t getClockStartSample() const;
+
+    // Clock output quantize
+    void setClockOutputQuantize(int outputIndex, int mode);  // 0=off, 1=1/16, 2=1/8, 3=1/4, 4=bar
+
+    // Time signature
+    void setTimeSignature(int numerator, int denominator);
+    int getTimeSignatureNumerator() const;
+    int getTimeSignatureDenominator() const;
+    float getQuarterNotesPerBar() const;
 
 private:
     struct ScheduledNoteEvent {
@@ -757,6 +770,10 @@ private:
         bool muted;                // Mute state
         bool slowMode;             // When true, applies /4 multiplier to rate
 
+        // Trigger quantize mode (0=off, 1=1/16, 2=1/8, 3=1/4, 4=bar)
+        // Atomic: written from main thread via setClockOutputQuantize(), read on audio thread
+        std::atomic<int> quantizeMode;
+
         // Euclidean rhythm parameters
         bool euclideanEnabled;                    // When true, filter triggers through pattern
         int euclideanSteps;                       // Total pattern length (1-32)
@@ -765,8 +782,11 @@ private:
 
         // Runtime state
         bool pendingTriggerOnStart;          // Fire trigger at beat 1 (first buffer after start)
-        double phaseAccumulator;   // Current phase (0-1)
-        double lastPhaseAccumulator; // Previous phase for wrap detection
+        std::atomic<bool> pendingResync;     // When true, reset lastProcessedCycle (user reset)
+        uint64_t lastTriggerSampleTime;      // Sample time of last trigger tick (for quantize grid reset)
+        int64_t lastProcessedCycle;          // Last integer cycle boundary that fired (-1 = none yet)
+        double phaseAccumulator;   // Current phase (0-1), transport-derived
+        double lastPhaseAccumulator; // Phase at start of buffer (for scope/waveform rendering)
         float currentValue;        // Current output value (-1 to +1)
         float sampleHoldValue;     // Held value for S&H waveform
         float smoothedRandomValue; // Smoothed random for interpolation
@@ -781,6 +801,11 @@ private:
     uint64_t m_clockStartSample;         // Sample time when clock started
     std::array<ClockOutputState, kNumClockOutputs> m_clockOutputs;
     std::atomic<float> m_clockOutputValues[kNumClockOutputs];  // For UI feedback
+
+    // Time signature state (read by audio thread, written by main thread)
+    std::atomic<int> m_timeSignatureNumerator{4};
+    std::atomic<int> m_timeSignatureDenominator{4};
+    std::atomic<float> m_quarterNotesPerBar{4.0f};
 
     // Modulation accumulator (sum of all mod sources per destination)
     float m_modulationValues[static_cast<int>(ModulationDestination::NumDestinations)];

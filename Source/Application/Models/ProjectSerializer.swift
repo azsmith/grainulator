@@ -258,7 +258,8 @@ struct ProjectSerializer {
                 euclideanEnabled: output.euclideanEnabled,
                 euclideanSteps: output.euclideanSteps,
                 euclideanFills: output.euclideanFills,
-                euclideanRotation: output.euclideanRotation
+                euclideanRotation: output.euclideanRotation,
+                quantize: output.quantize.rawValue
             )
         }
 
@@ -266,7 +267,9 @@ struct ProjectSerializer {
             bpm: clock.bpm,
             swing: clock.swing,
             externalSync: clock.externalSync,
-            outputs: outputs
+            outputs: outputs,
+            timeSignatureNumerator: clock.timeSignatureNumerator,
+            timeSignatureDenominator: clock.timeSignatureDenominator
         )
     }
 
@@ -343,7 +346,9 @@ struct ProjectSerializer {
         return DrumSequencerSnapshot(
             lanes: lanes,
             stepDivision: drumSeq.stepDivision.rawValue,
-            syncToTransport: drumSeq.syncToTransport
+            syncToTransport: drumSeq.syncToTransport,
+            loopStart: drumSeq.loopStart,
+            loopEnd: drumSeq.loopEnd
         )
     }
 
@@ -592,6 +597,11 @@ struct ProjectSerializer {
         masterClock.swing = snapshot.swing
         masterClock.externalSync = snapshot.externalSync
 
+        // Restore time signature (defaults to 4/4 for old projects)
+        let num = snapshot.timeSignatureNumerator ?? 4
+        let den = snapshot.timeSignatureDenominator ?? 4
+        masterClock.setTimeSignature(numerator: num, denominator: den)
+
         for (i, outputSnap) in snapshot.outputs.enumerated() {
             guard i < masterClock.outputs.count else { continue }
             let output = masterClock.outputs[i]
@@ -614,6 +624,9 @@ struct ProjectSerializer {
             output.euclideanFills = outputSnap.euclideanFills ?? 4
             output.euclideanRotation = outputSnap.euclideanRotation ?? 0
             output.recomputeEuclideanPattern()
+
+            // Clock output quantize mode (defaults to .none for old projects)
+            output.quantize = ClockQuantizeMode(rawValue: outputSnap.quantize ?? "") ?? .none
         }
     }
 
@@ -743,6 +756,8 @@ struct ProjectSerializer {
     private static func restoreDrumSequencer(_ snapshot: DrumSequencerSnapshot, drumSequencer: DrumSequencer, audioEngine: AudioEngineWrapper) {
         drumSequencer.stepDivision = SequencerClockDivision(rawValue: snapshot.stepDivision) ?? .x4
         drumSequencer.syncToTransport = snapshot.syncToTransport
+        drumSequencer.loopStart = snapshot.loopStart ?? 0
+        drumSequencer.loopEnd = snapshot.loopEnd ?? 15
 
         for laneSnap in snapshot.lanes {
             let laneIndex = laneSnap.laneIndex
@@ -774,6 +789,8 @@ struct ProjectSerializer {
     private static func resetDrumSequencerToDefaults(_ drumSequencer: DrumSequencer, audioEngine: AudioEngineWrapper) {
         drumSequencer.stepDivision = .x4
         drumSequencer.syncToTransport = true
+        drumSequencer.loopStart = 0
+        drumSequencer.loopEnd = 15
         drumSequencer.clearAll()
 
         for i in 0..<drumSequencer.lanes.count {

@@ -1047,7 +1047,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             "schemaVersion": "0.1.0",
             "session": [
                 "tempoBpm": tempo,
-                "timeSignature": "4/4",
+                "timeSignature": readTimeSignatureString(),
                 "key": readSessionKeyText(),
             ],
             "transport": [
@@ -4790,21 +4790,39 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
         let playing = readClockRunning()
         let bpm = max(1.0, readMasterClockBPM())
         let sampleRate = max(1.0, readSampleRate())
-        let sampleTime = Double(readCurrentSampleTime())
+        let sampleTime = readCurrentSampleTime()
+        let startSample = readClockStartSample()
+        let elapsed = sampleTime > startSample ? Double(sampleTime - startSample) : 0
         let samplesPerBeat = sampleRate * 60.0 / Double(bpm)
-        let totalBeats = samplesPerBeat > 0 ? sampleTime / samplesPerBeat : 0
-        let bar = max(1, Int(totalBeats / 4.0) + 1)
-        let beat = (totalBeats.truncatingRemainder(dividingBy: 4.0)) + 1.0
+        let totalBeats = samplesPerBeat > 0 ? elapsed / samplesPerBeat : 0
+        let qnPerBar = readQuarterNotesPerBar()
+        let bar = max(1, Int(totalBeats / qnPerBar) + 1)
+        let beat = (totalBeats.truncatingRemainder(dividingBy: qnPerBar)) + 1.0
         return (playing, bar, beat)
+    }
+
+    private func readQuarterNotesPerBar() -> Double {
+        // Read directly from C++ engine via cached handle — atomic read, thread-safe
+        guard let handle = cachedEngineHandle else { return 4.0 }
+        return Double(AudioEngine_GetQuarterNotesPerBar(handle))
+    }
+
+    private func readTimeSignatureString() -> String {
+        // Read directly from C++ engine via cached handle — atomic reads, thread-safe
+        guard let handle = cachedEngineHandle else { return "4/4" }
+        let num = AudioEngine_GetTimeSignatureNumerator(handle)
+        let den = AudioEngine_GetTimeSignatureDenominator(handle)
+        return "\(num)/\(den)"
     }
 
     private func resolveScheduledTime(timeSpec: TimeSpecRequest?) -> ScheduledTime {
         let transport = currentTransport()
         let bpm = max(1.0, Double(readMasterClockBPM()))
+        let qnPerBar = readQuarterNotesPerBar()
         let secondsPerBeat = 60.0 / bpm
 
         let target = ConversationalRoutingCore.resolveTargetTransport(
-            current: .init(bar: transport.bar, beat: transport.beat, bpm: bpm),
+            current: .init(bar: transport.bar, beat: transport.beat, bpm: bpm, quarterNotesPerBar: qnPerBar),
             timeSpec: .init(anchor: timeSpec?.anchor, quantization: timeSpec?.quantization)
         )
         let beatsDelta = target.beatsDelta
@@ -4935,6 +4953,12 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
         // Read directly from C++ engine via cached handle — atomic read, thread-safe
         guard let handle = cachedEngineHandle else { return 0 }
         return AudioEngine_GetCurrentSampleTime(handle)
+    }
+
+    private func readClockStartSample() -> UInt64 {
+        // Read directly from C++ engine via cached handle — atomic read, thread-safe
+        guard let handle = cachedEngineHandle else { return 0 }
+        return AudioEngine_GetClockStartSample(handle)
     }
 
     private func readIsReelRecording(_ reelIndex: Int) -> Bool {

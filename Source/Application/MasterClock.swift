@@ -47,6 +47,52 @@ enum ClockOutputMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+// MARK: - Clock Quantize Mode
+
+/// Quantize mode for clock output triggers.
+/// When set, trigger events snap to the nearest grid boundary.
+enum ClockQuantizeMode: String, CaseIterable, Identifiable {
+    case none = "OFF"
+    case sixteenth = "1/16"
+    case eighth = "1/8"
+    case quarter = "1/4"
+    case bar = "BAR"
+
+    var id: String { rawValue }
+
+    /// Engine integer value (sent to C++ side)
+    var engineValue: Int {
+        switch self {
+        case .none: return 0
+        case .sixteenth: return 1
+        case .eighth: return 2
+        case .quarter: return 3
+        case .bar: return 4
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .none: return "Off"
+        case .sixteenth: return "1/16"
+        case .eighth: return "1/8"
+        case .quarter: return "1/4"
+        case .bar: return "Bar"
+        }
+    }
+
+    init?(engineValue: Int) {
+        switch engineValue {
+        case 0: self = .none
+        case 1: self = .sixteenth
+        case 2: self = .eighth
+        case 3: self = .quarter
+        case 4: self = .bar
+        default: return nil
+        }
+    }
+}
+
 // MARK: - Modulation Destination
 
 enum ModulationDestination: String, CaseIterable, Identifiable {
@@ -262,6 +308,9 @@ class ClockOutput: ObservableObject, Identifiable {
     // Mute control
     @Published var muted: Bool = false
 
+    // Trigger quantize mode (snaps triggers to grid boundary)
+    @Published var quantize: ClockQuantizeMode = .none
+
     // Euclidean rhythm parameters (Clock sub-mode)
     @Published var euclideanEnabled: Bool = false
     @Published var euclideanSteps: Int = 8       // 1-32
@@ -405,6 +454,38 @@ class MasterClock: ObservableObject {
     // Swing amount (0 = straight, 1 = max swing)
     @Published var swing: Float = 0.0
 
+    // Time signature
+    @Published var timeSignatureNumerator: Int = 4 {
+        didSet {
+            let clamped = max(1, min(15, timeSignatureNumerator))
+            if clamped != timeSignatureNumerator { timeSignatureNumerator = clamped }
+        }
+    }
+    @Published var timeSignatureDenominator: Int = 4 {
+        didSet {
+            // Only allow valid denominators: 2, 4, 8, 16
+            let valid = [2, 4, 8, 16]
+            if !valid.contains(timeSignatureDenominator) {
+                timeSignatureDenominator = 4
+            }
+        }
+    }
+
+    /// Quarter notes per bar for the current time signature.
+    /// This is THE key derived value: 4/4 → 4.0, 3/4 → 3.0, 6/8 → 3.0, 7/8 → 3.5, 5/4 → 5.0
+    var quarterNotesPerBar: Double {
+        return Double(timeSignatureNumerator) * (4.0 / Double(timeSignatureDenominator))
+    }
+
+    /// Display string like "4/4", "3/4", "6/8"
+    var timeSignatureDisplay: String {
+        return "\(timeSignatureNumerator)/\(timeSignatureDenominator)"
+    }
+
+    // Bar:beat transport counter (updated by polling)
+    @Published var currentBar: Int = 1
+    @Published var currentBeat: Int = 1
+
     // External sync
     @Published var externalSync: Bool = false
 
@@ -413,6 +494,9 @@ class MasterClock: ObservableObject {
 
     // Reference to sequencer for BPM sync
     weak var sequencer: StepSequencer?
+
+    // Reference to drum sequencer for loop auto-adjustment
+    weak var drumSequencer: DrumSequencer?
 
     // Cancellables for output observation
     private var outputCancellables: [AnyCancellable] = []
@@ -464,12 +548,67 @@ class MasterClock: ObservableObject {
                 }
             }
         }
+
+        // Update bar:beat transport counter
+        if engine.isClockRunning() {
+            let currentSample = engine.currentSampleTime()
+            let startSample = engine.getClockStartSample()
+            let sampleRate = 48000.0
+            let beatsPerSecond = bpm / 60.0
+            let samplesPerBeatVal = sampleRate / beatsPerSecond
+
+            if currentSample >= startSample && samplesPerBeatVal > 0 {
+                let elapsedSamples = Double(currentSample - startSample)
+                let elapsedBeats = elapsedSamples / samplesPerBeatVal  // in quarter notes
+                let qnPerBar = quarterNotesPerBar
+
+                // Bar is 1-based, beat is 1-based
+                let totalBars = elapsedBeats / qnPerBar
+                let bar = Int(totalBars) + 1
+                let beatInBar = Int(elapsedBeats - Double(Int(totalBars)) * qnPerBar) + 1
+
+                if currentBar != bar { currentBar = bar }
+                if currentBeat != beatInBar { currentBeat = beatInBar }
+            }
+        } else {
+            // Reset to 1:1 when stopped
+            if currentBar != 1 { currentBar = 1 }
+            if currentBeat != 1 { currentBeat = 1 }
+        }
     }
 
     func connectSequencer(_ sequencer: StepSequencer) {
         self.sequencer = sequencer
         // Sync initial BPM
         sequencer.setTempoBPM(_bpm)
+    }
+
+    func connectDrumSequencer(_ drumSequencer: DrumSequencer) {
+        self.drumSequencer = drumSequencer
+    }
+
+    /// Adjusts sequencer loop endpoints to align with bar boundaries for the current time signature.
+    /// Step seq: target 2 bars at its clock division. Drum seq: target 1 bar at x4 (16ths).
+    func adjustSequencerLoopsForTimeSignature() {
+        let qnPerBar = quarterNotesPerBar
+
+        // Step sequencer: 2 bars, using track's clock division
+        if let seq = sequencer {
+            for i in 0..<seq.tracks.count {
+                let division = seq.tracks[i].division
+                let stepsFor2Bars = Int(round(2.0 * qnPerBar * division.multiplier))
+                let clamped = max(1, min(stepsFor2Bars, 8))  // 8 steps max
+                seq.tracks[i].loopEnd = clamped - 1  // 0-indexed
+            }
+        }
+
+        // Drum sequencer: 1 bar at x4 (16th notes)
+        if let drumSeq = drumSequencer {
+            let stepsFor1Bar = Int(round(qnPerBar * 4.0))  // x4 = 16th notes
+            let clamped = max(1, min(stepsFor1Bar, 16))
+            drumSeq.loopEnd = clamped - 1  // 0-indexed
+            drumSeq.loopStart = 0
+        }
     }
 
     private func setupOutputObservers() {
@@ -528,6 +667,11 @@ class MasterClock: ObservableObject {
                 .sink { [weak self] _ in self?.outputDidChange(index: index) }
                 .store(in: &outputCancellables)
 
+            output.$quantize
+                .dropFirst()
+                .sink { [weak self] _ in self?.outputQuantizeDidChange(index: index) }
+                .store(in: &outputCancellables)
+
             output.$slowMode
                 .dropFirst()
                 .sink { [weak self] _ in self?.outputSlowModeDidChange(index: index) }
@@ -536,7 +680,7 @@ class MasterClock: ObservableObject {
             // Euclidean parameter observers
             output.$euclideanEnabled
                 .dropFirst()
-                .sink { [weak self] _ in self?.euclideanDidChange(index: index) }
+                .sink { [weak self] _ in self?.euclideanEnabledDidChange(index: index) }
                 .store(in: &outputCancellables)
 
             output.$euclideanSteps
@@ -553,6 +697,13 @@ class MasterClock: ObservableObject {
                 .dropFirst()
                 .sink { [weak self] _ in self?.euclideanDidChange(index: index) }
                 .store(in: &outputCancellables)
+        }
+    }
+
+    private func outputQuantizeDidChange(index: Int) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let engine = self.audioEngine, index < self.outputs.count else { return }
+            engine.setClockOutputQuantize(index: index, mode: self.outputs[index].quantize.engineValue)
         }
     }
 
@@ -594,6 +745,38 @@ class MasterClock: ObservableObject {
         }
     }
 
+    /// Called when euclideanEnabled transitions to true — sets steps to one bar.
+    private func euclideanEnabledDidChange(index: Int) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, index < self.outputs.count else { return }
+            let output = self.outputs[index]
+
+            if output.euclideanEnabled {
+                // Auto-set steps to one bar at this output's clock division
+                let barSteps = self.euclideanStepsPerBar(for: output)
+                output.euclideanSteps = barSteps
+                output.euclideanFills = max(1, barSteps / 2)  // Default fills to half
+                output.euclideanRotation = 0
+            }
+
+            // Clamp, recompute, and sync (same as euclideanDidChange)
+            if output.euclideanFills > output.euclideanSteps {
+                output.euclideanFills = output.euclideanSteps
+            }
+            if output.euclideanRotation >= output.euclideanSteps {
+                output.euclideanRotation = max(0, output.euclideanSteps - 1)
+            }
+            output.recomputeEuclideanPattern()
+            self.sendEuclideanToEngine(outputIndex: index)
+        }
+    }
+
+    /// Computes the number of clock ticks in one bar for a given clock output's division.
+    private func euclideanStepsPerBar(for output: ClockOutput) -> Int {
+        let raw = Int(round(quarterNotesPerBar * output.division.multiplier))
+        return max(1, min(raw, 32))  // Clamp to valid euclidean range
+    }
+
     // MARK: - Transport Control
 
     func start() {
@@ -626,6 +809,11 @@ class MasterClock: ObservableObject {
         audioEngine?.setClockStartSample(startSample)
     }
 
+    /// Reset a single clock output's phase and euclidean step back to 1.
+    func resetOutput(index: Int) {
+        audioEngine?.resetClockOutput(index: index)
+    }
+
     // MARK: - Tempo Control
 
     func tap() {
@@ -648,6 +836,43 @@ class MasterClock: ObservableObject {
         audioEngine?.setClockSwing(swing)
         // Sync sequencer BPM to master clock
         sequencer?.setTempoBPM(bpm)
+    }
+
+    /// Push time signature to the C++ audio engine
+    func updateTimeSignatureInEngine() {
+        audioEngine?.setTimeSignature(
+            numerator: timeSignatureNumerator,
+            denominator: timeSignatureDenominator
+        )
+    }
+
+    /// Set time signature and propagate to engine + sequencers
+    func setTimeSignature(numerator: Int, denominator: Int) {
+        timeSignatureNumerator = numerator
+        timeSignatureDenominator = denominator
+        if isConnected {
+            updateTimeSignatureInEngine()
+            adjustSequencerLoopsForTimeSignature()
+            adjustEuclideanStepsForTimeSignature()
+        }
+    }
+
+    /// Updates Euclidean step counts for all outputs with Euclidean enabled to match bar length.
+    private func adjustEuclideanStepsForTimeSignature() {
+        for (index, output) in outputs.enumerated() {
+            guard output.euclideanEnabled else { continue }
+            let barSteps = euclideanStepsPerBar(for: output)
+            // Scale fills proportionally to maintain the same density
+            let oldSteps = max(1, output.euclideanSteps)
+            let fillRatio = Double(output.euclideanFills) / Double(oldSteps)
+            output.euclideanSteps = barSteps
+            output.euclideanFills = max(1, min(barSteps, Int(round(fillRatio * Double(barSteps)))))
+            if output.euclideanRotation >= barSteps {
+                output.euclideanRotation = max(0, barSteps - 1)
+            }
+            output.recomputeEuclideanPattern()
+            sendEuclideanToEngine(outputIndex: index)
+        }
     }
 
     private func sendOutputParametersToEngine(outputIndex: Int) {
@@ -686,8 +911,13 @@ class MasterClock: ObservableObject {
         for i in 0..<outputs.count {
             sendOutputParametersToEngine(outputIndex: i)
             sendEuclideanToEngine(outputIndex: i)
+            // Sync quantize mode
+            if let engine = audioEngine {
+                engine.setClockOutputQuantize(index: i, mode: outputs[i].quantize.engineValue)
+            }
         }
         updateAudioEngine()
+        updateTimeSignatureInEngine()
     }
 
     // MARK: - Output Value Updates (called from audio engine)

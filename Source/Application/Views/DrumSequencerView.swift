@@ -71,6 +71,9 @@ struct DrumSequencerView: View {
                         laneIndex: laneIndex,
                         currentStep: drumSequencer.currentStep,
                         isPlaying: drumSequencer.isPlaying,
+                        loopStart: drumSequencer.loopStart,
+                        loopEnd: drumSequencer.loopEnd,
+                        quarterNotesPerBar: masterClock.quarterNotesPerBar,
                         onToggleStep: { stepIndex in
                             drumSequencer.toggleStep(lane: laneIndex, step: stepIndex)
                         },
@@ -208,6 +211,9 @@ struct DrumLaneRow: View {
     let laneIndex: Int
     let currentStep: Int
     let isPlaying: Bool
+    let loopStart: Int
+    let loopEnd: Int
+    let quarterNotesPerBar: Double
     let onToggleStep: (Int) -> Void
     let onToggleMute: () -> Void
     let onHarmonicsChanged: (Float) -> Void
@@ -255,21 +261,25 @@ struct DrumLaneRow: View {
                     HStack(spacing: 3) {
                         ForEach(0..<4, id: \.self) { inGroupIndex in
                             let stepIndex = groupIndex * 4 + inGroupIndex
+                            let outsideLoop = stepIndex > loopEnd || stepIndex < loopStart
                             StepButton(
                                 isActive: lane.steps[stepIndex].isActive,
                                 isPlayhead: isPlaying && currentStep == stepIndex,
                                 isMuted: lane.isMuted,
                                 color: StepColors.color(for: stepIndex, active: lane.steps[stepIndex].isActive),
-                                action: { onToggleStep(stepIndex) }
+                                action: { onToggleStep(stepIndex) },
+                                dimmed: outsideLoop
                             )
                         }
                     }
 
                     // Divider between groups (except after last)
                     if groupIndex < 3 {
+                        let nextStep = (groupIndex + 1) * 4
+                        let isBarLine = isDrumBarBoundary(step: nextStep)
                         Rectangle()
-                            .fill(ColorPalette.divider)
-                            .frame(width: 1)
+                            .fill(isBarLine ? ColorPalette.lcdAmber.opacity(0.5) : ColorPalette.divider)
+                            .frame(width: isBarLine ? 2 : 1)
                             .padding(.vertical, 4)
                     }
                 }
@@ -333,6 +343,16 @@ struct DrumLaneRow: View {
             level = lane.level
             noteValue = Self.noteToSlider(lane.note)
         }
+    }
+
+    /// Returns true if the given step falls on a bar boundary in the drum grid.
+    /// Drum grid runs at x4 (16th notes), so bar boundary = quarterNotesPerBar * 4 steps.
+    private func isDrumBarBoundary(step: Int) -> Bool {
+        guard step > 0 else { return false }
+        let stepsPerBar = quarterNotesPerBar * 4.0  // x4 = 16th notes
+        guard stepsPerBar > 0 else { return false }
+        let remainder = Double(step).truncatingRemainder(dividingBy: stepsPerBar)
+        return remainder < 0.01
     }
 }
 
@@ -462,6 +482,7 @@ struct StepButton: View {
     let isMuted: Bool
     let color: Color
     let action: () -> Void
+    var dimmed: Bool = false
 
     @State private var isHovering = false
 
@@ -470,6 +491,7 @@ struct StepButton: View {
             RoundedRectangle(cornerRadius: 4)
                 .fill(displayColor)
                 .frame(width: 36, height: 52)
+                .opacity(dimmed ? 0.4 : 1.0)
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
                         .stroke(borderColor, lineWidth: isPlayhead ? 2 : 0.5)

@@ -62,6 +62,7 @@ struct GrainulatorApp: App {
                     sequencer.connectMasterClock(masterClock)
                     masterClock.connect(audioEngine: audioEngine)
                     masterClock.connectSequencer(sequencer)
+                    masterClock.connectDrumSequencer(drumSequencer)
                     drumSequencer.connect(audioEngine: audioEngine)
                     drumSequencer.connectMasterClock(masterClock)
                     sequencer.connectDrumSequencer(drumSequencer)

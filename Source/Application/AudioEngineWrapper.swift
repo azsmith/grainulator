@@ -163,6 +163,9 @@ func AudioEngine_SetClockOutputMuted(_ handle: OpaquePointer, _ outputIndex: Int
 @_silgen_name("AudioEngine_SetClockOutputSlowMode")
 func AudioEngine_SetClockOutputSlowMode(_ handle: OpaquePointer, _ outputIndex: Int32, _ slow: Bool)
 
+@_silgen_name("AudioEngine_ResetClockOutput")
+func AudioEngine_ResetClockOutput(_ handle: OpaquePointer, _ outputIndex: Int32)
+
 @_silgen_name("AudioEngine_GetClockOutputValue")
 func AudioEngine_GetClockOutputValue(_ handle: OpaquePointer, _ outputIndex: Int32) -> Float
 
@@ -175,6 +178,27 @@ func AudioEngine_SetClockOutputEuclidean(_ handle: OpaquePointer, _ outputIndex:
 
 @_silgen_name("AudioEngine_GetClockOutputEuclideanStep")
 func AudioEngine_GetClockOutputEuclideanStep(_ handle: OpaquePointer, _ outputIndex: Int32) -> Int32
+
+// Clock start sample
+@_silgen_name("AudioEngine_GetClockStartSample")
+func AudioEngine_GetClockStartSample(_ handle: OpaquePointer) -> UInt64
+
+// Clock output quantize
+@_silgen_name("AudioEngine_SetClockOutputQuantize")
+func AudioEngine_SetClockOutputQuantize(_ handle: OpaquePointer, _ outputIndex: Int32, _ mode: Int32)
+
+// Time signature
+@_silgen_name("AudioEngine_SetTimeSignature")
+func AudioEngine_SetTimeSignature(_ handle: OpaquePointer, _ numerator: Int32, _ denominator: Int32)
+
+@_silgen_name("AudioEngine_GetTimeSignatureNumerator")
+func AudioEngine_GetTimeSignatureNumerator(_ handle: OpaquePointer) -> Int32
+
+@_silgen_name("AudioEngine_GetTimeSignatureDenominator")
+func AudioEngine_GetTimeSignatureDenominator(_ handle: OpaquePointer) -> Int32
+
+@_silgen_name("AudioEngine_GetQuarterNotesPerBar")
+func AudioEngine_GetQuarterNotesPerBar(_ handle: OpaquePointer) -> Float
 
 // Multi-channel ring buffer processing (for AU plugin hosting)
 @_silgen_name("AudioEngine_StartMultiChannelProcessing")
@@ -2701,6 +2725,12 @@ class AudioEngineWrapper: ObservableObject {
         AudioEngine_SetClockOutputSlowMode(handle, Int32(index), slow)
     }
 
+    /// Resets a single clock output's phase and euclidean step back to 1
+    func resetClockOutput(index: Int) {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_ResetClockOutput(handle, Int32(index))
+    }
+
     /// Configures euclidean rhythm pattern for a clock output
     func setClockOutputEuclidean(index: Int, enabled: Bool, steps: Int, pattern: [Bool]) {
         guard let handle = cppEngineHandle else { return }
@@ -2714,6 +2744,30 @@ class AudioEngineWrapper: ObservableObject {
     func getClockOutputEuclideanStep(index: Int) -> Int {
         guard let handle = cppEngineHandle else { return 0 }
         return Int(AudioEngine_GetClockOutputEuclideanStep(handle, Int32(index)))
+    }
+
+    /// Gets the sample time when the clock was started (for bar:beat calculation)
+    func getClockStartSample() -> UInt64 {
+        guard let handle = cppEngineHandle else { return 0 }
+        return AudioEngine_GetClockStartSample(handle)
+    }
+
+    /// Sets quantize mode for a clock output (0=off, 1=1/16, 2=1/8, 3=1/4, 4=bar)
+    func setClockOutputQuantize(index: Int, mode: Int) {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_SetClockOutputQuantize(handle, Int32(index), Int32(mode))
+    }
+
+    /// Sets time signature (numerator/denominator) on the C++ engine
+    func setTimeSignature(numerator: Int, denominator: Int) {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_SetTimeSignature(handle, Int32(numerator), Int32(denominator))
+    }
+
+    /// Gets quarter notes per bar from the engine (e.g. 4.0 for 4/4, 3.0 for 3/4)
+    func getQuarterNotesPerBar() -> Float {
+        guard let handle = cppEngineHandle else { return 4.0 }
+        return AudioEngine_GetQuarterNotesPerBar(handle)
     }
 
     /// Gets the current modulation value for a destination (bipolar -1 to +1)

@@ -131,6 +131,31 @@ struct MasterClockView: View {
                 accentColor: ColorPalette.accentLooper1
             )
 
+            // Time signature selector (compact)
+            Menu {
+                Button("4/4") { masterClock.setTimeSignature(numerator: 4, denominator: 4) }
+                Button("3/4") { masterClock.setTimeSignature(numerator: 3, denominator: 4) }
+                Button("6/8") { masterClock.setTimeSignature(numerator: 6, denominator: 8) }
+                Button("5/4") { masterClock.setTimeSignature(numerator: 5, denominator: 4) }
+                Button("7/8") { masterClock.setTimeSignature(numerator: 7, denominator: 8) }
+            } label: {
+                Text(masterClock.timeSignatureDisplay)
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundColor(ColorPalette.accentLooper1)
+                    .frame(width: 38, height: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(ColorPalette.lcdAmberBg)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 3)
+                            .stroke(ColorPalette.accentLooper1.opacity(0.3), lineWidth: 1)
+                    )
+            }
+            .menuStyle(.borderlessButton)
+            .frame(width: 38)
+            .help("Time signature")
+
             // Swing control (compact)
             HStack(spacing: 4) {
                 Text("SWG")
@@ -327,13 +352,36 @@ struct ClockOutputPad: View {
 
 struct ClockOutputConfigView: View {
     @ObservedObject var output: ClockOutput
+    @EnvironmentObject var masterClock: MasterClock
     let index: Int
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("OUTPUT \(index + 1)")
-                .font(.system(size: 14, weight: .bold, design: .monospaced))
-                .foregroundColor(ColorPalette.accentLooper1)
+            HStack {
+                Text("OUTPUT \(index + 1)")
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .foregroundColor(ColorPalette.accentLooper1)
+
+                Spacer()
+
+                Button(action: { masterClock.resetOutput(index: index) }) {
+                    Text("RST")
+                        .font(.system(size: 9, weight: .heavy, design: .monospaced))
+                        .foregroundColor(ColorPalette.textDimmed)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(ColorPalette.backgroundTertiary)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .stroke(ColorPalette.divider, lineWidth: 0.5)
+                                )
+                        )
+                }
+                .buttonStyle(.plain)
+                .help("Reset this output to beat 1")
+            }
 
             // Mode selector
             HStack {
@@ -580,9 +628,7 @@ struct EuclideanPatternView: View {
             HStack(spacing: gap) {
                 ForEach(0..<totalSteps, id: \.self) { step in
                     let isActive = step < pattern.count && pattern[step]
-                    // currentStep points to the NEXT step; highlight the one that just played
-                    let lastPlayed = (currentStep - 1 + totalSteps) % totalSteps
-                    let isCurrent = step == lastPlayed
+                    let isCurrent = step == currentStep
 
                     RoundedRectangle(cornerRadius: 2)
                         .fill(isActive ? accentColor : accentColor.opacity(0.12))

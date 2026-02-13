@@ -87,12 +87,25 @@ void AudioEngine_SetClockOutputDestination(AudioEngineHandle handle, int outputI
 void AudioEngine_SetClockOutputModAmount(AudioEngineHandle handle, int outputIndex, float amount);
 void AudioEngine_SetClockOutputMuted(AudioEngineHandle handle, int outputIndex, bool muted);
 void AudioEngine_SetClockOutputSlowMode(AudioEngineHandle handle, int outputIndex, bool slow);
+void AudioEngine_ResetClockOutput(AudioEngineHandle handle, int outputIndex);
 float AudioEngine_GetClockOutputValue(AudioEngineHandle handle, int outputIndex);
 float AudioEngine_GetModulationValue(AudioEngineHandle handle, int destination);
 
 // Euclidean rhythm control
 void AudioEngine_SetClockOutputEuclidean(AudioEngineHandle handle, int outputIndex, bool enabled, int steps, const bool* pattern, int patternLength);
 int AudioEngine_GetClockOutputEuclideanStep(AudioEngineHandle handle, int outputIndex);
+
+// Clock start sample (for bar:beat calculation)
+uint64_t AudioEngine_GetClockStartSample(AudioEngineHandle handle);
+
+// Clock output quantize (0=off, 1=1/16, 2=1/8, 3=1/4, 4=bar)
+void AudioEngine_SetClockOutputQuantize(AudioEngineHandle handle, int outputIndex, int mode);
+
+// Time signature
+void AudioEngine_SetTimeSignature(AudioEngineHandle handle, int numerator, int denominator);
+int AudioEngine_GetTimeSignatureNumerator(AudioEngineHandle handle);
+int AudioEngine_GetTimeSignatureDenominator(AudioEngineHandle handle);
+float AudioEngine_GetQuarterNotesPerBar(AudioEngineHandle handle);
 
 // Multi-channel ring buffer processing (for AU plugin hosting)
 // These functions enable a producer/consumer pattern where a background thread

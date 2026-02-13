@@ -163,6 +163,9 @@ void DaisyDrumVoice::Render(float* out, float* aux, size_t size) {
                 break;
         }
 
+        // Apply level as output gain (accent alone is too subtle)
+        sample *= level_;
+
         // Hard clamp to ±1.0 — saturation is handled by the master bus tanh
         sample = std::max(-1.0f, std::min(1.0f, sample));
 

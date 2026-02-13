@@ -329,6 +329,12 @@ void AudioEngine_SetClockOutputSlowMode(AudioEngineHandle handle, int outputInde
     }
 }
 
+void AudioEngine_ResetClockOutput(AudioEngineHandle handle, int outputIndex) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->resetClockOutput(outputIndex);
+    }
+}
+
 float AudioEngine_GetClockOutputValue(AudioEngineHandle handle, int outputIndex) {
     if (!handle) return 0.0f;
     return static_cast<AudioEngine*>(handle)->getClockOutputValue(outputIndex);
@@ -350,6 +356,38 @@ void AudioEngine_SetClockOutputEuclidean(AudioEngineHandle handle, int outputInd
 int AudioEngine_GetClockOutputEuclideanStep(AudioEngineHandle handle, int outputIndex) {
     if (!handle) return 0;
     return static_cast<AudioEngine*>(handle)->getClockOutputEuclideanStep(outputIndex);
+}
+
+uint64_t AudioEngine_GetClockStartSample(AudioEngineHandle handle) {
+    if (!handle) return 0;
+    return static_cast<AudioEngine*>(handle)->getClockStartSample();
+}
+
+void AudioEngine_SetClockOutputQuantize(AudioEngineHandle handle, int outputIndex, int mode) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setClockOutputQuantize(outputIndex, mode);
+    }
+}
+
+void AudioEngine_SetTimeSignature(AudioEngineHandle handle, int numerator, int denominator) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setTimeSignature(numerator, denominator);
+    }
+}
+
+int AudioEngine_GetTimeSignatureNumerator(AudioEngineHandle handle) {
+    if (!handle) return 4;
+    return static_cast<AudioEngine*>(handle)->getTimeSignatureNumerator();
+}
+
+int AudioEngine_GetTimeSignatureDenominator(AudioEngineHandle handle) {
+    if (!handle) return 4;
+    return static_cast<AudioEngine*>(handle)->getTimeSignatureDenominator();
+}
+
+float AudioEngine_GetQuarterNotesPerBar(AudioEngineHandle handle) {
+    if (!handle) return 4.0f;
+    return static_cast<AudioEngine*>(handle)->getQuarterNotesPerBar();
 }
 
 // MARK: - Multi-channel Ring Buffer Processing
