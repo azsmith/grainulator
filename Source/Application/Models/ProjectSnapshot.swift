@@ -27,8 +27,9 @@ struct ProjectSnapshot: Codable {
     var daisyDrum: DaisyDrumVoiceSnapshot?     // Added in version 2
     var sampler: SamplerVoiceSnapshot?          // Added in version 3
     var chordSequencer: ChordSequencerSnapshot? // Added in version 4
+    var scramble: ScrambleManager.SavedState?   // Added in version 5
 
-    static let currentVersion = 4
+    static let currentVersion = 5
 }
 
 // MARK: - Engine Parameters Snapshot

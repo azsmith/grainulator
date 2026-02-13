@@ -194,6 +194,12 @@ struct ScrambleEngine: Codable {
     private var burstPhase: Int = 0
     private var inBurst: Bool = false
 
+    // Only persist section parameters and sequences; runtime counters are excluded.
+    enum CodingKeys: String, CodingKey {
+        case tSection, xSection, ySection
+        case tSequence, xSequence, ySequence
+    }
+
     // MARK: - Helpers
 
     private static func fract(_ x: Double) -> Double {

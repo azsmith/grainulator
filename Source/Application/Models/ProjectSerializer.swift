@@ -21,7 +21,8 @@ struct ProjectSerializer {
         masterClock: MasterClock,
         appState: AppState,
         drumSequencer: DrumSequencer? = nil,
-        chordSequencer: ChordSequencer? = nil
+        chordSequencer: ChordSequencer? = nil,
+        scrambleManager: ScrambleManager? = nil
     ) -> ProjectSnapshot {
         let now = Date()
         return ProjectSnapshot(
@@ -39,7 +40,8 @@ struct ProjectSerializer {
             drumSequencer: drumSequencer.map { captureDrumSequencer($0) },
             daisyDrum: captureDaisyDrum(audioEngine),
             sampler: captureSampler(audioEngine),
-            chordSequencer: chordSequencer.map { captureChordSequencer($0) }
+            chordSequencer: chordSequencer.map { captureChordSequencer($0) },
+            scramble: scrambleManager?.savedState()
         )
     }
 
@@ -419,7 +421,8 @@ struct ProjectSerializer {
         appState: AppState,
         pluginManager: AUPluginManager,
         drumSequencer: DrumSequencer? = nil,
-        chordSequencer: ChordSequencer? = nil
+        chordSequencer: ChordSequencer? = nil,
+        scrambleManager: ScrambleManager? = nil
     ) async {
         // 1. Stop playback
         if sequencer.isPlaying {
@@ -466,6 +469,17 @@ struct ProjectSerializer {
                 chordSeq.clearAll()
                 chordSeq.division = .div4
                 chordSeq.isEnabled = true
+            }
+        }
+
+        // 7c. Restore scramble state (if present in project)
+        if let scrambleMgr = scrambleManager {
+            if let scrambleState = snapshot.scramble {
+                scrambleMgr.restore(from: scrambleState)
+            } else {
+                // Older project — reset scramble to defaults
+                scrambleMgr.enabled = false
+                scrambleMgr.reset()
             }
         }
 

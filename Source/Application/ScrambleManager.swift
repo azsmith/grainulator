@@ -11,7 +11,7 @@ import Combine
 
 // MARK: - Scramble Note Target
 
-enum ScrambleNoteTarget: String, CaseIterable, Identifiable {
+enum ScrambleNoteTarget: String, CaseIterable, Identifiable, Codable {
     case plaits = "Macro Osc"
     case rings = "Resonator"
     case daisyDrum = "Drums"
@@ -419,12 +419,58 @@ class ScrambleManager: ObservableObject {
         default: return nil
         }
     }
+
+    // MARK: - Project Save/Load
+
+    struct SavedState: Codable {
+        var enabled: Bool
+        var engine: ScrambleEngine
+        var division: String                // SequencerClockDivision rawValue
+        var t1Destination: String           // ModulationDestination rawValue
+        var t2Destination: String           // ModulationDestination rawValue
+        var t3Destination: String           // ModulationDestination rawValue
+        var x1Destination: String           // ScrambleNoteTarget rawValue
+        var x2Destination: String           // ScrambleNoteTarget rawValue
+        var x3Destination: String           // ScrambleNoteTarget rawValue
+        var yDestination: String            // ModulationDestination rawValue
+        var yAmount: Double
+    }
+
+    func savedState() -> SavedState {
+        SavedState(
+            enabled: enabled,
+            engine: engine,
+            division: division.rawValue,
+            t1Destination: t1Destination.rawValue,
+            t2Destination: t2Destination.rawValue,
+            t3Destination: t3Destination.rawValue,
+            x1Destination: x1Destination.rawValue,
+            x2Destination: x2Destination.rawValue,
+            x3Destination: x3Destination.rawValue,
+            yDestination: yDestination.rawValue,
+            yAmount: yAmount
+        )
+    }
+
+    func restore(from state: SavedState) {
+        enabled = state.enabled
+        engine = state.engine
+        division = SequencerClockDivision(rawValue: state.division) ?? .x1
+        t1Destination = ModulationDestination(rawValue: state.t1Destination) ?? .plaitsGate
+        t2Destination = ModulationDestination(rawValue: state.t2Destination) ?? .ringsGate
+        t3Destination = ModulationDestination(rawValue: state.t3Destination) ?? .daisyDrumGate
+        x1Destination = ScrambleNoteTarget(rawValue: state.x1Destination) ?? .plaits
+        x2Destination = ScrambleNoteTarget(rawValue: state.x2Destination) ?? .rings
+        x3Destination = ScrambleNoteTarget(rawValue: state.x3Destination) ?? .none
+        yDestination = ModulationDestination(rawValue: state.yDestination) ?? .plaitsTimbre
+        yAmount = state.yAmount
+    }
 }
 
 // MARK: - UInt8 Clamped Init
 
 private extension UInt8 {
     init(clamped value: Int) {
-        self = UInt8(max(0, min(127, value)))
+        self = UInt8(Swift.max(0, Swift.min(127, value)))
     }
 }

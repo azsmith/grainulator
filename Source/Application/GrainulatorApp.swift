@@ -80,9 +80,10 @@ struct GrainulatorApp: App {
                         appState: appState,
                         pluginManager: pluginManager,
                         drumSequencer: drumSequencer,
-                        chordSequencer: chordSequencer
+                        chordSequencer: chordSequencer,
+                        scrambleManager: scrambleManager
                     )
-                    conversationalBridge.start(audioEngine: audioEngine, masterClock: masterClock, sequencer: sequencer, drumSequencer: drumSequencer, chordSequencer: chordSequencer)
+                    conversationalBridge.start(audioEngine: audioEngine, masterClock: masterClock, sequencer: sequencer, drumSequencer: drumSequencer, chordSequencer: chordSequencer, scrambleManager: scrambleManager)
                     setupMIDICallbacks()
                     arcManager.connect(audioEngine: audioEngine, appState: appState)
                     gridManager.connect(sequencer: sequencer, chordSequencer: chordSequencer, masterClock: masterClock, audioEngine: audioEngine, appState: appState)

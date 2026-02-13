@@ -26,6 +26,7 @@ class ProjectManager: ObservableObject {
     weak var pluginManager: AUPluginManager?
     weak var drumSequencer: DrumSequencer?
     weak var chordSequencer: ChordSequencer?
+    weak var scrambleManager: ScrambleManager?
 
     /// Connect all subsystems (call from GrainulatorApp.onAppear)
     func connect(
@@ -36,7 +37,8 @@ class ProjectManager: ObservableObject {
         appState: AppState,
         pluginManager: AUPluginManager,
         drumSequencer: DrumSequencer? = nil,
-        chordSequencer: ChordSequencer? = nil
+        chordSequencer: ChordSequencer? = nil,
+        scrambleManager: ScrambleManager? = nil
     ) {
         self.audioEngine = audioEngine
         self.mixerState = mixerState
@@ -46,6 +48,7 @@ class ProjectManager: ObservableObject {
         self.pluginManager = pluginManager
         self.drumSequencer = drumSequencer
         self.chordSequencer = chordSequencer
+        self.scrambleManager = scrambleManager
     }
 
     // MARK: - File Type
@@ -92,6 +95,22 @@ class ProjectManager: ObservableObject {
             chordSeq.clearAll()
             chordSeq.division = .div4
             chordSeq.isEnabled = true
+        }
+
+        // Reset scramble manager
+        if let scrambleMgr = scrambleManager {
+            scrambleMgr.stop()
+            scrambleMgr.enabled = false
+            scrambleMgr.reset()
+            scrambleMgr.division = .x1
+            scrambleMgr.t1Destination = .plaitsGate
+            scrambleMgr.t2Destination = .ringsGate
+            scrambleMgr.t3Destination = .daisyDrumGate
+            scrambleMgr.x1Destination = .plaits
+            scrambleMgr.x2Destination = .rings
+            scrambleMgr.x3Destination = .none
+            scrambleMgr.yDestination = .plaitsTimbre
+            scrambleMgr.yAmount = 0.5
         }
 
         // Reset master clock
@@ -157,7 +176,8 @@ class ProjectManager: ObservableObject {
             masterClock: masterClock,
             appState: appState,
             drumSequencer: drumSequencer,
-            chordSequencer: chordSequencer
+            chordSequencer: chordSequencer,
+            scrambleManager: scrambleManager
         )
 
         // Update timestamps if overwriting
@@ -232,7 +252,8 @@ class ProjectManager: ObservableObject {
                 appState: appState,
                 pluginManager: pluginManager,
                 drumSequencer: drumSequencer,
-                chordSequencer: chordSequencer
+                chordSequencer: chordSequencer,
+                scrambleManager: scrambleManager
             )
 
             currentProjectURL = url
