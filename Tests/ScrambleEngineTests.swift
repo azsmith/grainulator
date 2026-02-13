@@ -253,4 +253,46 @@ final class ScrambleEngineTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(high, 0)
         XCTAssertLessThanOrEqual(high, 127)
     }
+
+    // MARK: - Task 4: Y Generator
+
+    func testGenerateYValuesInRange() {
+        var engine = ScrambleEngine()
+
+        for _ in 0..<200 {
+            let out = engine.generateY()
+            XCTAssertGreaterThanOrEqual(out.value, 0.0, "Y value must be >= 0")
+            XCTAssertLessThanOrEqual(out.value, 1.0, "Y value must be <= 1")
+        }
+    }
+
+    func testYDividerRatioTriggersCorrectly() {
+        var engine = ScrambleEngine()
+        engine.ySection.dividerRatio = 3
+
+        var triggerCount = 0
+        for _ in 0..<12 {
+            let out = engine.generateY()
+            if out.triggered {
+                triggerCount += 1
+            }
+        }
+        // With ratio=3 over 12 steps, expect 4 triggers (steps 3, 6, 9, 12)
+        XCTAssertEqual(triggerCount, 4, "Divider ratio 3 over 12 steps should produce 4 triggers")
+    }
+
+    func testYSpreadZeroProducesConstantBias() {
+        var engine = ScrambleEngine()
+        engine.ySection.spread = 0.0
+        engine.ySection.bias = 0.7
+        engine.ySection.dividerRatio = 1
+
+        for _ in 0..<100 {
+            let out = engine.generateY()
+            if out.triggered {
+                XCTAssertEqual(out.value, 0.7, accuracy: 1e-10,
+                               "With spread=0, Y value should equal bias")
+            }
+        }
+    }
 }

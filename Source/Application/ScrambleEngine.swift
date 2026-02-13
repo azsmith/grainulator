@@ -411,6 +411,38 @@ struct ScrambleEngine: Codable {
 
         return XOutput(x1: x1, x2: x2, x3: x3)
     }
+
+    // MARK: - Y Generator
+
+    mutating func generateY() -> YOutput {
+        yDividerCount += 1
+
+        let triggered = yDividerCount % ySection.dividerRatio == 0
+        guard triggered else {
+            return YOutput(value: 0.5, triggered: false)
+        }
+
+        let rawValue = ySequence.next(
+            dejaVu: .off,
+            amount: 0.0
+        ) { Double.random(in: 0.0...1.0) }
+
+        let spread = ySection.spread
+        let bias = ySection.bias
+        let steps = ySection.steps
+
+        var shaped = (rawValue - 0.5) * spread + bias
+
+        // Steps quantization: if steps > threshold, snap to discrete levels
+        if steps > 0.01 {
+            let levelCount = max(2.0, (steps * 16.0).rounded())
+            shaped = (shaped * levelCount).rounded(.down) / levelCount
+        }
+
+        shaped = shaped.clamped(to: 0.0...1.0)
+
+        return YOutput(value: shaped, triggered: true)
+    }
 }
 
 // MARK: - Comparable Extension
