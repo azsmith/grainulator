@@ -139,6 +139,7 @@ struct ScrambleEngine: Codable {
         var jitter: Double = 0.0
         var dejaVu: DejaVuState = .off
         var dejaVuAmount: Double = 0.5
+        var dividerRatio: Int = 1
     }
 
     struct XSection: Codable {
@@ -150,6 +151,7 @@ struct ScrambleEngine: Codable {
         var clockSource: XClockSource = .t1
         var dejaVu: DejaVuState = .off
         var dejaVuAmount: Double = 0.5
+        var dividerRatio: Int = 1
     }
 
     struct YSection: Codable {
@@ -189,6 +191,8 @@ struct ScrambleEngine: Codable {
     var ySequence: RandomSequence = RandomSequence()
 
     private var tStepCount: Int = 0
+    private var tDividerCount: Int = 0
+    private var xDividerCount: Int = 0
     private var yDividerCount: Int = 0
     private var markovState: Int = 0
     private var burstPhase: Int = 0
@@ -209,6 +213,11 @@ struct ScrambleEngine: Codable {
     // MARK: - T Generator
 
     mutating func generateT() -> TOutput {
+        tDividerCount += 1
+        guard tDividerCount % tSection.dividerRatio == 0 else {
+            return TOutput()
+        }
+
         let r = tSequence.next(
             dejaVu: tSection.dejaVu,
             amount: tSection.dejaVuAmount
@@ -364,6 +373,11 @@ struct ScrambleEngine: Codable {
     }
 
     mutating func generateX(scaleIntervals: [Int], rootMidi: UInt8) -> XOutput {
+        xDividerCount += 1
+        guard xDividerCount % xSection.dividerRatio == 0 else {
+            return XOutput()
+        }
+
         let rawValue = xSequence.next(
             dejaVu: xSection.dejaVu,
             amount: xSection.dejaVuAmount

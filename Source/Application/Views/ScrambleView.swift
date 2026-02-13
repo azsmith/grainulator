@@ -23,7 +23,7 @@ struct ScrambleView: View {
         ) {
             VStack(spacing: 0) {
                 headerBar
-                Divider().background(ColorPalette.divider)
+                Rectangle().fill(ColorPalette.textMuted).frame(height: 1).padding(.vertical, 4)
                 columnsSection
             }
             .padding(12)
@@ -40,7 +40,7 @@ struct ScrambleView: View {
             } label: {
                 HStack(spacing: 4) {
                     Circle()
-                        .fill(scrambleManager.enabled ? accent : ColorPalette.textDimmed)
+                        .fill(scrambleManager.enabled ? accent : ColorPalette.textMuted)
                         .frame(width: 8, height: 8)
                     Text(scrambleManager.enabled ? "ON" : "OFF")
                         .font(Typography.buttonSmall)
@@ -65,9 +65,11 @@ struct ScrambleView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "metronome")
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                     Text(scrambleManager.division.rawValue)
                         .font(Typography.buttonSmall)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 7, weight: .bold))
                 }
                 .foregroundColor(accent)
                 .padding(.horizontal, 8)
@@ -77,6 +79,7 @@ struct ScrambleView: View {
                         .stroke(accent.opacity(0.4), lineWidth: 1)
                 )
             }
+            .menuIndicator(.hidden)
 
             Spacer()
 
@@ -111,9 +114,10 @@ struct ScrambleView: View {
 
     private var verticalDivider: some View {
         Rectangle()
-            .fill(ColorPalette.divider)
+            .fill(ColorPalette.textMuted)
             .frame(width: 1)
-            .padding(.vertical, 4)
+            .frame(maxHeight: .infinity)
+            .padding(.vertical, 8)
     }
 
     // MARK: - T Column
@@ -123,17 +127,12 @@ struct ScrambleView: View {
             sectionLabel("T GENERATOR")
 
             parameterRow("MODE") {
-                Menu {
+                menuPicker(scrambleManager.engine.tSection.mode.rawValue) {
                     ForEach(ScrambleEngine.TMode.allCases) { mode in
                         Button(mode.rawValue) {
                             scrambleManager.engine.tSection.mode = mode
                         }
                     }
-                } label: {
-                    Text(scrambleManager.engine.tSection.mode.rawValue)
-                        .font(Typography.valueSmall)
-                        .foregroundColor(accent)
-                        .frame(minWidth: 80, alignment: .leading)
                 }
             }
 
@@ -145,7 +144,9 @@ struct ScrambleView: View {
                 amount: $scrambleManager.engine.tSection.dejaVuAmount
             )
 
-            Divider().background(ColorPalette.divider)
+            dividerRow("DIVIDER", value: $scrambleManager.engine.tSection.dividerRatio)
+
+            sectionDivider
 
             sectionLabel("T OUTPUTS")
 
@@ -153,7 +154,7 @@ struct ScrambleView: View {
             triggerDestinationRow("T2", destination: $scrambleManager.t2Destination, active: scrambleManager.lastTOutput.t2)
             triggerDestinationRow("T3", destination: $scrambleManager.t3Destination, active: scrambleManager.lastTOutput.t3)
 
-            Divider().background(ColorPalette.divider)
+            sectionDivider
 
             tPatternViz
         }
@@ -167,17 +168,12 @@ struct ScrambleView: View {
             sectionLabel("X GENERATOR")
 
             parameterRow("CTRL") {
-                Menu {
+                menuPicker(scrambleManager.engine.xSection.controlMode.rawValue) {
                     ForEach(ScrambleEngine.XControlMode.allCases) { mode in
                         Button(mode.rawValue) {
                             scrambleManager.engine.xSection.controlMode = mode
                         }
                     }
-                } label: {
-                    Text(scrambleManager.engine.xSection.controlMode.rawValue)
-                        .font(Typography.valueSmall)
-                        .foregroundColor(accent)
-                        .frame(minWidth: 80, alignment: .leading)
                 }
             }
 
@@ -186,32 +182,22 @@ struct ScrambleView: View {
             sliderRow("STEPS", value: $scrambleManager.engine.xSection.steps, range: 0...1)
 
             parameterRow("RANGE") {
-                Menu {
+                menuPicker(scrambleManager.engine.xSection.range.rawValue) {
                     ForEach(ScrambleEngine.XRange.allCases) { range in
                         Button(range.rawValue) {
                             scrambleManager.engine.xSection.range = range
                         }
                     }
-                } label: {
-                    Text(scrambleManager.engine.xSection.range.rawValue)
-                        .font(Typography.valueSmall)
-                        .foregroundColor(accent)
-                        .frame(minWidth: 80, alignment: .leading)
                 }
             }
 
             parameterRow("CLK SRC") {
-                Menu {
+                menuPicker(scrambleManager.engine.xSection.clockSource.rawValue) {
                     ForEach(ScrambleEngine.XClockSource.allCases) { src in
                         Button(src.rawValue) {
                             scrambleManager.engine.xSection.clockSource = src
                         }
                     }
-                } label: {
-                    Text(scrambleManager.engine.xSection.clockSource.rawValue)
-                        .font(Typography.valueSmall)
-                        .foregroundColor(accent)
-                        .frame(minWidth: 80, alignment: .leading)
                 }
             }
 
@@ -220,7 +206,9 @@ struct ScrambleView: View {
                 amount: $scrambleManager.engine.xSection.dejaVuAmount
             )
 
-            Divider().background(ColorPalette.divider)
+            dividerRow("DIVIDER", value: $scrambleManager.engine.xSection.dividerRatio)
+
+            sectionDivider
 
             sectionLabel("X OUTPUTS")
 
@@ -228,7 +216,7 @@ struct ScrambleView: View {
             noteTargetRow("X2", destination: $scrambleManager.x2Destination, note: scrambleManager.lastXOutput.x2)
             noteTargetRow("X3", destination: $scrambleManager.x3Destination, note: scrambleManager.lastXOutput.x3)
 
-            Divider().background(ColorPalette.divider)
+            sectionDivider
 
             xNotesViz
         }
@@ -245,25 +233,16 @@ struct ScrambleView: View {
             sliderRow("BIAS", value: $scrambleManager.engine.ySection.bias, range: 0...1)
             sliderRow("STEPS", value: $scrambleManager.engine.ySection.steps, range: 0...1)
 
-            parameterRow("DIVIDER") {
-                Stepper(
-                    value: $scrambleManager.engine.ySection.dividerRatio,
-                    in: 1...16
-                ) {
-                    Text("\(scrambleManager.engine.ySection.dividerRatio)")
-                        .font(Typography.valueSmall)
-                        .foregroundColor(accent)
-                }
-            }
+            dividerRow("DIVIDER", value: $scrambleManager.engine.ySection.dividerRatio)
 
-            Divider().background(ColorPalette.divider)
+            sectionDivider
 
             sectionLabel("Y OUTPUT")
 
             cvDestinationRow("Y", destination: $scrambleManager.yDestination)
             sliderRow("AMOUNT", value: $scrambleManager.yAmount, range: 0...1)
 
-            Divider().background(ColorPalette.divider)
+            sectionDivider
 
             yCVViz
         }
@@ -271,6 +250,10 @@ struct ScrambleView: View {
     }
 
     // MARK: - Reusable UI Components
+
+    private var sectionDivider: some View {
+        Rectangle().fill(ColorPalette.textMuted).frame(height: 1).padding(.vertical, 4)
+    }
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
@@ -289,6 +272,24 @@ struct ScrambleView: View {
         }
     }
 
+    /// Menu picker with visible chevron and accent-colored label — hides system indicator
+    private func menuPicker<Items: View>(_ currentValue: String, @ViewBuilder items: () -> Items) -> some View {
+        Menu {
+            items()
+        } label: {
+            HStack(spacing: 4) {
+                Text(currentValue)
+                    .font(Typography.valueSmall)
+                    .foregroundColor(accent)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(accent)
+            }
+            .frame(minWidth: 80, alignment: .leading)
+        }
+        .menuIndicator(.hidden)
+    }
+
     private func sliderRow(_ label: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
         HStack(spacing: 8) {
             Text(label)
@@ -300,8 +301,47 @@ struct ScrambleView: View {
                 .frame(maxWidth: 120)
             Text(String(format: "%.0f%%", value.wrappedValue * 100))
                 .font(Typography.valueTiny)
-                .foregroundColor(ColorPalette.textDimmed)
+                .foregroundColor(ColorPalette.textSecondary)
                 .frame(width: 32, alignment: .trailing)
+        }
+    }
+
+    private func dividerRow(_ label: String, value: Binding<Int>) -> some View {
+        parameterRow(label) {
+            HStack(spacing: 6) {
+                Text("\(value.wrappedValue)")
+                    .font(Typography.valueSmall)
+                    .foregroundColor(accent)
+                    .frame(width: 20, alignment: .center)
+
+                Button {
+                    if value.wrappedValue > 1 {
+                        value.wrappedValue -= 1
+                    }
+                } label: {
+                    Image(systemName: "minus")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(ColorPalette.textSecondary)
+                        .frame(width: 22, height: 22)
+                        .background(ColorPalette.panelBackground)
+                        .cornerRadius(3)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    if value.wrappedValue < 16 {
+                        value.wrappedValue += 1
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(ColorPalette.textSecondary)
+                        .frame(width: 22, height: 22)
+                        .background(ColorPalette.panelBackground)
+                        .cornerRadius(3)
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 
@@ -339,7 +379,7 @@ struct ScrambleView: View {
     private func triggerDestinationRow(_ label: String, destination: Binding<ModulationDestination>, active: Bool) -> some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(active ? accent : ColorPalette.textDimmed.opacity(0.3))
+                .fill(active ? accent : ColorPalette.textMuted.opacity(0.4))
                 .frame(width: 8, height: 8)
 
             Text(label)
@@ -349,7 +389,7 @@ struct ScrambleView: View {
 
             Image(systemName: "arrow.right")
                 .font(.system(size: 8))
-                .foregroundColor(ColorPalette.textDimmed)
+                .foregroundColor(ColorPalette.textMuted)
 
             triggerDestinationMenu(destination)
         }
@@ -363,12 +403,18 @@ struct ScrambleView: View {
                 }
             }
         } label: {
-            Text(destination.wrappedValue.displayName)
-                .font(Typography.valueTiny)
-                .foregroundColor(accent)
-                .lineLimit(1)
-                .frame(minWidth: 80, alignment: .leading)
+            HStack(spacing: 4) {
+                Text(destination.wrappedValue.displayName)
+                    .font(Typography.valueTiny)
+                    .foregroundColor(accent)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 6, weight: .bold))
+                    .foregroundColor(accent)
+            }
+            .frame(minWidth: 80, alignment: .leading)
         }
+        .menuIndicator(.hidden)
     }
 
     private func noteTargetRow(_ label: String, destination: Binding<ScrambleNoteTarget>, note: UInt8) -> some View {
@@ -385,7 +431,7 @@ struct ScrambleView: View {
 
             Image(systemName: "arrow.right")
                 .font(.system(size: 8))
-                .foregroundColor(ColorPalette.textDimmed)
+                .foregroundColor(ColorPalette.textMuted)
 
             Menu {
                 ForEach(ScrambleNoteTarget.allCases) { target in
@@ -394,12 +440,18 @@ struct ScrambleView: View {
                     }
                 }
             } label: {
-                Text(destination.wrappedValue.rawValue)
-                    .font(Typography.valueTiny)
-                    .foregroundColor(accent)
-                    .lineLimit(1)
-                    .frame(minWidth: 80, alignment: .leading)
+                HStack(spacing: 4) {
+                    Text(destination.wrappedValue.rawValue)
+                        .font(Typography.valueTiny)
+                        .foregroundColor(accent)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 6, weight: .bold))
+                        .foregroundColor(accent)
+                }
+                .frame(minWidth: 80, alignment: .leading)
             }
+            .menuIndicator(.hidden)
         }
     }
 
@@ -412,7 +464,7 @@ struct ScrambleView: View {
 
             Image(systemName: "arrow.right")
                 .font(.system(size: 8))
-                .foregroundColor(ColorPalette.textDimmed)
+                .foregroundColor(ColorPalette.textMuted)
 
             Menu {
                 ForEach(ModulationDestination.allCases.filter { !$0.isTriggerDestination }) { dest in
@@ -421,12 +473,18 @@ struct ScrambleView: View {
                     }
                 }
             } label: {
-                Text(destination.wrappedValue.displayName)
-                    .font(Typography.valueTiny)
-                    .foregroundColor(accent)
-                    .lineLimit(1)
-                    .frame(minWidth: 80, alignment: .leading)
+                HStack(spacing: 4) {
+                    Text(destination.wrappedValue.displayName)
+                        .font(Typography.valueTiny)
+                        .foregroundColor(accent)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 6, weight: .bold))
+                        .foregroundColor(accent)
+                }
+                .frame(minWidth: 80, alignment: .leading)
             }
+            .menuIndicator(.hidden)
         }
     }
 
@@ -436,13 +494,13 @@ struct ScrambleView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("PATTERN")
                 .font(Typography.parameterLabelSmall)
-                .foregroundColor(ColorPalette.textDimmed)
+                .foregroundColor(ColorPalette.textMuted)
 
             HStack(spacing: 3) {
                 ForEach(0..<16, id: \.self) { i in
                     let active = i < scrambleManager.tHistory.count && scrambleManager.tHistory[i].t1
                     Circle()
-                        .fill(active ? accent : ColorPalette.textDimmed.opacity(0.2))
+                        .fill(active ? accent : ColorPalette.textMuted.opacity(0.3))
                         .frame(width: 10, height: 10)
                 }
             }
@@ -453,14 +511,14 @@ struct ScrambleView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("NOTES")
                 .font(Typography.parameterLabelSmall)
-                .foregroundColor(ColorPalette.textDimmed)
+                .foregroundColor(ColorPalette.textMuted)
 
             HStack(alignment: .bottom, spacing: 3) {
                 ForEach(0..<16, id: \.self) { i in
                     let note: UInt8 = i < scrambleManager.xHistory.count ? scrambleManager.xHistory[i] : 60
                     let height = max(4, CGFloat(note - 36) * 0.8)
                     RoundedRectangle(cornerRadius: 1)
-                        .fill(i < scrambleManager.xHistory.count ? accent : ColorPalette.textDimmed.opacity(0.2))
+                        .fill(i < scrambleManager.xHistory.count ? accent : ColorPalette.textMuted.opacity(0.3))
                         .frame(width: 8, height: height)
                 }
             }
@@ -472,14 +530,14 @@ struct ScrambleView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("CV")
                 .font(Typography.parameterLabelSmall)
-                .foregroundColor(ColorPalette.textDimmed)
+                .foregroundColor(ColorPalette.textMuted)
 
             HStack(alignment: .bottom, spacing: 3) {
                 ForEach(0..<16, id: \.self) { i in
                     let value: Double = i < scrambleManager.yHistory.count ? scrambleManager.yHistory[i] : 0.5
                     let height = max(4, CGFloat(value) * 50)
                     RoundedRectangle(cornerRadius: 1)
-                        .fill(i < scrambleManager.yHistory.count ? accent : ColorPalette.textDimmed.opacity(0.2))
+                        .fill(i < scrambleManager.yHistory.count ? accent : ColorPalette.textMuted.opacity(0.3))
                         .frame(width: 8, height: height)
                 }
             }
