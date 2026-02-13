@@ -249,6 +249,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
     private weak var sequencer: StepSequencer?
     private weak var drumSequencer: DrumSequencer?
     private weak var chordSequencer: ChordSequencer?
+    private weak var scrambleManager: ScrambleManager?
     /// Cached C++ engine handle for thread-safe reads (e.g. IsRecording atomic checks)
     private var cachedEngineHandle: OpaquePointer?
     private var cachedSampleRate: Double = 48000.0
@@ -273,12 +274,13 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
     ]
 
     @MainActor
-    func start(audioEngine: AudioEngineWrapper, masterClock: MasterClock, sequencer: StepSequencer? = nil, drumSequencer: DrumSequencer? = nil, chordSequencer: ChordSequencer? = nil, port: UInt16 = 4850) {
+    func start(audioEngine: AudioEngineWrapper, masterClock: MasterClock, sequencer: StepSequencer? = nil, drumSequencer: DrumSequencer? = nil, chordSequencer: ChordSequencer? = nil, scrambleManager: ScrambleManager? = nil, port: UInt16 = 4850) {
         self.audioEngine = audioEngine
         self.masterClock = masterClock
         self.sequencer = sequencer
         self.drumSequencer = drumSequencer
         self.chordSequencer = chordSequencer
+        self.scrambleManager = scrambleManager
         self.listenPort = port
         self.cachedEngineHandle = audioEngine.cppEngineHandle
         self.cachedSampleRate = audioEngine.sampleRate
@@ -971,6 +973,45 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                     "Use lane pattern 'fourOnTheFloor', 'backbeat', 'straight16ths', 'straight8ths', or 'offbeats' for presets.",
                 ],
             ],
+            [
+                "module": "scramble",
+                "description": "Probabilistic sequencer (Marbles-inspired) generating gate patterns (T), quantized notes (X), and CV (Y)",
+                "actions": ["set", "toggle"],
+                "paths": [
+                    "scramble.enabled",
+                    "scramble.t.mode",
+                    "scramble.t.bias",
+                    "scramble.t.jitter",
+                    "scramble.t.division",
+                    "scramble.t.dejaVu",
+                    "scramble.t.dejaVuAmount",
+                    "scramble.x.spread",
+                    "scramble.x.bias",
+                    "scramble.x.steps",
+                    "scramble.x.controlMode",
+                    "scramble.x.range",
+                    "scramble.x.clockSource",
+                    "scramble.x.dejaVu",
+                    "scramble.x.dejaVuAmount",
+                    "scramble.y.spread",
+                    "scramble.y.bias",
+                    "scramble.y.steps",
+                    "scramble.y.divider",
+                    "scramble.y.destination",
+                    "scramble.y.amount",
+                    "scramble.t1.destination",
+                    "scramble.t2.destination",
+                    "scramble.t3.destination",
+                    "scramble.x1.destination",
+                    "scramble.x2.destination",
+                    "scramble.x3.destination",
+                ],
+                "tModes": ["COMP", "INDEP", "3-STATE", "DRUMS", "MARKOV", "CLUSTER", "DIVIDE"],
+                "xControlModes": ["IDENT", "BUMP", "TILT"],
+                "xRanges": ["1 OCT", "2 OCT", "4 OCT"],
+                "xClockSources": ["T1", "T2", "T3", "ALL"],
+                "dejaVuStates": ["OFF", "ON", "LOCK"],
+            ],
         ]
     }
 
@@ -1095,6 +1136,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                 "recording": loopRecording,
             ],
             "drums": canonicalDrumSequencerStatePayload(),
+            "scramble": canonicalScrambleStatePayload(),
             "fx": [:],
             "files": [:],
             "scenes": [],
@@ -2100,6 +2142,11 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return (true, nil)
         }
 
+        // Scramble targets — validate then delegate to applyScrambleAction
+        if target.hasPrefix("scramble.") {
+            return validateScrambleAction(action, target: target)
+        }
+
         // Chord sequencer targets — allow through validation; applyChordSequencerAction handles details
         if target.hasPrefix("sequencer.chords") {
             return (true, nil)
@@ -2637,6 +2684,11 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return (true, nil)
         }
 
+        // Scramble apply
+        if target.hasPrefix("scramble.") {
+            return applyScrambleAction(action, target: target)
+        }
+
         // Chord sequencer apply
         if target.hasPrefix("sequencer.chords") {
             return applyChordSequencerAction(action, target: target)
@@ -3137,6 +3189,622 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                 block(chordSeq)
             }
         }
+    }
+
+    // MARK: - Scramble Validation
+
+    private func validateScrambleAction(_ action: ActionRequest, target: String) -> (handled: Bool, failure: ActionFailure?) {
+        let suffix = target.replacingOccurrences(of: "scramble.", with: "")
+
+        switch suffix {
+        case "enabled":
+            if action.type == "toggle" || boolValueFromAction(action) != nil {
+                return (true, nil)
+            }
+            return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.enabled requires boolean value"))
+
+        // T section float params
+        case "t.bias", "t.jitter", "t.dejaVuAmount":
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.\(suffix) must be within [0.0, 1.0]"))
+            }
+            return (true, nil)
+
+        case "t.mode":
+            guard let text = modeTextFromAction(action), scrambleTModeFromText(text) != nil else {
+                let available = ScrambleEngine.TMode.allCases.map { scrambleTModeDisplayName($0) }.joined(separator: ", ")
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid scramble T mode. Available: \(available)"))
+            }
+            return (true, nil)
+
+        case "t.division":
+            guard let text = modeTextFromAction(action), divisionFromText(text) != nil else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid clock division for scramble.t.division"))
+            }
+            return (true, nil)
+
+        case "t.dejaVu":
+            guard let text = modeTextFromAction(action), scrambleDejaVuFromText(text) != nil else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.t.dejaVu must be OFF, ON, or LOCK"))
+            }
+            return (true, nil)
+
+        // X section float params
+        case "x.spread", "x.bias", "x.steps", "x.dejaVuAmount":
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.\(suffix) must be within [0.0, 1.0]"))
+            }
+            return (true, nil)
+
+        case "x.controlMode":
+            guard let text = modeTextFromAction(action), scrambleXControlModeFromText(text) != nil else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.x.controlMode must be IDENT, BUMP, or TILT"))
+            }
+            return (true, nil)
+
+        case "x.range":
+            guard let text = modeTextFromAction(action), scrambleXRangeFromText(text) != nil else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.x.range must be '1 OCT', '2 OCT', or '4 OCT'"))
+            }
+            return (true, nil)
+
+        case "x.clockSource":
+            guard let text = modeTextFromAction(action), scrambleXClockSourceFromText(text) != nil else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.x.clockSource must be T1, T2, T3, or ALL"))
+            }
+            return (true, nil)
+
+        case "x.dejaVu":
+            guard let text = modeTextFromAction(action), scrambleDejaVuFromText(text) != nil else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.x.dejaVu must be OFF, ON, or LOCK"))
+            }
+            return (true, nil)
+
+        // Y section float params
+        case "y.spread", "y.bias", "y.steps", "y.amount":
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.\(suffix) must be within [0.0, 1.0]"))
+            }
+            return (true, nil)
+
+        case "y.divider":
+            guard let value = feedbackValueFromAction(action) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.y.divider requires a numeric value"))
+            }
+            let intValue = Int(value.rounded())
+            guard (1...16).contains(intValue) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.y.divider must be within [1, 16]"))
+            }
+            return (true, nil)
+
+        // T routing destinations
+        case "t1.destination", "t2.destination", "t3.destination":
+            guard let text = modeTextFromAction(action), ModulationDestination(rawValue: text) != nil else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid ModulationDestination rawValue for scramble.\(suffix)"))
+            }
+            return (true, nil)
+
+        // X routing destinations
+        case "x1.destination", "x2.destination", "x3.destination":
+            guard let text = modeTextFromAction(action), ScrambleNoteTarget(rawValue: text) != nil else {
+                let available = ScrambleNoteTarget.allCases.map { $0.rawValue }.joined(separator: ", ")
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid ScrambleNoteTarget for scramble.\(suffix). Available: \(available)"))
+            }
+            return (true, nil)
+
+        // Y routing destination
+        case "y.destination":
+            guard let text = modeTextFromAction(action), ModulationDestination(rawValue: text) != nil else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid ModulationDestination rawValue for scramble.y.destination"))
+            }
+            return (true, nil)
+
+        default:
+            return (true, ActionFailure(actionId: action.actionId, code: .notFound, message: "Unknown scramble target: \(target)"))
+        }
+    }
+
+    // MARK: - Scramble Actions
+
+    private func applyScrambleAction(_ action: ActionRequest, target: String) -> (handled: Bool, failure: ActionFailure?) {
+        let suffix = target.replacingOccurrences(of: "scramble.", with: "")
+
+        switch suffix {
+        case "enabled":
+            let current = readScrambleProperty { $0.enabled } ?? false
+            guard let desired = desiredBoolValue(for: action, current: current) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.enabled requires boolean value"))
+            }
+            writeScramble { $0.enabled = desired }
+            recordMutation(
+                changedPaths: ["scramble.enabled"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "enabled", "value": desired])]
+            )
+            return (true, nil)
+
+        // --- T section ---
+        case "t.bias":
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.t.bias must be within [0.0, 1.0]"))
+            }
+            writeScramble { $0.engine.tSection.bias = value }
+            recordMutation(
+                changedPaths: ["scramble.t.bias"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "t.bias", "value": value])]
+            )
+            return (true, nil)
+
+        case "t.jitter":
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.t.jitter must be within [0.0, 1.0]"))
+            }
+            writeScramble { $0.engine.tSection.jitter = value }
+            recordMutation(
+                changedPaths: ["scramble.t.jitter"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "t.jitter", "value": value])]
+            )
+            return (true, nil)
+
+        case "t.mode":
+            guard let text = modeTextFromAction(action), let mode = scrambleTModeFromText(text) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid scramble T mode"))
+            }
+            writeScramble { $0.engine.tSection.mode = mode }
+            recordMutation(
+                changedPaths: ["scramble.t.mode"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "t.mode", "value": scrambleTModeDisplayName(mode)])]
+            )
+            return (true, nil)
+
+        case "t.division":
+            guard let text = modeTextFromAction(action), let division = divisionFromText(text) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid clock division"))
+            }
+            writeScramble { $0.division = division }
+            recordMutation(
+                changedPaths: ["scramble.t.division"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "t.division", "value": division.rawValue])]
+            )
+            return (true, nil)
+
+        case "t.dejaVu":
+            guard let text = modeTextFromAction(action), let state = scrambleDejaVuFromText(text) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.t.dejaVu must be OFF, ON, or LOCK"))
+            }
+            writeScramble { $0.engine.tSection.dejaVu = state }
+            recordMutation(
+                changedPaths: ["scramble.t.dejaVu"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "t.dejaVu", "value": scrambleDejaVuDisplayName(state)])]
+            )
+            return (true, nil)
+
+        case "t.dejaVuAmount":
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.t.dejaVuAmount must be within [0.0, 1.0]"))
+            }
+            writeScramble { $0.engine.tSection.dejaVuAmount = value }
+            recordMutation(
+                changedPaths: ["scramble.t.dejaVuAmount"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "t.dejaVuAmount", "value": value])]
+            )
+            return (true, nil)
+
+        // --- X section ---
+        case "x.spread":
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.x.spread must be within [0.0, 1.0]"))
+            }
+            writeScramble { $0.engine.xSection.spread = value }
+            recordMutation(
+                changedPaths: ["scramble.x.spread"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "x.spread", "value": value])]
+            )
+            return (true, nil)
+
+        case "x.bias":
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.x.bias must be within [0.0, 1.0]"))
+            }
+            writeScramble { $0.engine.xSection.bias = value }
+            recordMutation(
+                changedPaths: ["scramble.x.bias"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "x.bias", "value": value])]
+            )
+            return (true, nil)
+
+        case "x.steps":
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.x.steps must be within [0.0, 1.0]"))
+            }
+            writeScramble { $0.engine.xSection.steps = value }
+            recordMutation(
+                changedPaths: ["scramble.x.steps"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "x.steps", "value": value])]
+            )
+            return (true, nil)
+
+        case "x.controlMode":
+            guard let text = modeTextFromAction(action), let mode = scrambleXControlModeFromText(text) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid scramble X control mode"))
+            }
+            writeScramble { $0.engine.xSection.controlMode = mode }
+            recordMutation(
+                changedPaths: ["scramble.x.controlMode"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "x.controlMode", "value": scrambleXControlModeDisplayName(mode)])]
+            )
+            return (true, nil)
+
+        case "x.range":
+            guard let text = modeTextFromAction(action), let range = scrambleXRangeFromText(text) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid scramble X range"))
+            }
+            writeScramble { $0.engine.xSection.range = range }
+            recordMutation(
+                changedPaths: ["scramble.x.range"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "x.range", "value": scrambleXRangeDisplayName(range)])]
+            )
+            return (true, nil)
+
+        case "x.clockSource":
+            guard let text = modeTextFromAction(action), let source = scrambleXClockSourceFromText(text) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid scramble X clock source"))
+            }
+            writeScramble { $0.engine.xSection.clockSource = source }
+            recordMutation(
+                changedPaths: ["scramble.x.clockSource"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "x.clockSource", "value": scrambleXClockSourceDisplayName(source)])]
+            )
+            return (true, nil)
+
+        case "x.dejaVu":
+            guard let text = modeTextFromAction(action), let state = scrambleDejaVuFromText(text) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.x.dejaVu must be OFF, ON, or LOCK"))
+            }
+            writeScramble { $0.engine.xSection.dejaVu = state }
+            recordMutation(
+                changedPaths: ["scramble.x.dejaVu"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "x.dejaVu", "value": scrambleDejaVuDisplayName(state)])]
+            )
+            return (true, nil)
+
+        case "x.dejaVuAmount":
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.x.dejaVuAmount must be within [0.0, 1.0]"))
+            }
+            writeScramble { $0.engine.xSection.dejaVuAmount = value }
+            recordMutation(
+                changedPaths: ["scramble.x.dejaVuAmount"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "x.dejaVuAmount", "value": value])]
+            )
+            return (true, nil)
+
+        // --- Y section ---
+        case "y.spread":
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.y.spread must be within [0.0, 1.0]"))
+            }
+            writeScramble { $0.engine.ySection.spread = value }
+            recordMutation(
+                changedPaths: ["scramble.y.spread"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "y.spread", "value": value])]
+            )
+            return (true, nil)
+
+        case "y.bias":
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.y.bias must be within [0.0, 1.0]"))
+            }
+            writeScramble { $0.engine.ySection.bias = value }
+            recordMutation(
+                changedPaths: ["scramble.y.bias"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "y.bias", "value": value])]
+            )
+            return (true, nil)
+
+        case "y.steps":
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.y.steps must be within [0.0, 1.0]"))
+            }
+            writeScramble { $0.engine.ySection.steps = value }
+            recordMutation(
+                changedPaths: ["scramble.y.steps"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "y.steps", "value": value])]
+            )
+            return (true, nil)
+
+        case "y.divider":
+            guard let value = feedbackValueFromAction(action) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "scramble.y.divider requires a numeric value"))
+            }
+            let intValue = Int(value.rounded())
+            guard (1...16).contains(intValue) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.y.divider must be within [1, 16]"))
+            }
+            writeScramble { $0.engine.ySection.dividerRatio = intValue }
+            recordMutation(
+                changedPaths: ["scramble.y.divider"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "y.divider", "value": intValue])]
+            )
+            return (true, nil)
+
+        case "y.amount":
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "scramble.y.amount must be within [0.0, 1.0]"))
+            }
+            writeScramble { $0.yAmount = value }
+            recordMutation(
+                changedPaths: ["scramble.y.amount"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "y.amount", "value": value])]
+            )
+            return (true, nil)
+
+        // --- T routing ---
+        case "t1.destination":
+            guard let text = modeTextFromAction(action), let dest = ModulationDestination(rawValue: text) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid ModulationDestination rawValue"))
+            }
+            writeScramble { $0.t1Destination = dest }
+            recordMutation(
+                changedPaths: ["scramble.t1.destination"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "t1.destination", "value": dest.rawValue])]
+            )
+            return (true, nil)
+
+        case "t2.destination":
+            guard let text = modeTextFromAction(action), let dest = ModulationDestination(rawValue: text) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid ModulationDestination rawValue"))
+            }
+            writeScramble { $0.t2Destination = dest }
+            recordMutation(
+                changedPaths: ["scramble.t2.destination"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "t2.destination", "value": dest.rawValue])]
+            )
+            return (true, nil)
+
+        case "t3.destination":
+            guard let text = modeTextFromAction(action), let dest = ModulationDestination(rawValue: text) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid ModulationDestination rawValue"))
+            }
+            writeScramble { $0.t3Destination = dest }
+            recordMutation(
+                changedPaths: ["scramble.t3.destination"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "t3.destination", "value": dest.rawValue])]
+            )
+            return (true, nil)
+
+        // --- X routing ---
+        case "x1.destination":
+            guard let text = modeTextFromAction(action), let dest = ScrambleNoteTarget(rawValue: text) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid ScrambleNoteTarget rawValue"))
+            }
+            writeScramble { $0.x1Destination = dest }
+            recordMutation(
+                changedPaths: ["scramble.x1.destination"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "x1.destination", "value": dest.rawValue])]
+            )
+            return (true, nil)
+
+        case "x2.destination":
+            guard let text = modeTextFromAction(action), let dest = ScrambleNoteTarget(rawValue: text) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid ScrambleNoteTarget rawValue"))
+            }
+            writeScramble { $0.x2Destination = dest }
+            recordMutation(
+                changedPaths: ["scramble.x2.destination"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "x2.destination", "value": dest.rawValue])]
+            )
+            return (true, nil)
+
+        case "x3.destination":
+            guard let text = modeTextFromAction(action), let dest = ScrambleNoteTarget(rawValue: text) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid ScrambleNoteTarget rawValue"))
+            }
+            writeScramble { $0.x3Destination = dest }
+            recordMutation(
+                changedPaths: ["scramble.x3.destination"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "x3.destination", "value": dest.rawValue])]
+            )
+            return (true, nil)
+
+        // --- Y routing ---
+        case "y.destination":
+            guard let text = modeTextFromAction(action), let dest = ModulationDestination(rawValue: text) else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Invalid ModulationDestination rawValue"))
+            }
+            writeScramble { $0.yDestination = dest }
+            recordMutation(
+                changedPaths: ["scramble.y.destination"],
+                additionalEvents: [(type: "scramble.updated", payload: ["field": "y.destination", "value": dest.rawValue])]
+            )
+            return (true, nil)
+
+        default:
+            return (true, ActionFailure(actionId: action.actionId, code: .notFound, message: "Unknown scramble target: \(target)"))
+        }
+    }
+
+    // MARK: - Scramble Read/Write Helpers
+
+    private func readScrambleProperty<T>(_ accessor: @escaping @MainActor (ScrambleManager) -> T) -> T? {
+        if Thread.isMainThread {
+            return MainActor.assumeIsolated { [weak self] in
+                guard let mgr = self?.scrambleManager else { return nil }
+                return accessor(mgr)
+            }
+        }
+        return DispatchQueue.main.sync {
+            MainActor.assumeIsolated { [weak self] in
+                guard let mgr = self?.scrambleManager else { return nil as T? }
+                return accessor(mgr)
+            }
+        }
+    }
+
+    private func writeScramble(_ block: @escaping @MainActor (ScrambleManager) -> Void) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { [weak self] in
+                guard let mgr = self?.scrambleManager else { return }
+                block(mgr)
+            }
+            return
+        }
+        DispatchQueue.main.sync {
+            MainActor.assumeIsolated { [weak self] in
+                guard let mgr = self?.scrambleManager else { return }
+                block(mgr)
+            }
+        }
+    }
+
+    // MARK: - Scramble Enum Conversion Helpers
+
+    private func scrambleTModeFromText(_ text: String) -> ScrambleEngine.TMode? {
+        switch text.uppercased().trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "COMP": return .complementaryBernoulli
+        case "INDEP": return .independentBernoulli
+        case "3-STATE": return .threeStates
+        case "DRUMS": return .drums
+        case "MARKOV": return .markov
+        case "CLUSTER": return .clusters
+        case "DIVIDE": return .divider
+        default: return nil
+        }
+    }
+
+    private func scrambleTModeDisplayName(_ mode: ScrambleEngine.TMode) -> String {
+        switch mode {
+        case .complementaryBernoulli: return "COMP"
+        case .independentBernoulli: return "INDEP"
+        case .threeStates: return "3-STATE"
+        case .drums: return "DRUMS"
+        case .markov: return "MARKOV"
+        case .clusters: return "CLUSTER"
+        case .divider: return "DIVIDE"
+        }
+    }
+
+    private func scrambleDejaVuFromText(_ text: String) -> ScrambleEngine.DejaVuState? {
+        switch text.uppercased().trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "OFF": return .off
+        case "ON": return .on
+        case "LOCK": return .locked
+        default: return nil
+        }
+    }
+
+    private func scrambleDejaVuDisplayName(_ state: ScrambleEngine.DejaVuState) -> String {
+        switch state {
+        case .off: return "OFF"
+        case .on: return "ON"
+        case .locked: return "LOCK"
+        }
+    }
+
+    private func scrambleXControlModeFromText(_ text: String) -> ScrambleEngine.XControlMode? {
+        switch text.uppercased().trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "IDENT": return .identical
+        case "BUMP": return .bump
+        case "TILT": return .tilt
+        default: return nil
+        }
+    }
+
+    private func scrambleXControlModeDisplayName(_ mode: ScrambleEngine.XControlMode) -> String {
+        switch mode {
+        case .identical: return "IDENT"
+        case .bump: return "BUMP"
+        case .tilt: return "TILT"
+        }
+    }
+
+    private func scrambleXRangeFromText(_ text: String) -> ScrambleEngine.XRange? {
+        switch text.uppercased().trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "1 OCT": return .oneOctave
+        case "2 OCT": return .twoOctaves
+        case "4 OCT": return .fourOctaves
+        default: return nil
+        }
+    }
+
+    private func scrambleXRangeDisplayName(_ range: ScrambleEngine.XRange) -> String {
+        switch range {
+        case .oneOctave: return "1 OCT"
+        case .twoOctaves: return "2 OCT"
+        case .fourOctaves: return "4 OCT"
+        }
+    }
+
+    private func scrambleXClockSourceFromText(_ text: String) -> ScrambleEngine.XClockSource? {
+        switch text.uppercased().trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "T1": return .t1
+        case "T2": return .t2
+        case "T3": return .t3
+        case "ALL": return .combined
+        default: return nil
+        }
+    }
+
+    private func scrambleXClockSourceDisplayName(_ source: ScrambleEngine.XClockSource) -> String {
+        switch source {
+        case .t1: return "T1"
+        case .t2: return "T2"
+        case .t3: return "T3"
+        case .combined: return "ALL"
+        }
+    }
+
+    private func canonicalScrambleStatePayload() -> [String: Any] {
+        let readBlock: () -> [String: Any] = { [weak self] in
+            MainActor.assumeIsolated {
+                guard let mgr = self?.scrambleManager else {
+                    return ["enabled": false] as [String: Any]
+                }
+                return [
+                    "enabled": mgr.enabled,
+                    "t": [
+                        "mode": self?.scrambleTModeDisplayName(mgr.engine.tSection.mode) ?? "COMP",
+                        "bias": mgr.engine.tSection.bias,
+                        "jitter": mgr.engine.tSection.jitter,
+                        "division": mgr.division.rawValue,
+                        "dejaVu": self?.scrambleDejaVuDisplayName(mgr.engine.tSection.dejaVu) ?? "OFF",
+                        "dejaVuAmount": mgr.engine.tSection.dejaVuAmount,
+                    ] as [String: Any],
+                    "x": [
+                        "spread": mgr.engine.xSection.spread,
+                        "bias": mgr.engine.xSection.bias,
+                        "steps": mgr.engine.xSection.steps,
+                        "controlMode": self?.scrambleXControlModeDisplayName(mgr.engine.xSection.controlMode) ?? "IDENT",
+                        "range": self?.scrambleXRangeDisplayName(mgr.engine.xSection.range) ?? "2 OCT",
+                        "clockSource": self?.scrambleXClockSourceDisplayName(mgr.engine.xSection.clockSource) ?? "T1",
+                        "dejaVu": self?.scrambleDejaVuDisplayName(mgr.engine.xSection.dejaVu) ?? "OFF",
+                        "dejaVuAmount": mgr.engine.xSection.dejaVuAmount,
+                    ] as [String: Any],
+                    "y": [
+                        "spread": mgr.engine.ySection.spread,
+                        "bias": mgr.engine.ySection.bias,
+                        "steps": mgr.engine.ySection.steps,
+                        "divider": mgr.engine.ySection.dividerRatio,
+                        "destination": mgr.yDestination.rawValue,
+                        "amount": mgr.yAmount,
+                    ] as [String: Any],
+                    "routing": [
+                        "t1Destination": mgr.t1Destination.rawValue,
+                        "t2Destination": mgr.t2Destination.rawValue,
+                        "t3Destination": mgr.t3Destination.rawValue,
+                        "x1Destination": mgr.x1Destination.rawValue,
+                        "x2Destination": mgr.x2Destination.rawValue,
+                        "x3Destination": mgr.x3Destination.rawValue,
+                        "yDestination": mgr.yDestination.rawValue,
+                    ] as [String: Any],
+                ] as [String: Any]
+            }
+        }
+        if Thread.isMainThread {
+            return readBlock()
+        }
+        var result: [String: Any] = [:]
+        DispatchQueue.main.sync { result = readBlock() }
+        return result
     }
 
     private func parseSequencerTrackTarget(_ target: String) -> (trackIndex: Int, property: String)? {
@@ -4326,6 +4994,65 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return readDrumSequencerProperty { $0.stepDivision.rawValue }
         case "drums.currentStep":
             return readDrumSequencerProperty { $0.currentStep + 1 }
+
+        // Scramble state paths
+        case "scramble":
+            return canonicalScrambleStatePayload()
+        case "scramble.enabled":
+            return readScrambleProperty { $0.enabled }
+        case "scramble.t.mode":
+            return readScrambleProperty { [weak self] mgr in self?.scrambleTModeDisplayName(mgr.engine.tSection.mode) ?? "COMP" }
+        case "scramble.t.bias":
+            return readScrambleProperty { $0.engine.tSection.bias }
+        case "scramble.t.jitter":
+            return readScrambleProperty { $0.engine.tSection.jitter }
+        case "scramble.t.division":
+            return readScrambleProperty { $0.division.rawValue }
+        case "scramble.t.dejaVu":
+            return readScrambleProperty { [weak self] mgr in self?.scrambleDejaVuDisplayName(mgr.engine.tSection.dejaVu) ?? "OFF" }
+        case "scramble.t.dejaVuAmount":
+            return readScrambleProperty { $0.engine.tSection.dejaVuAmount }
+        case "scramble.x.spread":
+            return readScrambleProperty { $0.engine.xSection.spread }
+        case "scramble.x.bias":
+            return readScrambleProperty { $0.engine.xSection.bias }
+        case "scramble.x.steps":
+            return readScrambleProperty { $0.engine.xSection.steps }
+        case "scramble.x.controlMode":
+            return readScrambleProperty { [weak self] mgr in self?.scrambleXControlModeDisplayName(mgr.engine.xSection.controlMode) ?? "IDENT" }
+        case "scramble.x.range":
+            return readScrambleProperty { [weak self] mgr in self?.scrambleXRangeDisplayName(mgr.engine.xSection.range) ?? "2 OCT" }
+        case "scramble.x.clockSource":
+            return readScrambleProperty { [weak self] mgr in self?.scrambleXClockSourceDisplayName(mgr.engine.xSection.clockSource) ?? "T1" }
+        case "scramble.x.dejaVu":
+            return readScrambleProperty { [weak self] mgr in self?.scrambleDejaVuDisplayName(mgr.engine.xSection.dejaVu) ?? "OFF" }
+        case "scramble.x.dejaVuAmount":
+            return readScrambleProperty { $0.engine.xSection.dejaVuAmount }
+        case "scramble.y.spread":
+            return readScrambleProperty { $0.engine.ySection.spread }
+        case "scramble.y.bias":
+            return readScrambleProperty { $0.engine.ySection.bias }
+        case "scramble.y.steps":
+            return readScrambleProperty { $0.engine.ySection.steps }
+        case "scramble.y.divider":
+            return readScrambleProperty { $0.engine.ySection.dividerRatio }
+        case "scramble.y.destination":
+            return readScrambleProperty { $0.yDestination.rawValue }
+        case "scramble.y.amount":
+            return readScrambleProperty { $0.yAmount }
+        case "scramble.t1.destination":
+            return readScrambleProperty { $0.t1Destination.rawValue }
+        case "scramble.t2.destination":
+            return readScrambleProperty { $0.t2Destination.rawValue }
+        case "scramble.t3.destination":
+            return readScrambleProperty { $0.t3Destination.rawValue }
+        case "scramble.x1.destination":
+            return readScrambleProperty { $0.x1Destination.rawValue }
+        case "scramble.x2.destination":
+            return readScrambleProperty { $0.x2Destination.rawValue }
+        case "scramble.x3.destination":
+            return readScrambleProperty { $0.x3Destination.rawValue }
+
         default:
             // Drum sequencer lane/step paths
             if let drumTarget = parseDrumSequencerTarget(path) {
