@@ -223,7 +223,7 @@ struct GrainulatorCommands: Commands {
             }
             .keyboardShortcut("3", modifiers: .command)
 
-            Button("Focus Granular 4") {
+            Button("Focus Granular 2") {
                 appState.focusVoice(3)
             }
             .keyboardShortcut("4", modifiers: .command)

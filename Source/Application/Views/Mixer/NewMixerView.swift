@@ -21,6 +21,11 @@ struct NewMixerView: View {
     // Timer for meter updates
     @State private var meterTimer: Timer? = nil
 
+    // Display order: Gran 2 next to Gran 1 (engine channel 5 after channel 2)
+    private static let channelDisplayOrder: [ChannelType] = [
+        .plaits, .rings, .granular1, .granular2, .looper1, .looper2, .daisyDrum, .sampler
+    ]
+
     var body: some View {
         VStack(spacing: 0) {
             // Main mixer content
@@ -108,9 +113,9 @@ struct NewMixerView: View {
     private var channelStripsSection: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: 4) {
-                // 8 voice channels
-                ForEach(mixerState.channels) { channel in
-                    ProChannelStripView(channel: channel, isCompact: false, showInserts: false)
+                // 8 voice channels (Gran 2 next to Gran 1)
+                ForEach(Self.channelDisplayOrder) { channelType in
+                    ProChannelStripView(channel: mixerState.channel(for: channelType), isCompact: false, showInserts: false)
                 }
 
                 // Separator between voice channels and FX returns

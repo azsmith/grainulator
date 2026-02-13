@@ -30,7 +30,7 @@ void AudioEngine_Process(AudioEngineHandle handle, float** outputBuffers, int nu
 // Multi-channel audio processing for AU plugin hosting
 // Outputs 6 separate stereo channels (12 buffers total) without mixing or effects
 // Buffer layout: [ch0_L, ch0_R, ch1_L, ch1_R, ch2_L, ch2_R, ch3_L, ch3_R, ch4_L, ch4_R, ch5_L, ch5_R]
-// Channel mapping: 0=Plaits, 1=Rings, 2=Granular1, 3=Looper1, 4=Looper2, 5=Granular4
+// Channel mapping: 0=Plaits, 1=Rings, 2=Granular1, 3=Looper1, 4=Looper2, 5=Granular2, 6=DaisyDrum, 7=Sampler
 void AudioEngine_ProcessMultiChannel(AudioEngineHandle handle, float** channelBuffers, int numFrames);
 
 // Parameter control

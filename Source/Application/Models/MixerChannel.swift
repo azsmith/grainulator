@@ -16,7 +16,7 @@ enum ChannelType: Int, CaseIterable, Identifiable {
     case granular1 = 2
     case looper1 = 3
     case looper2 = 4
-    case granular4 = 5
+    case granular2 = 5
     case daisyDrum = 6
     case sampler = 7
 
@@ -29,7 +29,7 @@ enum ChannelType: Int, CaseIterable, Identifiable {
         case .granular1: return "GRAN 1"
         case .looper1: return "LOOP 1"
         case .looper2: return "LOOP 2"
-        case .granular4: return "GRAN 4"
+        case .granular2: return "GRAN 2"
         case .daisyDrum: return "DRUMS"
         case .sampler: return "SAMPLER"
         }
@@ -42,7 +42,7 @@ enum ChannelType: Int, CaseIterable, Identifiable {
         case .granular1: return "GR1"
         case .looper1: return "LP1"
         case .looper2: return "LP2"
-        case .granular4: return "GR4"
+        case .granular2: return "GR2"
         case .daisyDrum: return "DRM"
         case .sampler: return "SMP"
         }
@@ -60,7 +60,7 @@ enum ChannelType: Int, CaseIterable, Identifiable {
         case .granular1: return 0  // Granular voice 0
         case .looper1: return 1    // Looper voice 1
         case .looper2: return 2    // Looper voice 2
-        case .granular4: return 3  // Granular voice 3
+        case .granular2: return 3  // Granular voice 3 (engine index; voices 1-2 used by loopers)
         case .daisyDrum: return 0  // Single drum voice
         case .sampler: return 0    // Single SoundFont voice
         }

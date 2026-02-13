@@ -201,8 +201,8 @@ struct ColorPalette {
     /// Looper 2 - orange
     static let accentLooper2 = Color(hex: "#E67E22")
 
-    /// Granular 4 - teal
-    static let accentGranular4 = Color(hex: "#1ABC9C")
+    /// Granular 2 - teal
+    static let accentGranular2 = Color(hex: "#1ABC9C")
 
     /// DaisyDrum - yellow
     static let accentDaisyDrum = Color(hex: "#F1C40F")
@@ -278,7 +278,7 @@ struct ColorPalette {
         accentGranular1,   // 2: Granular 1
         accentLooper1,     // 3: Looper 1
         accentLooper2,     // 4: Looper 2
-        accentGranular4,   // 5: Granular 4
+        accentGranular2,   // 5: Granular 2
         accentDaisyDrum,   // 6: DaisyDrum
         accentSampler      // 7: SoundFont Sampler
     ]

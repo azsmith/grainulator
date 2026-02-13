@@ -951,7 +951,7 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                 }
             }
 
-            // Capture for Rings exciter (ch maps to exciter source: 2=Gran1, 3=Loop1, 4=Loop2, 5=Gran4)
+            // Capture for Rings exciter (ch maps to exciter source: 2=Gran1, 3=Loop1, 4=Loop2, 5=Gran2)
             if (m_ringsExciterSource == ch) {
                 std::memcpy(m_ringsExciterBufferL, m_voiceBuffer[0], frameCount * sizeof(float));
                 std::memcpy(m_ringsExciterBufferR, m_voiceBuffer[1], frameCount * sizeof(float));
@@ -1515,7 +1515,7 @@ void AudioEngine::processMultiChannel(float** channelBuffers, int numFrames) {
             // Record from track voice (channel trackIndex+2) pre-output
             processRecordingForChannel(trackIndex + 2, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
 
-            // Capture for Rings exciter (ch maps to exciter source: 2=Gran1, 3=Loop1, 4=Loop2, 5=Gran4)
+            // Capture for Rings exciter (ch maps to exciter source: 2=Gran1, 3=Loop1, 4=Loop2, 5=Gran2)
             if (m_ringsExciterSource == trackIndex + 2) {
                 std::memcpy(m_ringsExciterBufferL, m_voiceBuffer[0], frameCount * sizeof(float));
                 std::memcpy(m_ringsExciterBufferR, m_voiceBuffer[1], frameCount * sizeof(float));
@@ -3941,13 +3941,13 @@ void AudioEngine::applyModulation() {
         m_granularVoices[0]->SetFilterMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular1Filter)]);
     }
 
-    // Granular 2 modulation (voice index 1)
-    if (m_granularVoices[1]) {
-        m_granularVoices[1]->SetSpeedMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular2Speed)]);
-        m_granularVoices[1]->SetPitchMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular2Pitch)]);
-        m_granularVoices[1]->SetSizeMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular2Size)]);
-        m_granularVoices[1]->SetDensityMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular2Density)]);
-        m_granularVoices[1]->SetFilterMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular2Filter)]);
+    // Granular 2 modulation (voice index 3 — slots 1-2 are looper tracks)
+    if (m_granularVoices[3]) {
+        m_granularVoices[3]->SetSpeedMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular2Speed)]);
+        m_granularVoices[3]->SetPitchMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular2Pitch)]);
+        m_granularVoices[3]->SetSizeMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular2Size)]);
+        m_granularVoices[3]->SetDensityMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular2Density)]);
+        m_granularVoices[3]->SetFilterMod(m_modulationValues[static_cast<int>(ModulationDestination::Granular2Filter)]);
     }
 
     // DaisyDrum modulation

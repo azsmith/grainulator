@@ -5509,7 +5509,7 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             ["name": "granular1", "channel": 2, "sourceType": "internal"],
             ["name": "looper1", "channel": 3, "sourceType": "internal"],
             ["name": "looper2", "channel": 4, "sourceType": "internal"],
-            ["name": "granular4", "channel": 5, "sourceType": "internal"],
+            ["name": "granular2", "aliases": ["granular4", "gran2"], "channel": 5, "sourceType": "internal"],
             ["name": "drums", "aliases": ["drum", "drum_bus"], "channel": 6, "sourceType": "internal", "description": "All drum lanes mixed"],
             ["name": "kick", "aliases": ["analog_kick"], "channel": 7, "sourceType": "internal", "description": "Analog Kick lane only"],
             ["name": "synth_kick", "channel": 8, "sourceType": "internal", "description": "Synth Kick lane only"],

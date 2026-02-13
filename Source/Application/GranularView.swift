@@ -48,7 +48,7 @@ struct GranularView: View {
         ColorPalette.accentGranular1,  // Voice 1: Blue
         ColorPalette.accentLooper1,    // Voice 2: Purple
         ColorPalette.accentLooper2,    // Voice 3: Orange
-        ColorPalette.accentGranular4   // Voice 4: Teal
+        ColorPalette.accentGranular2   // Voice 4: Teal (Granular 2)
     ]
 
     // Envelope type names

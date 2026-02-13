@@ -138,7 +138,7 @@ public:
     // Multi-channel output for AU plugin hosting
     // Outputs 8 separate stereo channels (16 buffers total) without mixing or effects
     // Buffer layout: [ch0_L, ch0_R, ch1_L, ch1_R, ..., ch7_L, ch7_R]
-    // Channel mapping: 0=Plaits, 1=Rings, 2=Granular1, 3=Looper1, 4=Looper2, 5=Granular4, 6=DaisyDrum, 7=Sampler
+    // Channel mapping: 0=Plaits, 1=Rings, 2=Granular1, 3=Looper1, 4=Looper2, 5=Granular2, 6=DaisyDrum, 7=Sampler
     void processMultiChannel(float** channelBuffers, int numFrames);
     void renderAndReadMultiChannel(int channelIndex, int64_t sampleTime, float* left, float* right, int numFrames);
     void renderAndReadLegacyBus(int busIndex, int64_t sampleTime, float* left, float* right, int numFrames);

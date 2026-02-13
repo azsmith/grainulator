@@ -55,7 +55,7 @@ struct RingsView: View {
 
     private let exciterSourceNames = [
         "Internal", "Macro Osc", "Granular 1", "Looper 1",
-        "Looper 2", "Granular 4", "Drums", "Sampler"
+        "Looper 2", "Granular 2", "Drums", "Sampler"
     ]
 
     // Maps UI exciter source index to engine channel index (-1=internal, then mixer ch indices)
