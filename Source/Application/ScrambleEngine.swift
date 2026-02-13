@@ -317,4 +317,106 @@ struct ScrambleEngine: Codable {
         let t3 = (step + shift) % 4 == 0
         return TOutput(t1: t1, t2: t2, t3: t3)
     }
+
+    // MARK: - X Generator
+
+    static func quantizeToScale(rawValue: Double, scaleIntervals: [Int], rootMidi: UInt8, range: Int) -> UInt8 {
+        guard !scaleIntervals.isEmpty else { return rootMidi }
+
+        let halfRange = Double(range) / 2.0
+        let semitoneOffset = (rawValue - 0.5) * Double(range)
+        let targetMidi = Double(rootMidi) + semitoneOffset
+
+        // Build all valid scale degrees within MIDI range
+        var candidates: [Int] = []
+        let lowestOctave = (Int(targetMidi - halfRange) / 12) - 1
+        let highestOctave = (Int(targetMidi + halfRange) / 12) + 1
+
+        for octave in lowestOctave...highestOctave {
+            for interval in scaleIntervals {
+                let note = octave * 12 + interval
+                if note >= 0 && note <= 127 {
+                    candidates.append(note)
+                }
+            }
+        }
+
+        guard !candidates.isEmpty else { return rootMidi }
+
+        // Find nearest scale degree
+        var bestNote = candidates[0]
+        var bestDistance = abs(Double(bestNote) - targetMidi)
+        for note in candidates {
+            let distance = abs(Double(note) - targetMidi)
+            if distance < bestDistance {
+                bestDistance = distance
+                bestNote = note
+            }
+        }
+
+        return UInt8(bestNote.clamped(to: 0...127))
+    }
+
+    mutating func generateX(scaleIntervals: [Int], rootMidi: UInt8) -> XOutput {
+        let rawValue = xSequence.next(
+            dejaVu: xSection.dejaVu,
+            amount: xSection.dejaVuAmount
+        ) { Double.random(in: 0.0...1.0) }
+
+        let spread = xSection.spread
+        let bias = xSection.bias
+        let range = xSection.range.semitones
+
+        let centered = (rawValue - 0.5) * spread + bias
+
+        let v1: Double
+        let v2: Double
+        let v3: Double
+
+        switch xSection.controlMode {
+        case .identical:
+            v1 = centered
+            v2 = centered
+            v3 = centered
+
+        case .bump:
+            v2 = centered
+            v1 = 1.0 - centered
+            v3 = 1.0 - centered
+
+        case .tilt:
+            v2 = centered
+            v1 = centered - 0.15
+            v3 = centered + 0.15
+        }
+
+        let x1 = ScrambleEngine.quantizeToScale(
+            rawValue: v1.clamped(to: 0.0...1.0),
+            scaleIntervals: scaleIntervals,
+            rootMidi: rootMidi,
+            range: range
+        )
+        let x2 = ScrambleEngine.quantizeToScale(
+            rawValue: v2.clamped(to: 0.0...1.0),
+            scaleIntervals: scaleIntervals,
+            rootMidi: rootMidi,
+            range: range
+        )
+        let x3 = ScrambleEngine.quantizeToScale(
+            rawValue: v3.clamped(to: 0.0...1.0),
+            scaleIntervals: scaleIntervals,
+            rootMidi: rootMidi,
+            range: range
+        )
+
+        return XOutput(x1: x1, x2: x2, x3: x3)
+    }
+}
+
+// MARK: - Comparable Extension
+
+extension Comparable {
+    func clamped(to range: ClosedRange<Self>) -> Self {
+        return min(max(self, range.lowerBound), range.upperBound)
+    }
 }

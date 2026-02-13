@@ -196,4 +196,61 @@ final class ScrambleEngineTests: XCTestCase {
         XCTAssertLessThan(t1Count, 24, "Divider T1 should not fire every step")
         XCTAssertLessThan(t2Count, 24, "Divider T2 should not fire every step")
     }
+
+    // MARK: - Task 3: X Generator
+
+    func testGenerateXProducesValidMIDINotes() {
+        var engine = ScrambleEngine()
+        let cMajor = [0, 2, 4, 5, 7, 9, 11]
+
+        for _ in 0..<200 {
+            let out = engine.generateX(scaleIntervals: cMajor, rootMidi: 60)
+            XCTAssertGreaterThanOrEqual(out.x1, 0, "MIDI note must be >= 0")
+            XCTAssertLessThanOrEqual(out.x1, 127, "MIDI note must be <= 127")
+            XCTAssertGreaterThanOrEqual(out.x2, 0)
+            XCTAssertLessThanOrEqual(out.x2, 127)
+            XCTAssertGreaterThanOrEqual(out.x3, 0)
+            XCTAssertLessThanOrEqual(out.x3, 127)
+        }
+    }
+
+    func testIdenticalModeProducesSameNotes() {
+        var engine = ScrambleEngine()
+        engine.xSection.controlMode = .identical
+        let cMajor = [0, 2, 4, 5, 7, 9, 11]
+
+        for _ in 0..<100 {
+            let out = engine.generateX(scaleIntervals: cMajor, rootMidi: 60)
+            XCTAssertEqual(out.x1, out.x2, "Identical mode: X1 must equal X2")
+            XCTAssertEqual(out.x2, out.x3, "Identical mode: X2 must equal X3")
+        }
+    }
+
+    func testSpreadZeroProducesConstant() {
+        var engine = ScrambleEngine()
+        engine.xSection.spread = 0.0
+        engine.xSection.bias = 0.5
+        engine.xSection.controlMode = .identical
+        let cMajor = [0, 2, 4, 5, 7, 9, 11]
+
+        var notes: Set<UInt8> = []
+        for _ in 0..<100 {
+            let out = engine.generateX(scaleIntervals: cMajor, rootMidi: 60)
+            notes.insert(out.x1)
+        }
+        XCTAssertEqual(notes.count, 1, "With spread=0, all notes should be the same value")
+    }
+
+    func testQuantizerStaysInRange() {
+        let cMajor = [0, 2, 4, 5, 7, 9, 11]
+
+        // Test extremes of rawValue
+        let low = ScrambleEngine.quantizeToScale(rawValue: 0.0, scaleIntervals: cMajor, rootMidi: 60, range: 24)
+        let high = ScrambleEngine.quantizeToScale(rawValue: 1.0, scaleIntervals: cMajor, rootMidi: 60, range: 24)
+
+        XCTAssertGreaterThanOrEqual(low, 0)
+        XCTAssertLessThanOrEqual(low, 127)
+        XCTAssertGreaterThanOrEqual(high, 0)
+        XCTAssertLessThanOrEqual(high, 127)
+    }
 }
