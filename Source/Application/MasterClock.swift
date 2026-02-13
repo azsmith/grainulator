@@ -498,6 +498,9 @@ class MasterClock: ObservableObject {
     // Reference to drum sequencer for loop auto-adjustment
     weak var drumSequencer: DrumSequencer?
 
+    // Reference to scramble manager for transport sync
+    private weak var scrambleManager: ScrambleManager?
+
     // Cancellables for output observation
     private var outputCancellables: [AnyCancellable] = []
 
@@ -585,6 +588,10 @@ class MasterClock: ObservableObject {
 
     func connectDrumSequencer(_ drumSequencer: DrumSequencer) {
         self.drumSequencer = drumSequencer
+    }
+
+    func connectScrambleManager(_ manager: ScrambleManager) {
+        self.scrambleManager = manager
     }
 
     /// Adjusts sequencer loop endpoints to align with bar boundaries for the current time signature.
@@ -789,11 +796,13 @@ class MasterClock: ObservableObject {
         isRunning = true
         audioEngine?.setClockStartSample(startSample)
         audioEngine?.setClockRunning(true)
+        scrambleManager?.start(startSample: startSample)
     }
 
     func stop() {
         isRunning = false
         audioEngine?.setClockRunning(false)
+        scrambleManager?.stop()
     }
 
     func toggle() {
