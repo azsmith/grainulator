@@ -21,7 +21,7 @@ let package = Package(
         // Main application target
         .executableTarget(
             name: "Grainulator",
-            dependencies: ["GrainulatorCore", .product(name: "OSCKit", package: "OSCKit")],
+            dependencies: ["GrainulatorCore", "VST3Host", .product(name: "OSCKit", package: "OSCKit")],
             path: "Source/Application",
             exclude: [],
             swiftSettings: [
@@ -68,6 +68,24 @@ let package = Package(
             ],
             swiftSettings: [
                 .interoperabilityMode(.Cxx)
+            ]
+        ),
+
+        // VST3 plugin host (C++ backend 2)
+        .target(
+            name: "VST3Host",
+            dependencies: [],
+            path: "Source/VST3Host",
+            exclude: [],
+            sources: ["Core/"],
+            publicHeadersPath: "include",
+            cxxSettings: [
+                .headerSearchPath("Core"),
+                .headerSearchPath("../../Vendor/vst3sdk"),
+                .headerSearchPath("../../Vendor/vst3sdk/pluginterfaces"),
+                .headerSearchPath("../../Vendor/vst3sdk/base"),
+                .define("DEVELOPMENT", to: "0"),
+                .define("RELEASE", to: "1"),
             ]
         ),
 
