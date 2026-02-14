@@ -11,10 +11,12 @@ import SwiftUI
 
 struct ProMasterStripView: View {
     @ObservedObject var master: MasterChannelState
+    let audioEngine: AudioEngineWrapper
     let showNeedleMeter: Bool
 
-    init(master: MasterChannelState, showNeedleMeter: Bool = true) {
+    init(master: MasterChannelState, audioEngine: AudioEngineWrapper, showNeedleMeter: Bool = true) {
         self.master = master
+        self.audioEngine = audioEngine
         self.showNeedleMeter = showNeedleMeter
     }
 
@@ -241,6 +243,9 @@ struct ProMasterStripView: View {
                     accentColor: ColorPalette.accentRings,
                     size: .small
                 )
+                .onChange(of: master.filterCutoff) { newValue in
+                    audioEngine.setParameter(id: .masterFilterCutoff, value: newValue)
+                }
 
                 ProKnobView(
                     value: $master.filterResonance,
@@ -249,6 +254,9 @@ struct ProMasterStripView: View {
                     size: .small,
                     showValue: false
                 )
+                .onChange(of: master.filterResonance) { newValue in
+                    audioEngine.setParameter(id: .masterFilterResonance, value: newValue)
+                }
             }
         }
         .padding(.vertical, 8)
@@ -261,11 +269,12 @@ struct ProMasterStripView: View {
 struct ProMasterStripView_Previews: PreviewProvider {
     struct PreviewWrapper: View {
         @StateObject private var master = MasterChannelState()
+        @StateObject private var audioEngine = AudioEngineWrapper()
 
         var body: some View {
             HStack(spacing: 20) {
                 // With needle meter
-                ProMasterStripView(master: master, showNeedleMeter: true)
+                ProMasterStripView(master: master, audioEngine: audioEngine, showNeedleMeter: true)
                     .onAppear {
                         master.meterLevelL = 0.6
                         master.meterLevelR = 0.5
@@ -273,7 +282,7 @@ struct ProMasterStripView_Previews: PreviewProvider {
                     }
 
                 // Without needle meter (compact)
-                ProMasterStripView(master: master, showNeedleMeter: false)
+                ProMasterStripView(master: master, audioEngine: audioEngine, showNeedleMeter: false)
             }
             .padding(20)
             .background(ColorPalette.backgroundPrimary)

@@ -26,7 +26,7 @@ struct GranularView: View {
     @State private var morph: Float = 0.0        // 0-1 per-grain randomization probability
     @State private var filterCutoff: Float = 1.0 // 0-1 maps to 20-20kHz
     @State private var filterResonance: Float = 0.5 // 0-1 filter resonance
-    @State private var filterModel: Int = 2 // default: Stilson
+    @State private var filterModel: Int = 7 // default: Hyperion
     @State private var reverseGrains: Bool = false
     @State private var envelope: Int = 0          // 0-7 envelope type
     @State private var decay: Float = 0.3        // 0-1: 0=short release, 1=long release
@@ -54,7 +54,6 @@ struct GranularView: View {
     // Envelope type names
     let envelopeNames = ["Hann", "Gauss", "Trap", "Tri", "Tukey", "Pluck", "Soft", "Decay"]
     let filterModelNames = [
-        "Huovilainen",
         "Stilson",
         "Microtracker",
         "Krajeski",
@@ -62,7 +61,9 @@ struct GranularView: View {
         "Oberheim",
         "Improved",
         "RKSimulation",
-        "Hyperion"
+        "Hyperion",
+        "DaisyLadder",
+        "CytomicSVF"
     ]
 
     let stateSyncTimer = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()

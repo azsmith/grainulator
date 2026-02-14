@@ -12,7 +12,6 @@
 #include "ReelBuffer.h"
 #include "Grain.h"
 #include "MoogLadders/LadderFilterBase.h"
-#include "MoogLadders/HuovilainenModel.h"
 #include "MoogLadders/StilsonModel.h"
 #include "MoogLadders/MicrotrackerModel.h"
 #include "MoogLadders/KrajeskiModel.h"
@@ -21,6 +20,8 @@
 #include "MoogLadders/ImprovedModel.h"
 #include "MoogLadders/RKSimulationModel.h"
 #include "MoogLadders/HyperionModel.h"
+#include "MoogLadders/DaisyLadderModel.h"
+#include "MoogLadders/CytomicSvfModel.h"
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -45,8 +46,7 @@ static constexpr size_t kMaxGrainsPerVoice = 64;
 class GranularVoice {
 public:
     enum class FilterModel {
-        Huovilainen = 0,
-        Stilson,
+        Stilson = 0,
         Microtracker,
         Krajeski,
         MusicDSP,
@@ -54,6 +54,8 @@ public:
         Improved,
         RKSimulation,
         Hyperion,
+        DaisyLadder,
+        CytomicSVF,
         Count
     };
 
@@ -72,7 +74,7 @@ public:
         , gain_(0.8f)           // Volume (linear)
         , cutoff_(20000.0f)     // Filter cutoff Hz
         , q_(0.0f)              // Filter resonance (0-1)
-        , filter_model_(FilterModel::Stilson)
+        , filter_model_(FilterModel::Hyperion)
         , reverse_grains_(false)
         , morph_(0.0f)          // Per-grain randomization amount
         , send_(0.0f)           // Effect send level (0-1)
@@ -528,9 +530,7 @@ public:
 
             // Apply 4-pole Moog-style ladder low-pass filter with modulation
             float effective_cutoff = GetEffectiveCutoff();
-            if (effective_cutoff < 19500.0f) {
-                ApplyFilterWithCutoff(sample_l, sample_r, effective_cutoff);
-            }
+            ApplyFilterWithCutoff(sample_l, sample_r, effective_cutoff);
 
             // Soft clip output
             out_left[i] = std::tanh(sample_l);
@@ -728,7 +728,6 @@ private:
 
     std::unique_ptr<LadderFilterBase> CreateFilterInstance(FilterModel model) const {
         switch (model) {
-            case FilterModel::Huovilainen: return std::make_unique<HuovilainenMoog>(sample_rate_);
             case FilterModel::Stilson: return std::make_unique<StilsonMoog>(sample_rate_);
             case FilterModel::Microtracker: return std::make_unique<MicrotrackerMoog>(sample_rate_);
             case FilterModel::Krajeski: return std::make_unique<KrajeskiMoog>(sample_rate_);
@@ -737,6 +736,8 @@ private:
             case FilterModel::Improved: return std::make_unique<ImprovedMoog>(sample_rate_);
             case FilterModel::RKSimulation: return std::make_unique<RKSimulationMoog>(sample_rate_);
             case FilterModel::Hyperion: return std::make_unique<HyperionMoog>(sample_rate_);
+            case FilterModel::DaisyLadder: return std::make_unique<DaisyLadderMoog>(sample_rate_);
+            case FilterModel::CytomicSVF: return std::make_unique<CytomicSvfMoog>(sample_rate_);
             case FilterModel::Count: break;
         }
 
@@ -755,7 +756,6 @@ private:
         float cutoffLimit = 0.45f;
         float resonanceMax = 1.0f;
         switch (filter_model_) {
-            case FilterModel::Huovilainen:        cutoffLimit = 0.38f; resonanceMax = 0.74f; break;
             case FilterModel::Stilson:            cutoffLimit = 0.45f; resonanceMax = 0.95f; break;
             case FilterModel::Microtracker:       cutoffLimit = 0.45f; resonanceMax = 0.92f; break;
             case FilterModel::Krajeski:           cutoffLimit = 0.45f; resonanceMax = 0.93f; break;
@@ -764,6 +764,8 @@ private:
             case FilterModel::Improved:           cutoffLimit = 0.40f; resonanceMax = 0.82f; break;
             case FilterModel::RKSimulation:       cutoffLimit = 0.35f; resonanceMax = 0.55f; break;
             case FilterModel::Hyperion:           cutoffLimit = 0.42f; resonanceMax = 0.88f; break;
+            case FilterModel::DaisyLadder:        cutoffLimit = 0.45f; resonanceMax = 0.95f; break;
+            case FilterModel::CytomicSVF:         cutoffLimit = 0.49f; resonanceMax = 1.0f;  break;
             case FilterModel::Count: break;
         }
 
@@ -787,7 +789,6 @@ private:
         // Model-specific stability limits
         float cutoffLimit = 0.45f;
         switch (filter_model_) {
-            case FilterModel::Huovilainen:        cutoffLimit = 0.38f; break;
             case FilterModel::Stilson:            cutoffLimit = 0.45f; break;
             case FilterModel::Microtracker:       cutoffLimit = 0.45f; break;
             case FilterModel::Krajeski:           cutoffLimit = 0.45f; break;
@@ -796,6 +797,8 @@ private:
             case FilterModel::Improved:           cutoffLimit = 0.40f; break;
             case FilterModel::RKSimulation:       cutoffLimit = 0.35f; break;
             case FilterModel::Hyperion:           cutoffLimit = 0.42f; break;
+            case FilterModel::DaisyLadder:        cutoffLimit = 0.45f; break;
+            case FilterModel::CytomicSVF:         cutoffLimit = 0.49f; break;
             case FilterModel::Count: break;
         }
 

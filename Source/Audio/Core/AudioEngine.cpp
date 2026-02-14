@@ -16,7 +16,6 @@
 #include "SoundFont/WavSamplerVoice.h"
 // Moog ladder filter models for master filter
 #include "Granular/MoogLadders/LadderFilterBase.h"
-#include "Granular/MoogLadders/HuovilainenModel.h"
 #include "Granular/MoogLadders/StilsonModel.h"
 #include "Granular/MoogLadders/MicrotrackerModel.h"
 #include "Granular/MoogLadders/KrajeskiModel.h"
@@ -25,6 +24,8 @@
 #include "Granular/MoogLadders/ImprovedModel.h"
 #include "Granular/MoogLadders/RKSimulationModel.h"
 #include "Granular/MoogLadders/HyperionModel.h"
+#include "Granular/MoogLadders/DaisyLadderModel.h"
+#include "Granular/MoogLadders/CytomicSvfModel.h"
 #include <cstring>
 #include <cmath>
 #include <algorithm>
@@ -206,7 +207,7 @@ AudioEngine::AudioEngine()
     // Initialize master filter defaults
     m_masterFilterCutoff = 20000.0f;   // Wide open by default
     m_masterFilterResonance = 0.0f;    // No resonance by default
-    m_masterFilterModel = 2;           // Stilson model by default
+    m_masterFilterModel = 7;           // Hyperion model by default
 
     // Initialize master clock
     m_clockBPM.store(120.0f);
@@ -3989,16 +3990,17 @@ void AudioEngine::initMasterFilter() {
     // Create filter instances based on selected model
     auto createFilter = [this](int model) -> std::unique_ptr<LadderFilterBase> {
         switch (model) {
-            case 0: return std::make_unique<HuovilainenMoog>(static_cast<float>(m_sampleRate));
-            case 1: return std::make_unique<StilsonMoog>(static_cast<float>(m_sampleRate));
-            case 2: return std::make_unique<MicrotrackerMoog>(static_cast<float>(m_sampleRate));
-            case 3: return std::make_unique<KrajeskiMoog>(static_cast<float>(m_sampleRate));
-            case 4: return std::make_unique<MusicDSPMoog>(static_cast<float>(m_sampleRate));
-            case 5: return std::make_unique<OberheimVariationMoog>(static_cast<float>(m_sampleRate));
-            case 6: return std::make_unique<ImprovedMoog>(static_cast<float>(m_sampleRate));
-            case 7: return std::make_unique<RKSimulationMoog>(static_cast<float>(m_sampleRate));
-            case 8: return std::make_unique<HyperionMoog>(static_cast<float>(m_sampleRate));
-            default: return std::make_unique<StilsonMoog>(static_cast<float>(m_sampleRate));
+            case 0: return std::make_unique<StilsonMoog>(static_cast<float>(m_sampleRate));
+            case 1: return std::make_unique<MicrotrackerMoog>(static_cast<float>(m_sampleRate));
+            case 2: return std::make_unique<KrajeskiMoog>(static_cast<float>(m_sampleRate));
+            case 3: return std::make_unique<MusicDSPMoog>(static_cast<float>(m_sampleRate));
+            case 4: return std::make_unique<OberheimVariationMoog>(static_cast<float>(m_sampleRate));
+            case 5: return std::make_unique<ImprovedMoog>(static_cast<float>(m_sampleRate));
+            case 6: return std::make_unique<RKSimulationMoog>(static_cast<float>(m_sampleRate));
+            case 7: return std::make_unique<HyperionMoog>(static_cast<float>(m_sampleRate));
+            case 8: return std::make_unique<DaisyLadderMoog>(static_cast<float>(m_sampleRate));
+            case 9: return std::make_unique<CytomicSvfMoog>(static_cast<float>(m_sampleRate));
+            default: return std::make_unique<HyperionMoog>(static_cast<float>(m_sampleRate));
         }
     };
 
@@ -4016,15 +4018,16 @@ void AudioEngine::updateMasterFilterParameters() {
     float resonanceMax = 1.0f;
 
     switch (m_masterFilterModel) {
-        case 0:  cutoffLimit = 0.38f; resonanceMax = 0.74f; break;  // Huovilainen
-        case 1:  cutoffLimit = 0.45f; resonanceMax = 0.95f; break;  // Stilson
-        case 2:  cutoffLimit = 0.45f; resonanceMax = 0.92f; break;  // Microtracker
-        case 3:  cutoffLimit = 0.45f; resonanceMax = 0.93f; break;  // Krajeski
-        case 4:  cutoffLimit = 0.42f; resonanceMax = 0.88f; break;  // MusicDSP
-        case 5:  cutoffLimit = 0.40f; resonanceMax = 0.86f; break;  // OberheimVariation
-        case 6:  cutoffLimit = 0.40f; resonanceMax = 0.82f; break;  // Improved
-        case 7:  cutoffLimit = 0.35f; resonanceMax = 0.55f; break;  // RKSimulation
-        case 8:  cutoffLimit = 0.42f; resonanceMax = 0.88f; break;  // Hyperion
+        case 0:  cutoffLimit = 0.45f; resonanceMax = 0.95f; break;  // Stilson
+        case 1:  cutoffLimit = 0.45f; resonanceMax = 0.92f; break;  // Microtracker
+        case 2:  cutoffLimit = 0.45f; resonanceMax = 0.93f; break;  // Krajeski
+        case 3:  cutoffLimit = 0.42f; resonanceMax = 0.88f; break;  // MusicDSP
+        case 4:  cutoffLimit = 0.40f; resonanceMax = 0.86f; break;  // OberheimVariation
+        case 5:  cutoffLimit = 0.40f; resonanceMax = 0.82f; break;  // Improved
+        case 6:  cutoffLimit = 0.35f; resonanceMax = 0.55f; break;  // RKSimulation
+        case 7:  cutoffLimit = 0.42f; resonanceMax = 0.88f; break;  // Hyperion
+        case 8:  cutoffLimit = 0.45f; resonanceMax = 0.95f; break;  // DaisyLadder
+        case 9:  cutoffLimit = 0.49f; resonanceMax = 1.0f;  break;  // CytomicSVF
         default: break;
     }
 
@@ -4040,11 +4043,6 @@ void AudioEngine::updateMasterFilterParameters() {
 
 void AudioEngine::processMasterFilter(float& left, float& right) {
     if (!m_masterFilterL || !m_masterFilterR) return;
-
-    // Skip processing if filter is wide open and no resonance
-    if (m_masterFilterCutoff >= 19000.0f && m_masterFilterResonance < 0.01f) {
-        return;
-    }
 
     // Apply soft saturation before filter to prevent extreme peaks
     left = std::tanh(left * 0.5f) * 2.0f;

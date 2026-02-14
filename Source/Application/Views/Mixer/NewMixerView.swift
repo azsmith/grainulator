@@ -152,6 +152,7 @@ struct NewMixerView: View {
     private var masterSection: some View {
         ProMasterStripView(
             master: mixerState.master,
+            audioEngine: audioEngine,
             showNeedleMeter: true
         )
         .padding(.horizontal, 4)
