@@ -38,6 +38,9 @@ Resources/Samples/*
 *~
 temp/
 
+# Git worktrees
+.worktrees/
+
 # Distribution builds (signed apps, DMGs, notarization logs)
 dist/
 
