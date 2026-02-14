@@ -36,7 +36,7 @@ struct ProjectSerializer {
             masterClock: captureMasterClock(masterClock),
             auPlugins: captureAUPlugins(audioEngine),
             audioFiles: captureAudioFiles(audioEngine),
-            uiPreferences: captureUIPreferences(appState),
+            uiPreferences: captureUIPreferences(appState, audioEngine: audioEngine),
             drumSequencer: drumSequencer.map { captureDrumSequencer($0) },
             daisyDrum: captureDaisyDrum(audioEngine),
             sampler: captureSampler(audioEngine),
@@ -345,10 +345,11 @@ struct ProjectSerializer {
 
     // MARK: - UI Preferences
 
-    private static func captureUIPreferences(_ appState: AppState) -> UIPreferencesSnapshot {
+    private static func captureUIPreferences(_ appState: AppState, audioEngine: AudioEngineWrapper) -> UIPreferencesSnapshot {
         return UIPreferencesSnapshot(
             focusedVoice: appState.focusedVoice,
-            selectedGranularVoice: appState.selectedGranularVoice
+            selectedGranularVoice: appState.selectedGranularVoice,
+            pluginHostBackend: audioEngine.pluginHostBackend.rawValue
         )
     }
 
@@ -465,7 +466,7 @@ struct ProjectSerializer {
         }
 
         // 2. Restore UI preferences
-        restoreUIPreferences(snapshot.uiPreferences, appState: appState)
+        restoreUIPreferences(snapshot.uiPreferences, appState: appState, audioEngine: audioEngine)
 
         // 3. Restore mixer state (Swift side)
         restoreMixer(snapshot.mixer, mixerState: mixerState)
@@ -552,9 +553,12 @@ struct ProjectSerializer {
 
     // MARK: - Restore Helpers
 
-    private static func restoreUIPreferences(_ prefs: UIPreferencesSnapshot, appState: AppState) {
+    private static func restoreUIPreferences(_ prefs: UIPreferencesSnapshot, appState: AppState, audioEngine: AudioEngineWrapper) {
         appState.focusedVoice = prefs.focusedVoice
         appState.selectedGranularVoice = prefs.selectedGranularVoice
+        if let backendRaw = prefs.pluginHostBackend, let backend = PluginBackend(rawValue: backendRaw) {
+            audioEngine.pluginHostBackend = backend
+        }
     }
 
     private static func restoreMixer(_ snapshot: MixerSnapshot, mixerState: MixerState) {

@@ -504,6 +504,21 @@ class AudioEngineWrapper: ObservableObject {
 
     @Published var graphMode: AudioGraphMode = .legacy  // Safe default until multi-channel graph is stable
 
+    // MARK: - Plugin Host Backend
+
+    /// Controls whether AU or VST3 is used for plugin hosting.
+    /// Default is .au until VST3 backend reaches parity.
+    @Published var pluginHostBackend: PluginBackend = .au {
+        didSet {
+            guard oldValue != pluginHostBackend else { return }
+            if pluginHostBackend == .vst3 {
+                installVST3InsertCallback()
+            } else {
+                removeVST3InsertCallback()
+            }
+        }
+    }
+
     // MARK: - Private Properties
 
     private var audioEngine: AVAudioEngine?

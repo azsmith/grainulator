@@ -369,6 +369,9 @@ struct UIPreferencesSnapshot: Codable {
     var focusedVoice: Int
     var selectedGranularVoice: Int
 
+    /// Plugin host backend: "au" (default) or "vst3"
+    var pluginHostBackend: String?
+
     // Legacy fields kept for backward compatibility when loading old project files
     var useTabLayout: Bool?
     var useNewMixer: Bool?

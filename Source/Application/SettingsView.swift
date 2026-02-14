@@ -102,6 +102,18 @@ struct AudioSettingsView: View {
                 }
             }
 
+            Section("Plugin Hosting") {
+                Picker("Backend:", selection: $audioEngine.pluginHostBackend) {
+                    Text("Audio Units (AU)").tag(PluginBackend.au)
+                    Text("VST3 (Experimental)").tag(PluginBackend.vst3)
+                }
+                if audioEngine.pluginHostBackend == .vst3 {
+                    Text("VST3 backend routes inserts through the C++ engine. Send effects remain AU-hosted.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
             Section("Status") {
                 HStack {
                     Text("Engine Status:")
