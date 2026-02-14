@@ -22,6 +22,7 @@ final class MixerWindowManager {
         mixerState: MixerState,
         audioEngine: AudioEngineWrapper,
         pluginManager: AUPluginManager,
+        vst3PluginHost: VST3PluginHost,
         layoutState: WorkspaceLayoutState
     ) {
         self.layoutState = layoutState
@@ -52,6 +53,7 @@ final class MixerWindowManager {
         let mixerView = NewMixerView(mixerState: mixerState, showToolbar: true)
             .environmentObject(audioEngine)
             .environmentObject(pluginManager)
+            .environmentObject(vst3PluginHost)
         let hostingController = NSHostingController(rootView: mixerView)
         panel.contentViewController = hostingController
 
@@ -87,6 +89,7 @@ final class MixerWindowManager {
         mixerState: MixerState,
         audioEngine: AudioEngineWrapper,
         pluginManager: AUPluginManager,
+        vst3PluginHost: VST3PluginHost,
         layoutState: WorkspaceLayoutState
     ) {
         if mixerPanel?.isVisible == true {
@@ -96,6 +99,7 @@ final class MixerWindowManager {
                 mixerState: mixerState,
                 audioEngine: audioEngine,
                 pluginManager: pluginManager,
+                vst3PluginHost: vst3PluginHost,
                 layoutState: layoutState
             )
         }

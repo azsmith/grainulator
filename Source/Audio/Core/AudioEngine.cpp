@@ -827,8 +827,9 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
             if (!m_insertProcessCallback) return;
             for (int slot = 0; slot < kMaxInsertsPerChannel; ++slot) {
                 auto& insert = m_channelInserts[ch][slot];
-                if (insert.pluginHandle && !insert.bypassed.load(std::memory_order_relaxed)) {
-                    m_insertProcessCallback(insert.pluginHandle, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+                void* handle = insert.pluginHandle.load(std::memory_order_acquire);
+                if (handle && !insert.bypassed.load(std::memory_order_relaxed)) {
+                    m_insertProcessCallback(handle, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
                 }
             }
         };
@@ -1263,8 +1264,37 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
         // ========== Process external input recording ==========
         processExternalInputRecording(frameCount);
 
-        // ========== Process Internal Effects (disabled when external send routing is active) ==========
-        if (!m_externalSendRoutingEnabled) {
+        // ========== VST3 Send Bus Processing ==========
+        bool vst3SendProcessed[kNumSendBuses] = {false, false};
+        if (m_insertProcessCallback) {
+            // Send A (bus 0)
+            auto& slotA = m_sendPlugins[0];
+            void* handleA = slotA.pluginHandle.load(std::memory_order_acquire);
+            if (handleA && !slotA.bypassed.load(std::memory_order_relaxed)) {
+                m_insertProcessCallback(handleA, m_sendBufferAL, m_sendBufferAR, frameCount);
+                float ret = slotA.returnLevel.load(std::memory_order_relaxed) * 2.0f;
+                for (int i = 0; i < frameCount; ++i) {
+                    m_processingBuffer[0][i] += m_sendBufferAL[i] * ret;
+                    m_processingBuffer[1][i] += m_sendBufferAR[i] * ret;
+                }
+                vst3SendProcessed[0] = true;
+            }
+            // Send B (bus 1)
+            auto& slotB = m_sendPlugins[1];
+            void* handleB = slotB.pluginHandle.load(std::memory_order_acquire);
+            if (handleB && !slotB.bypassed.load(std::memory_order_relaxed)) {
+                m_insertProcessCallback(handleB, m_sendBufferBL, m_sendBufferBR, frameCount);
+                float ret = slotB.returnLevel.load(std::memory_order_relaxed) * 2.0f;
+                for (int i = 0; i < frameCount; ++i) {
+                    m_processingBuffer[0][i] += m_sendBufferBL[i] * ret;
+                    m_processingBuffer[1][i] += m_sendBufferBR[i] * ret;
+                }
+                vst3SendProcessed[1] = true;
+            }
+        }
+
+        // ========== Process Internal Effects (disabled when external send routing or VST3 send A is active) ==========
+        if (!m_externalSendRoutingEnabled && !vst3SendProcessed[0]) {
             for (int i = 0; i < frameCount; ++i) {
                 float wetL = m_sendBufferAL[i];
                 float wetR = m_sendBufferAR[i];
@@ -3188,13 +3218,13 @@ void AudioEngine::setInsertProcessCallback(InsertProcessCallback callback) {
 void AudioEngine::setChannelInsert(int channelIndex, int slotIndex, void* pluginHandle) {
     if (channelIndex < 0 || channelIndex >= kNumMixerChannels) return;
     if (slotIndex < 0 || slotIndex >= kMaxInsertsPerChannel) return;
-    m_channelInserts[channelIndex][slotIndex].pluginHandle = pluginHandle;
+    m_channelInserts[channelIndex][slotIndex].pluginHandle.store(pluginHandle, std::memory_order_release);
 }
 
 void AudioEngine::clearChannelInsert(int channelIndex, int slotIndex) {
     if (channelIndex < 0 || channelIndex >= kNumMixerChannels) return;
     if (slotIndex < 0 || slotIndex >= kMaxInsertsPerChannel) return;
-    m_channelInserts[channelIndex][slotIndex].pluginHandle = nullptr;
+    m_channelInserts[channelIndex][slotIndex].pluginHandle.store(nullptr, std::memory_order_release);
 }
 
 void AudioEngine::setChannelInsertBypassed(int channelIndex, int slotIndex, bool bypassed) {
@@ -3206,7 +3236,29 @@ void AudioEngine::setChannelInsertBypassed(int channelIndex, int slotIndex, bool
 void* AudioEngine::getChannelInsert(int channelIndex, int slotIndex) const {
     if (channelIndex < 0 || channelIndex >= kNumMixerChannels) return nullptr;
     if (slotIndex < 0 || slotIndex >= kMaxInsertsPerChannel) return nullptr;
-    return m_channelInserts[channelIndex][slotIndex].pluginHandle;
+    return m_channelInserts[channelIndex][slotIndex].pluginHandle.load(std::memory_order_acquire);
+}
+
+// ========== Send Bus Plugin Methods ==========
+
+void AudioEngine::setSendPlugin(int sendIndex, void* pluginHandle) {
+    if (sendIndex < 0 || sendIndex >= kNumSendBuses) return;
+    m_sendPlugins[sendIndex].pluginHandle.store(pluginHandle, std::memory_order_release);
+}
+
+void AudioEngine::clearSendPlugin(int sendIndex) {
+    if (sendIndex < 0 || sendIndex >= kNumSendBuses) return;
+    m_sendPlugins[sendIndex].pluginHandle.store(nullptr, std::memory_order_release);
+}
+
+void AudioEngine::setSendPluginBypassed(int sendIndex, bool bypassed) {
+    if (sendIndex < 0 || sendIndex >= kNumSendBuses) return;
+    m_sendPlugins[sendIndex].bypassed.store(bypassed, std::memory_order_relaxed);
+}
+
+void AudioEngine::setSendReturnLevel(int sendIndex, float level) {
+    if (sendIndex < 0 || sendIndex >= kNumSendBuses) return;
+    m_sendPlugins[sendIndex].returnLevel.store(level, std::memory_order_relaxed);
 }
 
 // ========== Effects Implementation ==========

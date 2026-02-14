@@ -153,14 +153,27 @@ bool VST3Host_HasEditor(VST3PluginHandle plugin) {
     return static_cast<VST3PluginInstance*>(plugin)->hasEditor();
 }
 
-void* VST3Host_CreateEditorView(VST3PluginHandle plugin) {
-    if (!plugin) return nullptr;
-    return static_cast<VST3PluginInstance*>(plugin)->createEditorView();
+bool VST3Host_PrepareEditor(VST3PluginHandle plugin, int* outWidth, int* outHeight) {
+    if (!plugin || !outWidth || !outHeight) return false;
+    return static_cast<VST3PluginInstance*>(plugin)->prepareEditor(*outWidth, *outHeight);
 }
 
-void VST3Host_DestroyEditorView(VST3PluginHandle plugin) {
+bool VST3Host_AttachEditorToView(VST3PluginHandle plugin, void* parentNSView) {
+    if (!plugin || !parentNSView) return false;
+    return static_cast<VST3PluginInstance*>(plugin)->attachEditorToView(parentNSView);
+}
+
+void VST3Host_SetEditorResizeCallback(VST3PluginHandle plugin,
+                                       VST3EditorResizeCallback callback,
+                                       void* context) {
+    if (!plugin) return;
+    static_cast<VST3PluginInstance*>(plugin)->setEditorResizeCallback(
+        reinterpret_cast<Grainulator::EditorResizeCallback>(callback), context);
+}
+
+void VST3Host_DetachEditor(VST3PluginHandle plugin) {
     if (plugin) {
-        static_cast<VST3PluginInstance*>(plugin)->destroyEditorView();
+        static_cast<VST3PluginInstance*>(plugin)->detachEditor();
     }
 }
 

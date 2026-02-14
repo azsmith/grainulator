@@ -109,13 +109,26 @@ double VST3Host_GetParameter(VST3PluginHandle plugin, uint32_t paramID);
 /// Returns true if the plugin has a custom editor GUI.
 bool VST3Host_HasEditor(VST3PluginHandle plugin);
 
-/// Create the editor view. Returns an opaque NSView* (cast to void*).
-/// The caller takes ownership of adding it to a window.
-/// Returns NULL if no editor is available.
-void* VST3Host_CreateEditorView(VST3PluginHandle plugin);
+/// Callback type for plugin-initiated resize requests.
+typedef void (*VST3EditorResizeCallback)(void* context, int width, int height);
 
-/// Destroy the editor view. Must be called before the NSView is removed.
-void VST3Host_DestroyEditorView(VST3PluginHandle plugin);
+/// Prepare the plugin editor. Creates the IPlugView internally and returns
+/// the preferred width/height. Returns true on success.
+/// Call this before AttachEditorToView.
+bool VST3Host_PrepareEditor(VST3PluginHandle plugin, int* outWidth, int* outHeight);
+
+/// Attach the prepared editor to a parent NSView.
+/// The parentNSView must remain valid until DetachEditor is called.
+/// Returns true on success.
+bool VST3Host_AttachEditorToView(VST3PluginHandle plugin, void* parentNSView);
+
+/// Set a callback that fires when the plugin requests a resize.
+void VST3Host_SetEditorResizeCallback(VST3PluginHandle plugin,
+                                       VST3EditorResizeCallback callback,
+                                       void* context);
+
+/// Detach the editor from its parent view and release the IPlugView.
+void VST3Host_DetachEditor(VST3PluginHandle plugin);
 
 #ifdef __cplusplus
 }

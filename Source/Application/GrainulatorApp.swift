@@ -24,6 +24,7 @@ struct GrainulatorApp: App {
     @StateObject private var arcManager = MonomeArcManager()
     @StateObject private var gridManager = MonomeGridManager()
     @StateObject private var scrambleManager = ScrambleManager()
+    @StateObject private var vst3PluginHost = VST3PluginHost(sampleRate: 48000, maxBlockSize: 2048)
 
     var body: some Scene {
         WindowGroup {
@@ -41,6 +42,7 @@ struct GrainulatorApp: App {
                 .environmentObject(arcManager)
                 .environmentObject(gridManager)
                 .environmentObject(scrambleManager)
+                .environmentObject(vst3PluginHost)
                 .frame(minWidth: 1200, minHeight: 600)
                 .onAppear {
                     // Ensure we get a proper menu bar when launched from terminal
@@ -72,6 +74,7 @@ struct GrainulatorApp: App {
                     mixerState.connectAudioEngine(audioEngine)  // Wire up Combine → engine sync
                     mixerState.syncToAudioEngine(audioEngine)  // Push default mixer/send levels to C++ engine
                     pluginManager.refreshPluginList()  // Scan for AU plugins on launch
+                    vst3PluginHost.refreshPluginList()  // Scan for VST3 plugins on launch
                     projectManager.connect(
                         audioEngine: audioEngine,
                         mixerState: mixerState,

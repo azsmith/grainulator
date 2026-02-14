@@ -45,6 +45,12 @@ void AudioEngine_SetChannelInsert(AudioEngineHandle handle, int channelIndex, in
 void AudioEngine_ClearChannelInsert(AudioEngineHandle handle, int channelIndex, int slotIndex);
 void AudioEngine_SetChannelInsertBypassed(AudioEngineHandle handle, int channelIndex, int slotIndex, bool bypassed);
 
+// Send bus plugin processing (for VST3 send effects)
+void AudioEngine_SetSendPlugin(AudioEngineHandle handle, int sendIndex, void* pluginHandle);
+void AudioEngine_ClearSendPlugin(AudioEngineHandle handle, int sendIndex);
+void AudioEngine_SetSendPluginBypassed(AudioEngineHandle handle, int sendIndex, bool bypassed);
+void AudioEngine_SetSendReturnLevel(AudioEngineHandle handle, int sendIndex, float level);
+
 // Performance metrics
 float AudioEngine_GetCPULoad(AudioEngineHandle handle);
 

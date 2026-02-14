@@ -16,6 +16,7 @@ struct ProChannelStripView: View {
     let showInserts: Bool
     let audioEngine: AudioEngineWrapper?
     let pluginManager: AUPluginManager?
+    let vst3PluginHost: VST3PluginHost?
 
     @State private var showInsertPopover: Bool = false
 
@@ -24,13 +25,15 @@ struct ProChannelStripView: View {
         isCompact: Bool = false,
         showInserts: Bool = true,
         audioEngine: AudioEngineWrapper? = nil,
-        pluginManager: AUPluginManager? = nil
+        pluginManager: AUPluginManager? = nil,
+        vst3PluginHost: VST3PluginHost? = nil
     ) {
         self.channel = channel
         self.isCompact = isCompact
         self.showInserts = showInserts
         self.audioEngine = audioEngine
         self.pluginManager = pluginManager
+        self.vst3PluginHost = vst3PluginHost
     }
 
     var body: some View {
@@ -188,7 +191,8 @@ struct ProChannelStripView: View {
                 channelIndex: channel.channelIndex,
                 accentColor: channel.accentColor,
                 audioEngine: audioEngine,
-                pluginManager: pluginManager
+                pluginManager: pluginManager,
+                vst3PluginHost: vst3PluginHost
             )
         }
     }

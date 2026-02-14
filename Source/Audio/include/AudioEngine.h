@@ -390,6 +390,12 @@ public:
     void setChannelInsertBypassed(int channelIndex, int slotIndex, bool bypassed);
     void* getChannelInsert(int channelIndex, int slotIndex) const;
 
+    // Send bus plugin processing (for VST3 send effects)
+    void setSendPlugin(int sendIndex, void* pluginHandle);
+    void clearSendPlugin(int sendIndex);
+    void setSendPluginBypassed(int sendIndex, bool bypassed);
+    void setSendReturnLevel(int sendIndex, float level);
+
     // Trigger control (legacy - uses voice 0)
     void triggerPlaits(bool state);
     void triggerDaisyDrum(bool state);
@@ -747,11 +753,20 @@ private:
 
     // Per-channel insert slots (for external plugin processing via callback)
     struct ChannelInsertSlot {
-        void* pluginHandle = nullptr;
+        std::atomic<void*> pluginHandle{nullptr};
         std::atomic<bool> bypassed{false};
     };
     ChannelInsertSlot m_channelInserts[kNumMixerChannels][kMaxInsertsPerChannel];
     InsertProcessCallback m_insertProcessCallback = nullptr;
+
+    // Send bus plugin slots (for VST3 send effects)
+    struct SendPluginSlot {
+        std::atomic<void*> pluginHandle{nullptr};
+        std::atomic<bool> bypassed{false};
+        std::atomic<float> returnLevel{0.5f};  // 0-1, 0.5 = unity (0 dB)
+    };
+    static constexpr int kNumSendBuses = 2;
+    SendPluginSlot m_sendPlugins[kNumSendBuses];
 
     float m_masterGain;          // Target master gain
     float m_masterGainSmoothed;  // Smoothed master gain

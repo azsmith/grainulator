@@ -28,6 +28,9 @@
 using namespace Steinberg;
 using namespace Steinberg::Vst;
 
+// Define IPlugFrame IID (normally in commoniids.cpp which we don't compile)
+DEF_CLASS_IID(IPlugFrame)
+
 namespace Grainulator {
 
 // ========== Helper: Memory stream for state save/load ==========
@@ -240,6 +243,7 @@ void VST3Host::scanBundle(const std::string& bundlePath) {
                 // Check for editor by attempting to create a component
                 // (deferred to load time for performance)
                 desc.hasEditor = true;  // Assume true; checked on load
+                desc.bundlePath = bundlePath;  // Cache for direct loading
 
                 m_plugins.push_back(desc);
             }
@@ -268,100 +272,69 @@ VST3PluginInstance* VST3Host::loadPlugin(const std::string& classIDHex) {
         return nullptr;
     }
 
+    if (desc->bundlePath.empty()) {
+        std::cerr << "VST3Host: No bundle path cached for " << desc->name << std::endl;
+        return nullptr;
+    }
+
     auto instance = std::make_unique<VST3PluginInstance>(*desc, m_sampleRate, m_maxBlockSize);
 
-    // Find the .vst3 bundle that contains this class ID by re-scanning
-    // In production, we'd cache bundle paths during scan
-    // For now, scan and load
-    auto findAndLoadBundle = [&](const std::string& dirPath) -> bool {
-        namespace fs = std::filesystem;
-        std::error_code ec;
-        if (!fs::exists(dirPath, ec)) return false;
-
-        auto tryBundle = [&](const std::string& bundlePath) -> bool {
+    // Load directly from the cached bundle path — avoids loading unrelated bundles
+    // whose static initializers may crash
+    bool loaded = false;
 #if __APPLE__
-            CFURLRef bundleURL = CFURLCreateFromFileSystemRepresentation(
-                kCFAllocatorDefault,
-                reinterpret_cast<const UInt8*>(bundlePath.c_str()),
-                bundlePath.size(), true);
-            if (!bundleURL) return false;
+    CFURLRef bundleURL = CFURLCreateFromFileSystemRepresentation(
+        kCFAllocatorDefault,
+        reinterpret_cast<const UInt8*>(desc->bundlePath.c_str()),
+        desc->bundlePath.size(), true);
+    if (!bundleURL) {
+        std::cerr << "VST3Host: Failed to create URL for " << desc->bundlePath << std::endl;
+        return nullptr;
+    }
 
-            CFBundleRef bundle = CFBundleCreate(kCFAllocatorDefault, bundleURL);
-            CFRelease(bundleURL);
-            if (!bundle) return false;
+    CFBundleRef bundle = CFBundleCreate(kCFAllocatorDefault, bundleURL);
+    CFRelease(bundleURL);
+    if (!bundle) {
+        std::cerr << "VST3Host: Failed to create bundle for " << desc->bundlePath << std::endl;
+        return nullptr;
+    }
 
-            if (!CFBundleLoadExecutable(bundle)) {
-                CFRelease(bundle);
-                return false;
-            }
+    if (!CFBundleLoadExecutable(bundle)) {
+        std::cerr << "VST3Host: Failed to load executable for " << desc->bundlePath << std::endl;
+        CFRelease(bundle);
+        return nullptr;
+    }
 
-            using GetFactoryFunc = IPluginFactory* (*)();
-            auto getFactory = reinterpret_cast<GetFactoryFunc>(
-                CFBundleGetFunctionPointerForName(bundle, CFSTR("GetPluginFactory")));
+    using GetFactoryFunc = IPluginFactory* (*)();
+    auto getFactory = reinterpret_cast<GetFactoryFunc>(
+        CFBundleGetFunctionPointerForName(bundle, CFSTR("GetPluginFactory")));
 
-            if (!getFactory) {
-                CFBundleUnloadExecutable(bundle);
-                CFRelease(bundle);
-                return false;
-            }
+    if (!getFactory) {
+        std::cerr << "VST3Host: No GetPluginFactory in " << desc->bundlePath << std::endl;
+        CFBundleUnloadExecutable(bundle);
+        CFRelease(bundle);
+        return nullptr;
+    }
 
-            IPluginFactory* factory = getFactory();
-            if (!factory) {
-                CFBundleUnloadExecutable(bundle);
-                CFRelease(bundle);
-                return false;
-            }
+    IPluginFactory* factory = getFactory();
+    if (!factory) {
+        CFBundleUnloadExecutable(bundle);
+        CFRelease(bundle);
+        return nullptr;
+    }
 
-            // Check if this factory has our class
-            int32 count = factory->countClasses();
-            for (int32 i = 0; i < count; ++i) {
-                PClassInfo ci;
-                if (factory->getClassInfo(i, &ci) == kResultOk) {
-                    FUID fuid = FUID::fromTUID(ci.cid);
-                    if (fuid == desc->classID) {
-                        if (instance->initialize(factory)) {
-                            if (instance->activate()) {
-                                // Don't release bundle — keep loaded while instance lives
-                                return true;
-                            }
-                        }
-                        CFBundleUnloadExecutable(bundle);
-                        CFRelease(bundle);
-                        return false;
-                    }
-                }
-            }
-            CFBundleUnloadExecutable(bundle);
-            CFRelease(bundle);
-#endif
-            return false;
-        };
-
-        for (const auto& entry : fs::directory_iterator(dirPath, ec)) {
-            if (entry.is_directory(ec)) {
-                std::string path = entry.path().string();
-                if (path.size() > 5 && path.substr(path.size() - 5) == ".vst3") {
-                    if (tryBundle(path)) return true;
-                } else {
-                    for (const auto& sub : fs::directory_iterator(path, ec)) {
-                        std::string sp = sub.path().string();
-                        if (sp.size() > 5 && sp.substr(sp.size() - 5) == ".vst3") {
-                            if (tryBundle(sp)) return true;
-                        }
-                    }
-                }
-            }
-        }
-        return false;
-    };
-
-    bool loaded = findAndLoadBundle("/Library/Audio/Plug-Ins/VST3");
-    if (!loaded) {
-        const char* home = getenv("HOME");
-        if (home) {
-            loaded = findAndLoadBundle(std::string(home) + "/Library/Audio/Plug-Ins/VST3");
+    if (instance->initialize(factory)) {
+        if (instance->activate()) {
+            // Don't release bundle — keep loaded while instance lives
+            loaded = true;
         }
     }
+
+    if (!loaded) {
+        CFBundleUnloadExecutable(bundle);
+        CFRelease(bundle);
+    }
+#endif
 
     if (!loaded) {
         std::cerr << "VST3Host: Failed to load plugin: " << desc->name << std::endl;
@@ -393,13 +366,10 @@ VST3PluginInstance::VST3PluginInstance(const VST3PluginDescriptor& descriptor,
 {}
 
 VST3PluginInstance::~VST3PluginInstance() {
+    detachEditor();
     deactivate();
     freeBuffers();
 
-    if (m_plugView) {
-        m_plugView->removed();
-        m_plugView = nullptr;
-    }
     if (m_controller) {
         m_controller->terminate();
         m_controller = nullptr;
@@ -636,41 +606,63 @@ bool VST3PluginInstance::hasEditor() const {
     return false;
 }
 
-void* VST3PluginInstance::createEditorView() {
+bool VST3PluginInstance::prepareEditor(int& outWidth, int& outHeight) {
 #if __APPLE__
-    if (!m_controller) return nullptr;
+    if (!m_controller) return false;
+
+    // Clean up any existing editor
+    detachEditor();
 
     m_plugView = m_controller->createView("editor");
-    if (!m_plugView) return nullptr;
+    if (!m_plugView) return false;
 
-    // Check if the view supports Cocoa
+    // Check if the view supports Cocoa (NSView)
     if (m_plugView->isPlatformTypeSupported("NSView") != kResultOk) {
         m_plugView = nullptr;
-        return nullptr;
+        return false;
     }
 
     // Get preferred size
     ViewRect rect;
     if (m_plugView->getSize(&rect) != kResultOk) {
-        rect.left = 0; rect.top = 0;
-        rect.right = 400; rect.bottom = 300;
+        rect = ViewRect(0, 0, 600, 400);
     }
 
-    // Create an NSView and attach the plugin view
-    // Note: This requires Objective-C++ — the actual NSView creation
-    // is done in VST3HostMac.mm
-    // For now, return nullptr and let the Swift side handle view creation
-    return nullptr;
+    outWidth = rect.getWidth();
+    outHeight = rect.getHeight();
+
+    // Create and attach the plug frame for resize requests
+    m_plugFrame = new VST3PlugFrame();
+    m_plugView->setFrame(m_plugFrame);
+
+    return true;
 #else
-    return nullptr;
+    return false;
 #endif
 }
 
-void VST3PluginInstance::destroyEditorView() {
+bool VST3PluginInstance::attachEditorToView(void* parentNSView) {
+#if __APPLE__
+    if (!m_plugView || !parentNSView) return false;
+    return m_plugView->attached(parentNSView, "NSView") == kResultOk;
+#else
+    return false;
+#endif
+}
+
+void VST3PluginInstance::setEditorResizeCallback(EditorResizeCallback callback, void* context) {
+    if (m_plugFrame) {
+        m_plugFrame->setResizeCallback(callback, context);
+    }
+}
+
+void VST3PluginInstance::detachEditor() {
     if (m_plugView) {
+        m_plugView->setFrame(nullptr);
         m_plugView->removed();
         m_plugView = nullptr;
     }
+    m_plugFrame = nullptr;
 }
 
 } // namespace Grainulator

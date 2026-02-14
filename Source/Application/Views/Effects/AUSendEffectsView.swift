@@ -54,9 +54,12 @@ struct AUSendEffectCardByIndex: View {
 
     @EnvironmentObject var audioEngine: AudioEngineWrapper
     @EnvironmentObject var pluginManager: AUPluginManager
+    @EnvironmentObject var vst3PluginHost: VST3PluginHost
 
     @State private var showBrowser = false
     @State private var editFailed = false
+
+    private var isVST3: Bool { audioEngine.pluginHostBackend == .vst3 }
 
     var body: some View {
         let slotData = audioEngine.getSendSlotData(busIndex: busIndex)
@@ -88,15 +91,28 @@ struct AUSendEffectCardByIndex: View {
                 .stroke(accentColor.opacity(0.3), lineWidth: 1)
         )
         .sheet(isPresented: $showBrowser) {
-            AUPluginBrowserView(
-                isPresented: $showBrowser,
-                onSelect: { plugin in
-                    Task { @MainActor [audioEngine, pluginManager] in
-                        try? await audioEngine.loadSendPlugin(plugin, busIndex: busIndex, using: pluginManager)
+            if isVST3 {
+                AUPluginBrowserView(
+                    isPresented: $showBrowser,
+                    vst3Plugins: vst3PluginHost.scannedPlugins,
+                    onVST3Select: { [audioEngine, vst3PluginHost] descriptor in
+                        Task { @MainActor in
+                            try? await audioEngine.loadVST3Send(descriptor, busIndex: busIndex, using: vst3PluginHost)
+                        }
                     }
-                }
-            )
-            .environmentObject(pluginManager)
+                )
+                .environmentObject(pluginManager)
+            } else {
+                AUPluginBrowserView(
+                    isPresented: $showBrowser,
+                    onSelect: { plugin in
+                        Task { @MainActor [audioEngine, pluginManager] in
+                            try? await audioEngine.loadSendPlugin(plugin, busIndex: busIndex, using: pluginManager)
+                        }
+                    }
+                )
+                .environmentObject(pluginManager)
+            }
         }
         .onDisappear {
             showBrowser = false
@@ -143,35 +159,48 @@ struct AUSendEffectCardByIndex: View {
 
     private func pluginSlotView(slotData: SendSlotData) -> some View {
         Group {
-            if slotData.hasPlugin, let pluginInfo = slotData.pluginInfo {
-                loadedPluginView(info: pluginInfo, slotData: slotData)
+            if slotData.hasPlugin {
+                loadedPluginView(slotData: slotData)
             } else {
                 emptySlotView
             }
         }
     }
 
-    private func loadedPluginView(info: AUPluginInfo, slotData: SendSlotData) -> some View {
-        VStack(spacing: 8) {
+    /// Display name for the loaded plugin (works for both AU and VST3)
+    private func pluginDisplayName(_ slotData: SendSlotData) -> String {
+        slotData.pluginInfo?.name ?? slotData.pluginDescriptor?.name ?? slotData.pluginName ?? "Plugin"
+    }
+
+    /// Display manufacturer for the loaded plugin (works for both AU and VST3)
+    private func pluginDisplayManufacturer(_ slotData: SendSlotData) -> String {
+        slotData.pluginInfo?.manufacturerName ?? slotData.pluginDescriptor?.manufacturerName ?? ""
+    }
+
+    private func loadedPluginView(slotData: SendSlotData) -> some View {
+        let name = pluginDisplayName(slotData)
+        let manufacturer = pluginDisplayManufacturer(slotData)
+
+        return VStack(spacing: 8) {
             HStack(spacing: 8) {
                 // Plugin icon
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(info.category?.color ?? accentColor)
+                    .fill(slotData.pluginInfo?.category?.color ?? accentColor)
                     .frame(width: 36, height: 36)
                     .overlay(
-                        Image(systemName: info.category?.iconName ?? "waveform")
+                        Image(systemName: slotData.pluginInfo?.category?.iconName ?? "waveform")
                             .font(.system(size: 16))
                             .foregroundColor(.white.opacity(0.8))
                     )
 
                 // Plugin info
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(info.name)
+                    Text(name)
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundColor(.white)
                         .lineLimit(1)
 
-                    Text(info.manufacturerName)
+                    Text(manufacturer)
                         .font(.system(size: 9, design: .monospaced))
                         .foregroundColor(ColorPalette.textDimmed)
                         .lineLimit(1)
@@ -204,15 +233,15 @@ struct AUSendEffectCardByIndex: View {
                     .font(.system(size: 12))
                     .foregroundColor(ColorPalette.ledRed.opacity(0.7))
                     .contentShape(Rectangle())
-                    .onTapGesture { [audioEngine] in
-                        Task { @MainActor [audioEngine] in
-                            audioEngine.unloadSendPlugin(busIndex: busIndex)
+                    .onTapGesture { [audioEngine, vst3PluginHost] in
+                        Task { @MainActor [audioEngine, vst3PluginHost] in
+                            audioEngine.unloadSendPlugin(busIndex: busIndex, vst3Host: vst3PluginHost)
                         }
                     }
             }
 
             // Edit button to open plugin's native UI
-            Text(editFailed ? "No AU reference" : "Edit")
+            Text(editFailed ? "No plugin UI" : "Edit")
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .foregroundColor(editFailed ? ColorPalette.ledRed : accentColor)
                 .padding(.horizontal, 12)
@@ -223,24 +252,52 @@ struct AUSendEffectCardByIndex: View {
                         .fill(editFailed ? ColorPalette.ledRed.opacity(0.15) : accentColor.opacity(0.15))
                 )
                 .contentShape(Rectangle())
-                .onTapGesture {
-                    if let audioUnit = audioEngine.getSendAudioUnit(busIndex: busIndex) {
-                        editFailed = false
-                        let slotData = audioEngine.getSendSlotData(busIndex: busIndex)
-                        let pluginName = slotData.pluginInfo?.name ?? "Plugin"
-                        let manufacturer = slotData.pluginInfo?.manufacturerName ?? ""
-                        AUPluginWindowManager.shared.open(
-                            audioUnit: audioUnit,
-                            title: pluginName,
-                            subtitle: manufacturer,
-                            key: "send-\(busIndex)"
-                        )
+                .onTapGesture { [audioEngine, vst3PluginHost] in
+                    if isVST3 {
+                        // VST3 editor path
+                        guard busIndex < audioEngine.vst3SendSlots.count,
+                              let instance = audioEngine.vst3SendSlots[busIndex].instance as? VST3PluginInstanceWrapper else {
+                            editFailed = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { editFailed = false }
+                            return
+                        }
+                        let pluginName = instance.descriptor.name
+                        instance.requestViewController { vc in
+                            guard let vc else {
+                                DispatchQueue.main.async {
+                                    editFailed = true
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { editFailed = false }
+                                }
+                                return
+                            }
+                            let key = "vst3-send-\(busIndex)"
+                            AUPluginWindowManager.shared.open(
+                                viewController: vc,
+                                title: pluginName,
+                                subtitle: "Send \(busIndex == 0 ? "A" : "B")",
+                                key: key
+                            )
+                        }
                     } else {
-                        let slotData = audioEngine.getSendSlotData(busIndex: busIndex)
-                        print("✗ Edit failed: getSendAudioUnit(\(busIndex)) returned nil — hasPlugin=\(slotData.hasPlugin), pluginName=\(slotData.pluginName ?? "nil")")
-                        editFailed = true
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        // AU editor path
+                        if let audioUnit = audioEngine.getSendAudioUnit(busIndex: busIndex) {
                             editFailed = false
+                            let slotData = audioEngine.getSendSlotData(busIndex: busIndex)
+                            let pluginName = slotData.pluginInfo?.name ?? "Plugin"
+                            let manufacturer = slotData.pluginInfo?.manufacturerName ?? ""
+                            AUPluginWindowManager.shared.open(
+                                audioUnit: audioUnit,
+                                title: pluginName,
+                                subtitle: manufacturer,
+                                key: "send-\(busIndex)"
+                            )
+                        } else {
+                            let slotData = audioEngine.getSendSlotData(busIndex: busIndex)
+                            print("Edit failed: getSendAudioUnit(\(busIndex)) returned nil — hasPlugin=\(slotData.hasPlugin), pluginName=\(slotData.pluginName ?? "nil")")
+                            editFailed = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                editFailed = false
+                            }
                         }
                     }
                 }
@@ -389,6 +446,7 @@ struct AUSendEffectsView_Previews: PreviewProvider {
     struct PreviewWrapper: View {
         @StateObject private var audioEngine = AudioEngineWrapper()
         @StateObject private var pluginManager = AUPluginManager()
+        @StateObject private var vst3PluginHost = VST3PluginHost(sampleRate: 48000, maxBlockSize: 2048)
 
         var body: some View {
             VStack(spacing: 20) {
@@ -396,6 +454,7 @@ struct AUSendEffectsView_Previews: PreviewProvider {
                 AUSendEffectsView()
                     .environmentObject(audioEngine)
                     .environmentObject(pluginManager)
+                    .environmentObject(vst3PluginHost)
 
                 Divider()
 

@@ -19,6 +19,7 @@ struct TransportBarView: View {
     @EnvironmentObject var audioEngine: AudioEngineWrapper
     @EnvironmentObject var mixerState: MixerState
     @EnvironmentObject var pluginManager: AUPluginManager
+    @EnvironmentObject var vst3PluginHost: VST3PluginHost
     @EnvironmentObject var projectManager: ProjectManager
 
     @State private var tapTimestamps: [Date] = []
@@ -271,6 +272,7 @@ struct TransportBarView: View {
                     mixerState: mixerState,
                     audioEngine: audioEngine,
                     pluginManager: pluginManager,
+                    vst3PluginHost: vst3PluginHost,
                     layoutState: layoutState
                 )
             }

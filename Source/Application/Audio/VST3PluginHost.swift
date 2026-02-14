@@ -60,6 +60,20 @@ func VST3Host_GetParameter(_ plugin: OpaquePointer, _ paramID: UInt32) -> Double
 @_silgen_name("VST3Host_HasEditor")
 func VST3Host_HasEditor(_ plugin: OpaquePointer) -> Bool
 
+@_silgen_name("VST3Host_PrepareEditor")
+func VST3Host_PrepareEditor(_ plugin: OpaquePointer, _ outWidth: UnsafeMutablePointer<Int32>, _ outHeight: UnsafeMutablePointer<Int32>) -> Bool
+
+@_silgen_name("VST3Host_AttachEditorToView")
+func VST3Host_AttachEditorToView(_ plugin: OpaquePointer, _ parentNSView: UnsafeMutableRawPointer) -> Bool
+
+@_silgen_name("VST3Host_SetEditorResizeCallback")
+func VST3Host_SetEditorResizeCallback(_ plugin: OpaquePointer,
+                                       _ callback: (@convention(c) (UnsafeMutableRawPointer?, Int32, Int32) -> Void)?,
+                                       _ context: UnsafeMutableRawPointer?)
+
+@_silgen_name("VST3Host_DetachEditor")
+func VST3Host_DetachEditor(_ plugin: OpaquePointer)
+
 // MARK: - C struct mirror
 
 /// Mirror of the C VST3PluginInfo struct
@@ -216,8 +230,17 @@ final class VST3PluginInstanceWrapper: PluginInstance, @unchecked Sendable {
     }
 
     func requestViewController(completion: @escaping (NSViewController?) -> Void) {
-        // VST3 editor creation is more complex — deferred for now
-        completion(nil)
+        var width: Int32 = 0
+        var height: Int32 = 0
+        guard VST3Host_PrepareEditor(handle, &width, &height) else {
+            completion(nil)
+            return
+        }
+        let vc = VST3EditorViewController(
+            pluginHandle: handle,
+            editorSize: NSSize(width: CGFloat(width), height: CGFloat(height))
+        )
+        completion(vc)
     }
 
     var avAudioUnit: AVAudioUnit? { nil }
@@ -229,16 +252,86 @@ final class VST3PluginInstanceWrapper: PluginInstance, @unchecked Sendable {
     }
 }
 
+// MARK: - VST3 Editor View Controller
+
+/// Hosts a VST3 plugin's native editor GUI inside an NSView.
+/// The NSView is created in Swift and its pointer is passed to C++ for IPlugView::attached().
+final class VST3EditorViewController: NSViewController {
+    private let pluginHandle: OpaquePointer
+    private let editorSize: NSSize
+    private var isAttached = false
+
+    init(pluginHandle: OpaquePointer, editorSize: NSSize) {
+        self.pluginHandle = pluginHandle
+        self.editorSize = editorSize
+        super.init(nibName: nil, bundle: nil)
+        self.preferredContentSize = editorSize
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func loadView() {
+        let container = NSView(frame: NSRect(origin: .zero, size: editorSize))
+        container.wantsLayer = true
+        self.view = container
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        guard !isAttached else { return }
+
+        // Set up resize callback before attaching so we catch the first resize
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        VST3Host_SetEditorResizeCallback(pluginHandle, { ctx, w, h in
+            guard let ctx else { return }
+            let vc = Unmanaged<VST3EditorViewController>.fromOpaque(ctx).takeUnretainedValue()
+            DispatchQueue.main.async {
+                let newSize = NSSize(width: CGFloat(w), height: CGFloat(h))
+                vc.view.setFrameSize(newSize)
+                vc.preferredContentSize = newSize
+                if let window = vc.view.window {
+                    window.setContentSize(newSize)
+                }
+            }
+        }, context)
+
+        // Attach the plugin's IPlugView to our NSView
+        let nsViewPtr = Unmanaged.passUnretained(view).toOpaque()
+        if VST3Host_AttachEditorToView(pluginHandle, nsViewPtr) {
+            isAttached = true
+        } else {
+            print("VST3EditorViewController: failed to attach editor view")
+        }
+    }
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        detach()
+    }
+
+    deinit {
+        detach()
+    }
+
+    private func detach() {
+        guard isAttached else { return }
+        VST3Host_SetEditorResizeCallback(pluginHandle, nil, nil)
+        VST3Host_DetachEditor(pluginHandle)
+        isAttached = false
+    }
+}
+
 // MARK: - VST3 Plugin Host
 
 /// VST3 backend for the PluginHost protocol
 @MainActor
-final class VST3PluginHost: PluginHost {
+final class VST3PluginHost: PluginHost, ObservableObject {
     let backend: PluginBackend = .vst3
 
     private var hostHandle: OpaquePointer?
-    private var scannedPlugins: [PluginDescriptor] = []
-    private(set) var isScanning: Bool = false
+    @Published private(set) var scannedPlugins: [PluginDescriptor] = []
+    @Published private(set) var isScanning: Bool = false
 
     var availablePlugins: [PluginDescriptor] { scannedPlugins }
 
@@ -313,9 +406,12 @@ final class VST3PluginHost: PluginHost {
             throw AUPluginError.instantiationFailed
         }
 
-        guard let pluginHandle = classID.withCString({ cStr in
+        let pluginHandle = classID.withCString { cStr in
             VST3Host_LoadPlugin(handle, cStr)
-        }) else {
+        }
+
+        guard let pluginHandle else {
+            print("VST3PluginHost: Failed to load \(descriptor.name)")
             throw AUPluginError.instantiationFailed
         }
 

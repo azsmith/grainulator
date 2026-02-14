@@ -94,6 +94,30 @@ void AudioEngine_SetChannelInsertBypassed(AudioEngineHandle handle, int channelI
     }
 }
 
+void AudioEngine_SetSendPlugin(AudioEngineHandle handle, int sendIndex, void* pluginHandle) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setSendPlugin(sendIndex, pluginHandle);
+    }
+}
+
+void AudioEngine_ClearSendPlugin(AudioEngineHandle handle, int sendIndex) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->clearSendPlugin(sendIndex);
+    }
+}
+
+void AudioEngine_SetSendPluginBypassed(AudioEngineHandle handle, int sendIndex, bool bypassed) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setSendPluginBypassed(sendIndex, bypassed);
+    }
+}
+
+void AudioEngine_SetSendReturnLevel(AudioEngineHandle handle, int sendIndex, float level) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setSendReturnLevel(sendIndex, level);
+    }
+}
+
 float AudioEngine_GetCPULoad(AudioEngineHandle handle) {
     if (!handle) return 0.0f;
     return static_cast<AudioEngine*>(handle)->getCPULoad();

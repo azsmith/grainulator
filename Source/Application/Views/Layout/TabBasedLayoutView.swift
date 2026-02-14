@@ -16,6 +16,7 @@ struct TabBasedLayoutView: View {
     @EnvironmentObject var sequencer: StepSequencer
     @EnvironmentObject var mixerState: MixerState
     @EnvironmentObject var pluginManager: AUPluginManager
+    @EnvironmentObject var vst3PluginHost: VST3PluginHost
 
     @StateObject private var layoutState = WorkspaceLayoutState()
     @StateObject private var transportState = TransportState()
@@ -60,6 +61,7 @@ struct TabBasedLayoutView: View {
                     mixerState: mixerState,
                     audioEngine: audioEngine,
                     pluginManager: pluginManager,
+                    vst3PluginHost: vst3PluginHost,
                     layoutState: layoutState
                 )
                 appState.pendingMixerToggle = false

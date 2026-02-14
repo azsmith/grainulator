@@ -22,19 +22,35 @@ import AVFoundation
 struct AUInsertSectionView: View {
     let channelIndex: Int
     let accentColor: Color
-    let audioEngine: AudioEngineWrapper
+    @ObservedObject var audioEngine: AudioEngineWrapper
     let pluginManager: AUPluginManager
+    let vst3PluginHost: VST3PluginHost?
 
     @State private var showInsertPopover = false
+    @State private var slotData0: InsertSlotData = .empty
+    @State private var slotData1: InsertSlotData = .empty
+
+    init(channelIndex: Int, accentColor: Color, audioEngine: AudioEngineWrapper, pluginManager: AUPluginManager, vst3PluginHost: VST3PluginHost? = nil) {
+        self.channelIndex = channelIndex
+        self.accentColor = accentColor
+        self._audioEngine = ObservedObject(wrappedValue: audioEngine)
+        self.pluginManager = pluginManager
+        self.vst3PluginHost = vst3PluginHost
+    }
+
+    private func refreshSlotData(source: String = "") {
+        slotData0 = audioEngine.getInsertSlotData(channelIndex: channelIndex, slotIndex: 0)
+        slotData1 = audioEngine.getInsertSlotData(channelIndex: channelIndex, slotIndex: 1)
+    }
 
     var body: some View {
         HStack(spacing: 4) {
             AUSlotIndicator(
-                slotData: audioEngine.getInsertSlotData(channelIndex: channelIndex, slotIndex: 0),
+                slotData: slotData0,
                 accentColor: accentColor
             )
             AUSlotIndicator(
-                slotData: audioEngine.getInsertSlotData(channelIndex: channelIndex, slotIndex: 1),
+                slotData: slotData1,
                 accentColor: accentColor
             )
         }
@@ -58,9 +74,14 @@ struct AUInsertSectionView: View {
             )
             .environmentObject(audioEngine)
             .environmentObject(pluginManager)
+            .environmentObject(vst3PluginHost ?? VST3PluginHost(sampleRate: 48000, maxBlockSize: 2048))
         }
         .onDisappear {
             showInsertPopover = false
+        }
+        .onAppear { refreshSlotData(source: "onAppear") }
+        .onReceive(audioEngine.objectWillChange) { _ in
+            DispatchQueue.main.async { [self] in refreshSlotData(source: "onReceive") }
         }
     }
 }
@@ -122,9 +143,12 @@ struct AUInsertPopoverByIndex: View {
 
     @EnvironmentObject var audioEngine: AudioEngineWrapper
     @EnvironmentObject var pluginManager: AUPluginManager
+    @EnvironmentObject var vst3PluginHost: VST3PluginHost
 
     @State private var showBrowserForSlot: Int? = nil
     @State private var showPluginUIForSlot: Int? = nil
+
+    private var isVST3: Bool { audioEngine.pluginHostBackend == .vst3 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -137,9 +161,9 @@ struct AUInsertPopoverByIndex: View {
                 Spacer()
 
                 // Mode indicator
-                Text(audioEngine.graphMode == .multiChannel ? "AU MODE" : "LEGACY")
+                Text(backendBadgeText)
                     .font(.system(size: 8, weight: .medium, design: .monospaced))
-                    .foregroundColor(audioEngine.graphMode == .multiChannel ? ColorPalette.ledGreen : ColorPalette.textDimmed)
+                    .foregroundColor(backendBadgeColor)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(
@@ -151,8 +175,8 @@ struct AUInsertPopoverByIndex: View {
             Divider()
                 .background(ColorPalette.divider)
 
-            // Mode switch (if not in multi-channel mode)
-            if audioEngine.graphMode == .legacy {
+            // Legacy mode notice (AU backend only, not in multi-channel mode)
+            if !isVST3 && audioEngine.graphMode == .legacy {
                 legacyModeNotice
             }
 
@@ -176,12 +200,20 @@ struct AUInsertPopoverByIndex: View {
                     },
                     onToggleBypass: { [audioEngine] in
                         DispatchQueue.main.async {
-                            audioEngine.toggleInsertBypass(channelIndex: channelIndex, slotIndex: slotIndex)
+                            if audioEngine.pluginHostBackend == .vst3 {
+                                audioEngine.toggleVST3InsertBypass(channelIndex: channelIndex, slotIndex: slotIndex)
+                            } else {
+                                audioEngine.toggleInsertBypass(channelIndex: channelIndex, slotIndex: slotIndex)
+                            }
                         }
                     },
-                    onUnloadPlugin: { [audioEngine] in
+                    onUnloadPlugin: { [audioEngine, vst3PluginHost] in
                         DispatchQueue.main.async {
-                            audioEngine.unloadInsertPlugin(channelIndex: channelIndex, slotIndex: slotIndex)
+                            if audioEngine.pluginHostBackend == .vst3 {
+                                audioEngine.unloadVST3Insert(channelIndex: channelIndex, slotIndex: slotIndex, using: vst3PluginHost)
+                            } else {
+                                audioEngine.unloadInsertPlugin(channelIndex: channelIndex, slotIndex: slotIndex)
+                            }
                         }
                     }
                 )
@@ -191,27 +223,68 @@ struct AUInsertPopoverByIndex: View {
         .frame(width: 300)
         .background(ColorPalette.backgroundSecondary)
         .sheet(item: $showBrowserForSlot) { slotIndex in
-            AUPluginBrowserView(
-                isPresented: Binding(
-                    get: { showBrowserForSlot != nil },
-                    set: { if !$0 { showBrowserForSlot = nil } }
-                ),
-                onSelect: { [audioEngine, pluginManager] plugin in
-                    DispatchQueue.main.async {
-                        Task {
-                        try? await audioEngine.loadInsertPlugin(plugin, channelIndex: channelIndex, slotIndex: slotIndex, using: pluginManager)
+            if isVST3 {
+                AUPluginBrowserView(
+                    isPresented: Binding(
+                        get: { showBrowserForSlot != nil },
+                        set: { if !$0 { showBrowserForSlot = nil } }
+                    ),
+                    vst3Plugins: vst3PluginHost.scannedPlugins,
+                    onVST3Select: { [audioEngine, vst3PluginHost] descriptor in
+                        Task { @MainActor in
+                            do {
+                                try await audioEngine.loadVST3Insert(descriptor, channelIndex: channelIndex, slotIndex: slotIndex, using: vst3PluginHost)
+                            } catch {
+                                print("VST3 insert load failed: \(error)")
+                            }
                         }
                     }
-                }
-            )
-            .environmentObject(pluginManager)
+                )
+                .environmentObject(pluginManager)
+            } else {
+                AUPluginBrowserView(
+                    isPresented: Binding(
+                        get: { showBrowserForSlot != nil },
+                        set: { if !$0 { showBrowserForSlot = nil } }
+                    ),
+                    onSelect: { [audioEngine, pluginManager] plugin in
+                        DispatchQueue.main.async {
+                            Task {
+                                try? await audioEngine.loadInsertPlugin(plugin, channelIndex: channelIndex, slotIndex: slotIndex, using: pluginManager)
+                            }
+                        }
+                    }
+                )
+                .environmentObject(pluginManager)
+            }
         }
         .sheet(item: $showPluginUIForSlot) { slotIndex in
-            // Get AU and info through audioEngine
-            if let slots = audioEngine.getInsertSlots(forChannel: channelIndex),
-               slotIndex < slots.count,
-               let au = slots[slotIndex].audioUnit,
-               let info = slots[slotIndex].pluginInfo {
+            if isVST3 {
+                // VST3: open editor in floating window, then dismiss sheet
+                Color.clear.frame(width: 0, height: 0)
+                    .onAppear { [audioEngine, vst3PluginHost] in
+                        DispatchQueue.main.async {
+                            showPluginUIForSlot = nil
+                            guard channelIndex < audioEngine.vst3InsertSlots.count,
+                                  slotIndex < audioEngine.vst3InsertSlots[channelIndex].count,
+                                  let instance = audioEngine.vst3InsertSlots[channelIndex][slotIndex].instance as? VST3PluginInstanceWrapper else { return }
+                            let pluginName = instance.descriptor.name
+                            instance.requestViewController { vc in
+                                guard let vc else { return }
+                                let key = "vst3-insert-\(channelIndex)-\(slotIndex)"
+                                AUPluginWindowManager.shared.open(
+                                    viewController: vc,
+                                    title: pluginName,
+                                    subtitle: "CH \(channelIndex + 1) Insert \(slotIndex + 1)",
+                                    key: key
+                                )
+                            }
+                        }
+                    }
+            } else if let slots = audioEngine.getInsertSlots(forChannel: channelIndex),
+                      slotIndex < slots.count,
+                      let au = slots[slotIndex].audioUnit,
+                      let info = slots[slotIndex].pluginInfo {
                 let slotData = audioEngine.getInsertSlotData(channelIndex: channelIndex, slotIndex: slotIndex)
                 AUPluginWindowViewByIndex(
                     audioUnit: au,
@@ -235,6 +308,16 @@ struct AUInsertPopoverByIndex: View {
             showBrowserForSlot = nil
             showPluginUIForSlot = nil
         }
+    }
+
+    private var backendBadgeText: String {
+        if isVST3 { return "VST3" }
+        return audioEngine.graphMode == .multiChannel ? "AU MODE" : "LEGACY"
+    }
+
+    private var backendBadgeColor: Color {
+        if isVST3 { return ColorPalette.ledBlue }
+        return audioEngine.graphMode == .multiChannel ? ColorPalette.ledGreen : ColorPalette.textDimmed
     }
 
     private var legacyModeNotice: some View {
@@ -322,27 +405,32 @@ struct AUSlotEditorByIndex: View {
             }
 
             // Plugin info or "empty" state
-            if slotData.hasPlugin, let pluginInfo = slotData.pluginInfo {
-                // Plugin loaded
+            if slotData.hasPlugin {
+                // Plugin loaded — use AU info if available, otherwise PluginDescriptor
+                let displayName = slotData.pluginInfo?.name ?? slotData.pluginDescriptor?.name ?? "Plugin"
+                let displayManufacturer = slotData.pluginInfo?.manufacturerName ?? slotData.pluginDescriptor?.manufacturerName ?? ""
+                let displayCategory = slotData.pluginInfo?.category ?? slotData.pluginDescriptor?.category
+                let displayHasCustomView = slotData.pluginInfo?.hasCustomView ?? slotData.pluginDescriptor?.hasCustomView ?? false
+
                 HStack(spacing: 8) {
                     // Plugin icon
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(pluginInfo.category?.color ?? accentColor)
+                        .fill(displayCategory?.color ?? accentColor)
                         .frame(width: 32, height: 32)
                         .overlay(
-                            Image(systemName: pluginInfo.category?.iconName ?? "waveform")
+                            Image(systemName: displayCategory?.iconName ?? "waveform")
                                 .font(.system(size: 14))
                                 .foregroundColor(.white.opacity(0.8))
                         )
 
                     // Plugin name
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(pluginInfo.name)
+                        Text(displayName)
                             .font(.system(size: 11, weight: .medium, design: .monospaced))
                             .foregroundColor(.white)
                             .lineLimit(1)
 
-                        Text(pluginInfo.manufacturerName)
+                        Text(displayManufacturer)
                             .font(.system(size: 9, design: .monospaced))
                             .foregroundColor(ColorPalette.textDimmed)
                             .lineLimit(1)
@@ -353,7 +441,7 @@ struct AUSlotEditorByIndex: View {
                     // Action buttons
                     VStack(spacing: 4) {
                         // Open UI button
-                        if pluginInfo.hasCustomView {
+                        if displayHasCustomView {
                             Button(action: onShowPluginUI) {
                                 Image(systemName: "slider.horizontal.3")
                                     .font(.system(size: 10))
@@ -513,10 +601,11 @@ struct AUInsertSectionView_Previews: PreviewProvider {
     struct PreviewWrapper: View {
         @StateObject private var audioEngine = AudioEngineWrapper()
         @StateObject private var pluginManager = AUPluginManager()
+        @StateObject private var vst3PluginHost = VST3PluginHost(sampleRate: 48000, maxBlockSize: 2048)
 
         var body: some View {
             VStack(spacing: 20) {
-                AUInsertSectionView(channelIndex: 0, accentColor: ColorPalette.accentPlaits, audioEngine: audioEngine, pluginManager: pluginManager)
+                AUInsertSectionView(channelIndex: 0, accentColor: ColorPalette.accentPlaits, audioEngine: audioEngine, pluginManager: pluginManager, vst3PluginHost: vst3PluginHost)
             }
             .padding(20)
             .background(ColorPalette.backgroundPrimary)

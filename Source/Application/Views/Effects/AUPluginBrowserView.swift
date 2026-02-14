@@ -13,11 +13,37 @@ struct AUPluginBrowserView: View {
     @EnvironmentObject var pluginManager: AUPluginManager
 
     @Binding var isPresented: Bool
-    let onSelect: (AUPluginInfo) -> Void
+
+    /// AU plugin selection callback (used when browsing AU plugins)
+    let onSelect: ((AUPluginInfo) -> Void)?
+
+    /// VST3 plugin list (non-nil enables VST3 browsing mode)
+    let vst3Plugins: [PluginDescriptor]?
+
+    /// VST3 plugin selection callback (used when browsing VST3 plugins)
+    let onVST3Select: ((PluginDescriptor) -> Void)?
 
     @State private var searchText = ""
     @State private var selectedCategory: AUPluginCategory? = nil
     @State private var selectedManufacturer: String? = nil
+
+    private var isVST3Mode: Bool { vst3Plugins != nil }
+
+    /// AU-only convenience initializer (backward compatible)
+    init(isPresented: Binding<Bool>, onSelect: @escaping (AUPluginInfo) -> Void) {
+        self._isPresented = isPresented
+        self.onSelect = onSelect
+        self.vst3Plugins = nil
+        self.onVST3Select = nil
+    }
+
+    /// VST3 mode initializer
+    init(isPresented: Binding<Bool>, vst3Plugins: [PluginDescriptor], onVST3Select: @escaping (PluginDescriptor) -> Void) {
+        self._isPresented = isPresented
+        self.onSelect = nil
+        self.vst3Plugins = vst3Plugins
+        self.onVST3Select = onVST3Select
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -54,6 +80,18 @@ struct AUPluginBrowserView: View {
             Text("SELECT PLUGIN")
                 .font(Typography.panelTitle)
                 .foregroundColor(.white)
+
+            if isVST3Mode {
+                Text("VST3")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundColor(ColorPalette.ledBlue)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(ColorPalette.ledBlue.opacity(0.2))
+                    )
+            }
 
             Spacer()
 
@@ -191,83 +229,123 @@ struct AUPluginBrowserView: View {
         ScrollView {
             LazyVStack(spacing: 0) {
                 // "None" option to clear slot
-                    PluginRowView(
-                        name: "None",
-                        manufacturer: "Clear slot",
-                        category: nil,
-                        isSelected: false
-                    ) {
+                PluginRowView(
+                    name: "None",
+                    manufacturer: "Clear slot",
+                    category: nil,
+                    isSelected: false
+                ) {
                     isPresented = false
                 }
 
                 Divider()
                     .background(ColorPalette.divider)
 
-                // Filtered plugins
-                ForEach(filteredPlugins) { plugin in
-                    PluginRowView(
-                        name: plugin.name,
-                        manufacturer: plugin.manufacturerName,
-                        category: plugin.category,
-                        isSelected: false
-                    ) {
-                        DispatchQueue.main.async {
-                            onSelect(plugin)
-                            isPresented = false
+                if isVST3Mode {
+                    // VST3 plugin list
+                    ForEach(filteredVST3Plugins) { plugin in
+                        PluginRowView(
+                            name: plugin.name,
+                            manufacturer: plugin.manufacturerName,
+                            category: plugin.category,
+                            isSelected: false
+                        ) {
+                            DispatchQueue.main.async {
+                                onVST3Select?(plugin)
+                                isPresented = false
+                            }
+                        }
+
+                        if plugin.id != filteredVST3Plugins.last?.id {
+                            Divider()
+                                .background(ColorPalette.divider.opacity(0.5))
                         }
                     }
 
-                    if plugin.id != filteredPlugins.last?.id {
-                        Divider()
-                            .background(ColorPalette.divider.opacity(0.5))
+                    if filteredVST3Plugins.isEmpty && !searchText.isEmpty {
+                        emptySearchView
                     }
-                }
+                } else {
+                    // AU plugin list
+                    ForEach(filteredPlugins) { plugin in
+                        PluginRowView(
+                            name: plugin.name,
+                            manufacturer: plugin.manufacturerName,
+                            category: plugin.category,
+                            isSelected: false
+                        ) {
+                            DispatchQueue.main.async {
+                                onSelect?(plugin)
+                                isPresented = false
+                            }
+                        }
 
-                if filteredPlugins.isEmpty && !searchText.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 24))
-                            .foregroundColor(ColorPalette.textDimmed)
-
-                        Text("No plugins found")
-                            .font(Typography.parameterLabel)
-                            .foregroundColor(ColorPalette.textMuted)
-
-                        Text("Try adjusting your search or filters")
-                            .font(Typography.parameterLabelSmall)
-                            .foregroundColor(ColorPalette.textDimmed)
+                        if plugin.id != filteredPlugins.last?.id {
+                            Divider()
+                                .background(ColorPalette.divider.opacity(0.5))
+                        }
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(40)
+
+                    if filteredPlugins.isEmpty && !searchText.isEmpty {
+                        emptySearchView
+                    }
                 }
             }
         }
+    }
+
+    private var emptySearchView: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 24))
+                .foregroundColor(ColorPalette.textDimmed)
+
+            Text("No plugins found")
+                .font(Typography.parameterLabel)
+                .foregroundColor(ColorPalette.textMuted)
+
+            Text("Try adjusting your search or filters")
+                .font(Typography.parameterLabelSmall)
+                .foregroundColor(ColorPalette.textDimmed)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(40)
     }
 
     // MARK: - Computed Properties
 
     private var filteredPlugins: [AUPluginInfo] {
         pluginManager.availableEffects.filter { plugin in
-            // Search filter
             let matchesSearch = searchText.isEmpty ||
                 plugin.name.localizedCaseInsensitiveContains(searchText) ||
                 plugin.manufacturerName.localizedCaseInsensitiveContains(searchText)
-
-            // Category filter
             let matchesCategory = selectedCategory == nil ||
                 plugin.category == selectedCategory
-
-            // Manufacturer filter
             let matchesManufacturer = selectedManufacturer == nil ||
                 plugin.manufacturerName == selectedManufacturer
+            return matchesSearch && matchesCategory && matchesManufacturer
+        }
+    }
 
+    private var filteredVST3Plugins: [PluginDescriptor] {
+        guard let plugins = vst3Plugins else { return [] }
+        return plugins.filter { plugin in
+            let matchesSearch = searchText.isEmpty ||
+                plugin.name.localizedCaseInsensitiveContains(searchText) ||
+                plugin.manufacturerName.localizedCaseInsensitiveContains(searchText)
+            let matchesCategory = selectedCategory == nil ||
+                plugin.category == selectedCategory
+            let matchesManufacturer = selectedManufacturer == nil ||
+                plugin.manufacturerName == selectedManufacturer
             return matchesSearch && matchesCategory && matchesManufacturer
         }
     }
 
     private var manufacturers: [String] {
-        let allManufacturers = Set(pluginManager.availableEffects.map { $0.manufacturerName })
-        return allManufacturers.sorted()
+        if isVST3Mode, let plugins = vst3Plugins {
+            return Set(plugins.map { $0.manufacturerName }).sorted()
+        }
+        return Set(pluginManager.availableEffects.map { $0.manufacturerName }).sorted()
     }
 }
 

@@ -40,6 +40,16 @@ final class AUPluginWindowManager {
         }
     }
 
+    /// Opens a pre-made view controller (e.g. VST3 editor) in a floating NSPanel.
+    /// If a window is already open for this key, it brings it to front.
+    func open(viewController: NSViewController, title: String, subtitle: String = "", key: String) {
+        if let existing = openWindows[key], existing.isVisible {
+            existing.makeKeyAndOrderFront(nil)
+            return
+        }
+        presentWindow(viewController: viewController, title: title, subtitle: subtitle, key: key)
+    }
+
     /// Closes a plugin window by key
     func close(key: String) {
         if let window = openWindows[key] {
@@ -53,7 +63,7 @@ final class AUPluginWindowManager {
         return openWindows[key]?.isVisible ?? false
     }
 
-    private func presentWindow(viewController: NSViewController?, audioUnit: AVAudioUnit, title: String, subtitle: String, key: String) {
+    private func presentWindow(viewController: NSViewController?, audioUnit: AVAudioUnit? = nil, title: String, subtitle: String, key: String) {
         guard let vc = viewController else {
             // Plugin has no custom UI — show a small info panel
             let alert = NSAlert()

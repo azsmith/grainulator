@@ -54,6 +54,18 @@ func AudioEngine_ClearChannelInsert(_ handle: OpaquePointer, _ channelIndex: Int
 @_silgen_name("AudioEngine_SetChannelInsertBypassed")
 func AudioEngine_SetChannelInsertBypassed(_ handle: OpaquePointer, _ channelIndex: Int32, _ slotIndex: Int32, _ bypassed: Bool)
 
+@_silgen_name("AudioEngine_SetSendPlugin")
+func AudioEngine_SetSendPlugin(_ handle: OpaquePointer, _ sendIndex: Int32, _ pluginHandle: UnsafeMutableRawPointer?)
+
+@_silgen_name("AudioEngine_ClearSendPlugin")
+func AudioEngine_ClearSendPlugin(_ handle: OpaquePointer, _ sendIndex: Int32)
+
+@_silgen_name("AudioEngine_SetSendPluginBypassed")
+func AudioEngine_SetSendPluginBypassed(_ handle: OpaquePointer, _ sendIndex: Int32, _ bypassed: Bool)
+
+@_silgen_name("AudioEngine_SetSendReturnLevel")
+func AudioEngine_SetSendReturnLevel(_ handle: OpaquePointer, _ sendIndex: Int32, _ level: Float)
+
 @_silgen_name("AudioEngine_GetCPULoad")
 func AudioEngine_GetCPULoad(_ handle: OpaquePointer) -> Float
 
@@ -508,16 +520,50 @@ class AudioEngineWrapper: ObservableObject {
 
     /// Controls whether AU or VST3 is used for plugin hosting.
     /// Default is .au until VST3 backend reaches parity.
-    @Published var pluginHostBackend: PluginBackend = .au {
+    @Published var pluginHostBackend: PluginBackend = .vst3 {
         didSet {
             guard oldValue != pluginHostBackend else { return }
             if pluginHostBackend == .vst3 {
                 installVST3InsertCallback()
             } else {
+                // Clear VST3 send plugin handles before removing callback
+                if let handle = cppEngineHandle {
+                    for i in 0..<vst3SendSlots.count {
+                        if vst3SendSlots[i].descriptor != nil {
+                            AudioEngine_ClearSendPlugin(handle, Int32(i))
+                        }
+                    }
+                }
                 removeVST3InsertCallback()
             }
         }
     }
+
+    // MARK: - VST3 Insert Slot State
+
+    struct VST3InsertSlotState {
+        var descriptor: PluginDescriptor?
+        var instance: PluginInstance?
+        var isBypassed: Bool = false
+        var isLoading: Bool = false
+    }
+
+    @Published var vst3InsertSlots: [[VST3InsertSlotState]] = Array(
+        repeating: Array(repeating: VST3InsertSlotState(), count: 2),
+        count: 8
+    )
+
+    // MARK: - VST3 Send Slot State
+
+    struct VST3SendSlotState {
+        var descriptor: PluginDescriptor?
+        var instance: PluginInstance?
+        var isBypassed: Bool = false
+        var isLoading: Bool = false
+        var returnLevel: Float = 0.5
+    }
+
+    @Published var vst3SendSlots: [VST3SendSlotState] = [VST3SendSlotState(), VST3SendSlotState()]
 
     // MARK: - Private Properties
 
@@ -1280,6 +1326,23 @@ class AudioEngineWrapper: ObservableObject {
     /// Gets slot data as a value type (avoids @ObservedObject crashes in SwiftUI)
     /// Uses thread-safe accessors so SwiftUI can safely call this from any thread
     func getInsertSlotData(channelIndex: Int, slotIndex: Int) -> InsertSlotData {
+        // Check VST3 slots first if VST3 backend is active (no dependency on channelInsertSlots)
+        if pluginHostBackend == .vst3 {
+            guard channelIndex < vst3InsertSlots.count,
+                  slotIndex < vst3InsertSlots[channelIndex].count else {
+                return InsertSlotData.empty
+            }
+            let vst3Slot = vst3InsertSlots[channelIndex][slotIndex]
+            return InsertSlotData(
+                hasPlugin: vst3Slot.descriptor != nil,
+                pluginName: vst3Slot.descriptor?.name,
+                pluginInfo: nil,
+                pluginDescriptor: vst3Slot.descriptor,
+                isBypassed: vst3Slot.isBypassed,
+                isLoading: vst3Slot.isLoading
+            )
+        }
+
         guard channelIndex < channelInsertSlots.count,
               slotIndex < channelInsertSlots[channelIndex].count else {
             return InsertSlotData.empty
@@ -1292,6 +1355,7 @@ class AudioEngineWrapper: ObservableObject {
             hasPlugin: slot.hasPluginSafe,
             pluginName: slot.pluginNameSafe,
             pluginInfo: slot.pluginInfoSafe,
+            pluginDescriptor: nil,
             isBypassed: slot.isBypassedSafe,
             isLoading: slot.isLoadingSafe
         )
@@ -1341,12 +1405,16 @@ class AudioEngineWrapper: ObservableObject {
     /// Install the VST3 insert process callback on the C++ engine.
     /// Call once at startup when VST3 backend is selected.
     func installVST3InsertCallback() {
-        guard let handle = cppEngineHandle else { return }
+        guard let handle = cppEngineHandle else {
+            print("[VST3 Insert] installVST3InsertCallback: no engine handle")
+            return
+        }
         let callback: InsertProcessCallbackFn = { pluginHandle, left, right, numFrames in
             guard let pluginHandle = pluginHandle, let left = left, let right = right else { return }
             VST3Host_Process(OpaquePointer(pluginHandle), left, right, numFrames)
         }
         AudioEngine_SetInsertProcessCallback(handle, callback)
+        print("[VST3 Insert] Process callback installed on C++ engine")
     }
 
     /// Remove the VST3 insert process callback from the C++ engine.
@@ -1357,26 +1425,94 @@ class AudioEngineWrapper: ObservableObject {
 
     /// Load a VST3 plugin into a channel insert slot (processes in C++ render path).
     func loadVST3Insert(_ descriptor: PluginDescriptor, channelIndex: Int, slotIndex: Int, using vst3Host: VST3PluginHost) async throws {
-        guard let handle = cppEngineHandle else { throw AUPluginError.instantiationFailed }
-
-        let instance = try await vst3Host.instantiate(descriptor, outOfProcess: false)
-        guard let pluginHandle = instance.vst3Handle else {
+        guard let handle = cppEngineHandle else {
+            print("[VST3 Insert] No C++ engine handle")
+            throw AUPluginError.instantiationFailed
+        }
+        guard channelIndex < vst3InsertSlots.count, slotIndex < vst3InsertSlots[channelIndex].count else {
+            print("[VST3 Insert] Invalid channel \(channelIndex) or slot \(slotIndex)")
             throw AUPluginError.instantiationFailed
         }
 
-        AudioEngine_SetChannelInsert(handle, Int32(channelIndex), Int32(slotIndex), UnsafeMutableRawPointer(pluginHandle))
+        print("[VST3 Insert] Loading \(descriptor.name) into ch=\(channelIndex) slot=\(slotIndex)")
+        var slots = vst3InsertSlots
+        slots[channelIndex][slotIndex].isLoading = true
+        vst3InsertSlots = slots
+
+        do {
+            let instance = try await vst3Host.instantiate(descriptor, outOfProcess: false)
+            print("[VST3 Insert] Instantiated \(descriptor.name), handle=\(String(describing: instance.vst3Handle))")
+            guard let pluginHandle = instance.vst3Handle else {
+                print("[VST3 Insert] No vst3Handle on instance")
+                var s = vst3InsertSlots
+                s[channelIndex][slotIndex].isLoading = false
+                vst3InsertSlots = s
+                throw AUPluginError.instantiationFailed
+            }
+
+            // Install the callback if not already active
+            installVST3InsertCallback()
+            print("[VST3 Insert] Callback installed, setting channel insert")
+
+            AudioEngine_SetChannelInsert(handle, Int32(channelIndex), Int32(slotIndex), UnsafeMutableRawPointer(pluginHandle))
+
+            // Assign to a local copy and set the whole array to ensure @Published fires
+            var updatedSlots = vst3InsertSlots
+            updatedSlots[channelIndex][slotIndex] = VST3InsertSlotState(
+                descriptor: descriptor,
+                instance: instance,
+                isBypassed: false,
+                isLoading: false
+            )
+            vst3InsertSlots = updatedSlots
+            print("[VST3 Insert] Loaded \(descriptor.name) ch=\(channelIndex) slot=\(slotIndex)")
+        } catch {
+            print("[VST3 Insert] Failed to load \(descriptor.name): \(error)")
+            var slots = vst3InsertSlots
+            slots[channelIndex][slotIndex].isLoading = false
+            vst3InsertSlots = slots
+            throw error
+        }
     }
 
     /// Unload a VST3 plugin from a channel insert slot.
-    func unloadVST3Insert(channelIndex: Int, slotIndex: Int) {
+    func unloadVST3Insert(channelIndex: Int, slotIndex: Int, using vst3Host: VST3PluginHost) {
         guard let handle = cppEngineHandle else { return }
+        guard channelIndex < vst3InsertSlots.count, slotIndex < vst3InsertSlots[channelIndex].count else { return }
+
+        // Close any open editor window for this slot
+        AUPluginWindowManager.shared.close(key: "vst3-insert-\(channelIndex)-\(slotIndex)")
+
         AudioEngine_ClearChannelInsert(handle, Int32(channelIndex), Int32(slotIndex))
+
+        if let instance = vst3InsertSlots[channelIndex][slotIndex].instance {
+            vst3Host.release(instance)
+        }
+
+        var slots = vst3InsertSlots
+        slots[channelIndex][slotIndex] = VST3InsertSlotState()
+        vst3InsertSlots = slots
     }
 
     /// Toggle bypass for a VST3 insert slot.
+    func toggleVST3InsertBypass(channelIndex: Int, slotIndex: Int) {
+        guard let handle = cppEngineHandle else { return }
+        guard channelIndex < vst3InsertSlots.count, slotIndex < vst3InsertSlots[channelIndex].count else { return }
+
+        let newState = !vst3InsertSlots[channelIndex][slotIndex].isBypassed
+        var slots = vst3InsertSlots
+        slots[channelIndex][slotIndex].isBypassed = newState
+        vst3InsertSlots = slots
+        AudioEngine_SetChannelInsertBypassed(handle, Int32(channelIndex), Int32(slotIndex), newState)
+    }
+
+    /// Toggle bypass for a VST3 insert slot (set directly).
     func setVST3InsertBypassed(channelIndex: Int, slotIndex: Int, bypassed: Bool) {
         guard let handle = cppEngineHandle else { return }
         AudioEngine_SetChannelInsertBypassed(handle, Int32(channelIndex), Int32(slotIndex), bypassed)
+        if channelIndex < vst3InsertSlots.count, slotIndex < vst3InsertSlots[channelIndex].count {
+            vst3InsertSlots[channelIndex][slotIndex].isBypassed = bypassed
+        }
     }
 
     /// Toggles bypass state for an insert slot (safe for use from button actions)
@@ -1389,6 +1525,100 @@ class AudioEngineWrapper: ObservableObject {
         let slot = channelInsertSlots[channelIndex][slotIndex]
         slot.setBypass(!slot.isBypassed)
         rebuildChannelChain(channelIndex)
+    }
+
+    // MARK: - VST3 Send Processing
+
+    /// Load a VST3 plugin into a send bus slot.
+    func loadVST3Send(_ descriptor: PluginDescriptor, busIndex: Int, using vst3Host: VST3PluginHost) async throws {
+        guard let handle = cppEngineHandle else {
+            print("[VST3 Send] No C++ engine handle")
+            throw AUPluginError.instantiationFailed
+        }
+        guard busIndex >= 0, busIndex < vst3SendSlots.count else {
+            print("[VST3 Send] Invalid bus index \(busIndex)")
+            throw AUPluginError.instantiationFailed
+        }
+
+        print("[VST3 Send] Loading \(descriptor.name) into send bus \(busIndex)")
+        var slots = vst3SendSlots
+        slots[busIndex].isLoading = true
+        vst3SendSlots = slots
+
+        do {
+            let instance = try await vst3Host.instantiate(descriptor, outOfProcess: false)
+            guard let pluginHandle = instance.vst3Handle else {
+                print("[VST3 Send] No vst3Handle on instance")
+                var s = vst3SendSlots
+                s[busIndex].isLoading = false
+                vst3SendSlots = s
+                throw AUPluginError.instantiationFailed
+            }
+
+            // Install the callback if not already active
+            installVST3InsertCallback()
+
+            AudioEngine_SetSendPlugin(handle, Int32(busIndex), UnsafeMutableRawPointer(pluginHandle))
+
+            var updatedSlots = vst3SendSlots
+            updatedSlots[busIndex] = VST3SendSlotState(
+                descriptor: descriptor,
+                instance: instance,
+                isBypassed: false,
+                isLoading: false,
+                returnLevel: updatedSlots[busIndex].returnLevel
+            )
+            vst3SendSlots = updatedSlots
+            print("[VST3 Send] Loaded \(descriptor.name) on send bus \(busIndex)")
+        } catch {
+            print("[VST3 Send] Failed to load \(descriptor.name): \(error)")
+            var slots = vst3SendSlots
+            slots[busIndex].isLoading = false
+            vst3SendSlots = slots
+            throw error
+        }
+    }
+
+    /// Unload a VST3 plugin from a send bus slot.
+    func unloadVST3Send(busIndex: Int, using vst3Host: VST3PluginHost) {
+        guard let handle = cppEngineHandle else { return }
+        guard busIndex >= 0, busIndex < vst3SendSlots.count else { return }
+
+        // Close any open editor window
+        AUPluginWindowManager.shared.close(key: "vst3-send-\(busIndex)")
+
+        AudioEngine_ClearSendPlugin(handle, Int32(busIndex))
+
+        if let instance = vst3SendSlots[busIndex].instance {
+            vst3Host.release(instance)
+        }
+
+        var slots = vst3SendSlots
+        slots[busIndex] = VST3SendSlotState()
+        vst3SendSlots = slots
+    }
+
+    /// Toggle bypass for a VST3 send slot.
+    func toggleVST3SendBypass(busIndex: Int) {
+        guard let handle = cppEngineHandle else { return }
+        guard busIndex >= 0, busIndex < vst3SendSlots.count else { return }
+
+        let newState = !vst3SendSlots[busIndex].isBypassed
+        var slots = vst3SendSlots
+        slots[busIndex].isBypassed = newState
+        vst3SendSlots = slots
+        AudioEngine_SetSendPluginBypassed(handle, Int32(busIndex), newState)
+    }
+
+    /// Set the return level for a VST3 send slot.
+    func setVST3SendReturnLevel(busIndex: Int, level: Float) {
+        guard let handle = cppEngineHandle else { return }
+        guard busIndex >= 0, busIndex < vst3SendSlots.count else { return }
+
+        var slots = vst3SendSlots
+        slots[busIndex].returnLevel = level
+        vst3SendSlots = slots
+        AudioEngine_SetSendReturnLevel(handle, Int32(busIndex), level)
     }
 
     /// Gets the send delay slot
@@ -1404,6 +1634,10 @@ class AudioEngineWrapper: ObservableObject {
     /// Toggles bypass state for a send effect slot (safe for use from button actions)
     @MainActor
     func toggleSendBypass(busIndex: Int) {
+        if pluginHostBackend == .vst3 {
+            toggleVST3SendBypass(busIndex: busIndex)
+            return
+        }
         let slot = busIndex == 0 ? sendDelaySlot : sendReverbSlot
         guard let slot = slot else { return }
         slot.setBypass(!slot.isBypassed)
@@ -1414,7 +1648,11 @@ class AudioEngineWrapper: ObservableObject {
 
     /// Unloads a send effect plugin (safe for use from button actions)
     @MainActor
-    func unloadSendPlugin(busIndex: Int) {
+    func unloadSendPlugin(busIndex: Int, vst3Host: VST3PluginHost? = nil) {
+        if pluginHostBackend == .vst3, let vst3Host = vst3Host {
+            unloadVST3Send(busIndex: busIndex, using: vst3Host)
+            return
+        }
         let slot = busIndex == 0 ? sendDelaySlot : sendReverbSlot
         guard let slot = slot else { return }
 
@@ -1444,6 +1682,19 @@ class AudioEngineWrapper: ObservableObject {
     /// Gets send slot data as a value type (avoids @ObservedObject crashes in SwiftUI)
     /// Uses thread-safe accessors so SwiftUI can safely call this from any thread
     func getSendSlotData(busIndex: Int) -> SendSlotData {
+        if pluginHostBackend == .vst3 {
+            guard busIndex >= 0, busIndex < vst3SendSlots.count else { return SendSlotData.empty }
+            let state = vst3SendSlots[busIndex]
+            return SendSlotData(
+                hasPlugin: state.descriptor != nil,
+                pluginName: state.descriptor?.name,
+                pluginInfo: nil,
+                pluginDescriptor: state.descriptor,
+                isBypassed: state.isBypassed,
+                isLoading: state.isLoading,
+                returnLevel: state.returnLevel
+            )
+        }
         let slot = busIndex == 0 ? sendDelaySlot : sendReverbSlot
         guard let slot = slot else {
             return SendSlotData.empty
@@ -1455,6 +1706,7 @@ class AudioEngineWrapper: ObservableObject {
             hasPlugin: slot.hasPluginSafe,
             pluginName: slot.pluginNameSafe,
             pluginInfo: slot.pluginInfoSafe,
+            pluginDescriptor: nil,
             isBypassed: slot.isBypassedSafe,
             isLoading: slot.isLoadingSafe,
             returnLevel: slot.returnLevelSafe
@@ -1490,6 +1742,10 @@ class AudioEngineWrapper: ObservableObject {
     /// Sets a send return level without exposing slot object lifetime to views.
     @MainActor
     func setSendReturnLevel(busIndex: Int, level: Float) {
+        if pluginHostBackend == .vst3 {
+            setVST3SendReturnLevel(busIndex: busIndex, level: level)
+            return
+        }
         let slot = busIndex == 0 ? sendDelaySlot : sendReverbSlot
         slot?.setReturnLevel(level)
         if graphMode == .legacy {
@@ -3211,6 +3467,7 @@ struct InsertSlotData {
     let hasPlugin: Bool
     let pluginName: String?
     let pluginInfo: AUPluginInfo?
+    let pluginDescriptor: PluginDescriptor?
     let isBypassed: Bool
     let isLoading: Bool
 
@@ -3218,6 +3475,7 @@ struct InsertSlotData {
         hasPlugin: false,
         pluginName: nil,
         pluginInfo: nil,
+        pluginDescriptor: nil,
         isBypassed: false,
         isLoading: false
     )
@@ -3231,6 +3489,7 @@ struct SendSlotData {
     let hasPlugin: Bool
     let pluginName: String?
     let pluginInfo: AUPluginInfo?
+    let pluginDescriptor: PluginDescriptor?
     let isBypassed: Bool
     let isLoading: Bool
     let returnLevel: Float
@@ -3239,6 +3498,7 @@ struct SendSlotData {
         hasPlugin: false,
         pluginName: nil,
         pluginInfo: nil,
+        pluginDescriptor: nil,
         isBypassed: false,
         isLoading: false,
         returnLevel: 0.5

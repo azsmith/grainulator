@@ -25,6 +25,47 @@
 
 namespace Grainulator {
 
+// Callback type for plugin-initiated resize requests
+using EditorResizeCallback = void (*)(void* context, int width, int height);
+
+/// IPlugFrame implementation that routes plugin resize requests to a callback.
+class VST3PlugFrame : public Steinberg::IPlugFrame {
+public:
+    void setResizeCallback(EditorResizeCallback callback, void* context) {
+        m_callback = callback;
+        m_context = context;
+    }
+
+    // IPlugFrame
+    Steinberg::tresult PLUGIN_API resizeView(Steinberg::IPlugView* view,
+                                              Steinberg::ViewRect* newSize) override {
+        if (!view || !newSize) return Steinberg::kInvalidArgument;
+        view->onSize(newSize);
+        if (m_callback) {
+            m_callback(m_context, newSize->getWidth(), newSize->getHeight());
+        }
+        return Steinberg::kResultOk;
+    }
+
+    // FUnknown
+    Steinberg::tresult PLUGIN_API queryInterface(const Steinberg::TUID iid, void** obj) override {
+        QUERY_INTERFACE(iid, obj, Steinberg::FUnknown::iid, IPlugFrame)
+        QUERY_INTERFACE(iid, obj, IPlugFrame::iid, IPlugFrame)
+        *obj = nullptr;
+        return Steinberg::kNoInterface;
+    }
+    Steinberg::uint32 PLUGIN_API addRef() override { return ++m_refCount; }
+    Steinberg::uint32 PLUGIN_API release() override {
+        if (--m_refCount == 0) { delete this; return 0; }
+        return m_refCount;
+    }
+
+private:
+    EditorResizeCallback m_callback = nullptr;
+    void* m_context = nullptr;
+    Steinberg::uint32 m_refCount = 1;
+};
+
 // Forward declarations
 class VST3PluginInstance;
 
@@ -34,6 +75,7 @@ struct VST3PluginDescriptor {
     std::string vendor;
     std::string category;
     Steinberg::FUID classID;
+    std::string bundlePath;  // Path to .vst3 bundle (cached during scan)
     bool hasEditor = false;
 
     /// classID as 32-char hex string
@@ -120,10 +162,12 @@ public:
     void setParameter(Steinberg::Vst::ParamID id, double value);
     double getParameter(Steinberg::Vst::ParamID id) const;
 
-    /// Editor
+    /// Editor lifecycle
     bool hasEditor() const;
-    void* createEditorView();  // Returns NSView*
-    void destroyEditorView();
+    bool prepareEditor(int& outWidth, int& outHeight);
+    bool attachEditorToView(void* parentNSView);
+    void setEditorResizeCallback(EditorResizeCallback callback, void* context);
+    void detachEditor();
 
     const VST3PluginDescriptor& descriptor() const { return m_descriptor; }
 
@@ -139,6 +183,7 @@ private:
     Steinberg::IPtr<Steinberg::Vst::IAudioProcessor> m_processor;
     Steinberg::IPtr<Steinberg::Vst::IEditController> m_controller;
     Steinberg::IPtr<Steinberg::IPlugView> m_plugView;
+    Steinberg::IPtr<VST3PlugFrame> m_plugFrame;
 
     // Processing buffers
     float* m_inputBuffers[2] = {nullptr, nullptr};
