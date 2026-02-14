@@ -622,4 +622,9 @@ int AudioEngine_ReadMasterCaptureBuffer(AudioEngineHandle handle, float* left, f
     return static_cast<AudioEngine*>(handle)->readMasterCaptureBuffer(left, right, maxFrames);
 }
 
+float AudioEngine_GetCompressorGainReduction(AudioEngineHandle handle) {
+    if (!handle) return 0.0f;
+    return static_cast<AudioEngine*>(handle)->getCompressorGainReductionDb();
+}
+
 } // extern "C"

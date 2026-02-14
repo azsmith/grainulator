@@ -145,6 +145,9 @@ bool AudioEngine_LoadPlaitsSixOpCustomBank(AudioEngineHandle handle, const uint8
 void AudioEngine_SetPlaitsSixOpCustomMode(AudioEngineHandle handle, bool enabled);
 void AudioEngine_SetPlaitsSixOpCustomPatch(AudioEngineHandle handle, int patchIndex);
 
+// Master compressor metering
+float AudioEngine_GetCompressorGainReduction(AudioEngineHandle handle);
+
 #ifdef __cplusplus
 }
 #endif

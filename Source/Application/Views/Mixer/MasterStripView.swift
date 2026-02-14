@@ -13,6 +13,7 @@ struct ProMasterStripView: View {
     @ObservedObject var master: MasterChannelState
     let audioEngine: AudioEngineWrapper
     let showNeedleMeter: Bool
+    @State private var showCompressor: Bool = false
 
     init(master: MasterChannelState, audioEngine: AudioEngineWrapper, showNeedleMeter: Bool = true) {
         self.master = master
@@ -257,6 +258,37 @@ struct ProMasterStripView: View {
                 .onChange(of: master.filterResonance) { newValue in
                     audioEngine.setParameter(id: .masterFilterResonance, value: newValue)
                 }
+            }
+
+            // Compressor popover button
+            Button(action: { showCompressor.toggle() }) {
+                HStack(spacing: 3) {
+                    // GR indicator dot
+                    Circle()
+                        .fill(master.compGainReduction > 0.5
+                              ? ColorPalette.ledAmber
+                              : (master.compEnabled ? ColorPalette.ledGreen : ColorPalette.ledOff))
+                        .frame(width: 5, height: 5)
+                    Text("COMP")
+                        .font(Typography.buttonSmall)
+                        .foregroundColor(master.compEnabled ? .white : ColorPalette.textMuted)
+                }
+                .frame(width: 54, height: 20)
+                .background(
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(showCompressor
+                              ? ColorPalette.accentMaster.opacity(0.3)
+                              : ColorPalette.backgroundPrimary)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 3)
+                        .stroke(ColorPalette.accentMaster.opacity(0.4), lineWidth: 0.5)
+                )
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $showCompressor) {
+                MasterCompressorView(master: master, audioEngine: audioEngine)
+                    .frame(width: 360, height: 310)
             }
         }
         .padding(.vertical, 8)

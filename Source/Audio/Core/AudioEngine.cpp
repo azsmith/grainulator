@@ -26,6 +26,7 @@
 #include "Granular/MoogLadders/HyperionModel.h"
 #include "Granular/MoogLadders/DaisyLadderModel.h"
 #include "Granular/MoogLadders/CytomicSvfModel.h"
+#include "MasterCompressor.h"
 #include <cstring>
 #include <cmath>
 #include <algorithm>
@@ -377,6 +378,9 @@ bool AudioEngine::initialize(int sampleRate, int bufferSize) {
 
     // Initialize master filter
     initMasterFilter();
+
+    // Initialize master compressor
+    initMasterCompressor();
 
     m_initialized.store(true);
     return true;
@@ -1262,6 +1266,9 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
             // Apply smoothed master gain
             sampleL *= m_masterGainSmoothed;
             sampleR *= m_masterGainSmoothed;
+
+            // Apply master compressor
+            processMasterCompressor(sampleL, sampleR);
 
             // Soft clip
             m_processingBuffer[0][i] = std::tanh(sampleL);
@@ -2520,6 +2527,38 @@ void AudioEngine::setParameter(ParameterID id, int voiceIndex, float value) {
                 m_wavSamplerVoice->SetUseSfzEnvelopes(m_samplerMode == SamplerMode::Sfz);
             break;
 
+        // ========== Master Compressor Parameters ==========
+        case ParameterID::MasterCompThreshold:
+            if (m_masterCompressor) m_masterCompressor->setThreshold(clampedValue);
+            break;
+        case ParameterID::MasterCompRatio:
+            if (m_masterCompressor) m_masterCompressor->setRatio(clampedValue);
+            break;
+        case ParameterID::MasterCompAttack:
+            if (m_masterCompressor) m_masterCompressor->setAttack(clampedValue);
+            break;
+        case ParameterID::MasterCompRelease:
+            if (m_masterCompressor) m_masterCompressor->setRelease(clampedValue);
+            break;
+        case ParameterID::MasterCompKnee:
+            if (m_masterCompressor) m_masterCompressor->setKnee(clampedValue);
+            break;
+        case ParameterID::MasterCompMakeup:
+            if (m_masterCompressor) m_masterCompressor->setMakeupGain(clampedValue);
+            break;
+        case ParameterID::MasterCompMix:
+            if (m_masterCompressor) m_masterCompressor->setMix(clampedValue);
+            break;
+        case ParameterID::MasterCompEnabled:
+            if (m_masterCompressor) m_masterCompressor->setEnabled(clampedValue > 0.5f);
+            break;
+        case ParameterID::MasterCompLimiter:
+            if (m_masterCompressor) m_masterCompressor->setLimiterEnabled(clampedValue > 0.5f);
+            break;
+        case ParameterID::MasterCompAutoMakeup:
+            if (m_masterCompressor) m_masterCompressor->setAutoMakeup(clampedValue > 0.5f);
+            break;
+
         default:
             break;
     }
@@ -2738,6 +2777,28 @@ float AudioEngine::getParameter(ParameterID id, int voiceIndex) const {
             if (m_samplerMode == SamplerMode::SoundFont) return 0.0f;
             if (m_samplerMode == SamplerMode::Sfz) return 0.5f;
             return 1.0f;  // WavSampler
+
+        // Master compressor parameters
+        case ParameterID::MasterCompThreshold:
+            return m_masterCompressor ? m_masterCompressor->getThreshold() : 0.75f;
+        case ParameterID::MasterCompRatio:
+            return m_masterCompressor ? m_masterCompressor->getRatio() : 0.158f;
+        case ParameterID::MasterCompAttack:
+            return m_masterCompressor ? m_masterCompressor->getAttack() : 0.37f;
+        case ParameterID::MasterCompRelease:
+            return m_masterCompressor ? m_masterCompressor->getRelease() : 0.46f;
+        case ParameterID::MasterCompKnee:
+            return m_masterCompressor ? m_masterCompressor->getKnee() : 0.5f;
+        case ParameterID::MasterCompMakeup:
+            return m_masterCompressor ? m_masterCompressor->getMakeupGain() : 0.0f;
+        case ParameterID::MasterCompMix:
+            return m_masterCompressor ? m_masterCompressor->getMix() : 1.0f;
+        case ParameterID::MasterCompEnabled:
+            return (m_masterCompressor && m_masterCompressor->isEnabled()) ? 1.0f : 0.0f;
+        case ParameterID::MasterCompLimiter:
+            return (m_masterCompressor && m_masterCompressor->isLimiterEnabled()) ? 1.0f : 0.0f;
+        case ParameterID::MasterCompAutoMakeup:
+            return (m_masterCompressor && m_masterCompressor->isAutoMakeup()) ? 1.0f : 0.0f;
 
         default:
             return 0.0f;
@@ -4055,6 +4116,23 @@ void AudioEngine::processMasterFilter(float& left, float& right) {
     // Snap to zero to prevent denormals
     if (std::fabs(left) < 1.0e-20f) left = 0.0f;
     if (std::fabs(right) < 1.0e-20f) right = 0.0f;
+}
+
+// MARK: - Master Compressor
+
+void AudioEngine::initMasterCompressor() {
+    m_masterCompressor = std::make_unique<MasterCompressor>();
+    m_masterCompressor->prepare(static_cast<float>(m_sampleRate));
+}
+
+void AudioEngine::processMasterCompressor(float& left, float& right) {
+    if (!m_masterCompressor) return;
+    m_masterCompressor->processSample(left, right);
+}
+
+float AudioEngine::getCompressorGainReductionDb() const {
+    if (!m_masterCompressor) return 0.0f;
+    return m_masterCompressor->getGainReductionDb();
 }
 
 // MARK: - MultiChannelRingBuffer Implementation

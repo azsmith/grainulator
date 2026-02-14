@@ -321,6 +321,9 @@ func AudioEngine_GetWavSamplerInstrumentName(_ handle: OpaquePointer) -> UnsafeP
 @_silgen_name("AudioEngine_SetSamplerMode")
 func AudioEngine_SetSamplerMode(_ handle: OpaquePointer, _ mode: Int32)
 
+@_silgen_name("AudioEngine_GetCompressorGainReduction")
+func AudioEngine_GetCompressorGainReduction(_ handle: OpaquePointer) -> Float
+
 /// Main audio engine wrapper that manages CoreAudio and the synthesis engine
 @MainActor
 class AudioEngineWrapper: ObservableObject {
@@ -1918,6 +1921,18 @@ class AudioEngineWrapper: ObservableObject {
         case .ringsChord: return 81
         case .ringsFM: return 82
         case .ringsExciterSource: return 83
+
+        // Master compressor parameters (84-93)
+        case .masterCompThreshold: return 84
+        case .masterCompRatio: return 85
+        case .masterCompAttack: return 86
+        case .masterCompRelease: return 87
+        case .masterCompKnee: return 88
+        case .masterCompMakeup: return 89
+        case .masterCompMix: return 90
+        case .masterCompEnabled: return 91
+        case .masterCompLimiter: return 92
+        case .masterCompAutoMakeup: return 93
         }
     }
 
@@ -1929,6 +1944,11 @@ class AudioEngineWrapper: ObservableObject {
     func getParameter(id: ParameterID, voiceIndex: Int = 0) -> Float {
         guard let handle = cppEngineHandle else { return 0 }
         return AudioEngine_GetParameter(handle, cppParameterID(for: id), Int32(voiceIndex))
+    }
+
+    func getCompressorGainReduction() -> Float {
+        guard let handle = cppEngineHandle else { return 0 }
+        return AudioEngine_GetCompressorGainReduction(handle)
     }
 
     func loadAudioFile(url: URL, reelIndex: Int) {
@@ -3096,6 +3116,18 @@ enum ParameterID {
     case ringsChord
     case ringsFM
     case ringsExciterSource
+
+    // Master compressor parameters
+    case masterCompThreshold
+    case masterCompRatio
+    case masterCompAttack
+    case masterCompRelease
+    case masterCompKnee
+    case masterCompMakeup
+    case masterCompMix
+    case masterCompEnabled
+    case masterCompLimiter
+    case masterCompAutoMakeup
 }
 
 // MARK: - Insert Slot Data (Value Type)

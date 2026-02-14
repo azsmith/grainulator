@@ -242,6 +242,19 @@ class MasterChannelState: ObservableObject {
     @Published var filterResonance: Float = 0.0
     @Published var filterModel: Int = 0
 
+    // Master compressor
+    @Published var compThreshold: Float = 0.75    // → -15 dB
+    @Published var compRatio: Float = 0.158       // → ~4:1
+    @Published var compAttack: Float = 0.37       // → ~5 ms
+    @Published var compRelease: Float = 0.46      // → ~100 ms
+    @Published var compKnee: Float = 0.5          // → 6 dB
+    @Published var compMakeup: Float = 0.0        // → 0 dB
+    @Published var compMix: Float = 1.0           // → 100%
+    @Published var compEnabled: Bool = true
+    @Published var compLimiter: Bool = true
+    @Published var compAutoMakeup: Bool = false
+    @Published var compGainReduction: Float = 0.0 // Updated from metering timer
+
     var gainDB: String {
         if gain < 0.001 { return "-∞" }
         let linearGain = gain * 2
@@ -443,6 +456,9 @@ class MixerState: ObservableObject {
         // Update master meters
         master.meterLevelL = audioEngine.masterLevelL
         master.meterLevelR = audioEngine.masterLevelR
+
+        // Update compressor gain reduction meter
+        master.compGainReduction = audioEngine.getCompressorGainReduction()
     }
 }
 

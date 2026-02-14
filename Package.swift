@@ -47,6 +47,7 @@ let package = Package(
             publicHeadersPath: "include",
             cxxSettings: [
                 .headerSearchPath("Core"),
+                .headerSearchPath("Effects"),
                 .headerSearchPath("Synthesis"),
                 .headerSearchPath("Synthesis/Rings"),
                 .headerSearchPath("Synthesis/Plaits"),

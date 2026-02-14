@@ -25,6 +25,7 @@ class PlaitsVoice;
 class DaisyDrumVoice;
 class SoundFontVoice;
 class WavSamplerVoice;
+class MasterCompressor;
 
 // Scope buffer constants (for oscilloscope visualization)
 constexpr int kScopeBufferSize = 32768;  // ~682ms @ 48kHz
@@ -255,7 +256,19 @@ public:
         RingsPolyphony,         // 0=1, 0.5=2, 1.0=4
         RingsChord,             // 0-1 maps to 0-10 chord index
         RingsFM,                // 0-1 maps to ±24 semitones
-        RingsExciterSource      // 0=internal, >0 maps to source channels
+        RingsExciterSource,     // 0=internal, >0 maps to source channels
+
+        // Master compressor parameters
+        MasterCompThreshold,    // 0-1 → -60 to 0 dB
+        MasterCompRatio,        // 0-1 → 1:1 to 20:1
+        MasterCompAttack,       // 0-1 → 0.1 to 100 ms (log)
+        MasterCompRelease,      // 0-1 → 10 to 1000 ms (log)
+        MasterCompKnee,         // 0-1 → 0 to 12 dB
+        MasterCompMakeup,       // 0-1 → 0 to 40 dB
+        MasterCompMix,          // 0-1 → dry/wet
+        MasterCompEnabled,      // 0 or 1
+        MasterCompLimiter,      // 0 or 1
+        MasterCompAutoMakeup    // 0 or 1
     };
 
     // Sampler engine mode: SoundFont (.sf2), SFZ, or WAV-based (mx.samples)
@@ -453,6 +466,9 @@ public:
 
     void setQuantizationMode(int voiceIndex, QuantizationMode mode);
     void setCustomIntervals(int voiceIndex, const float* intervals, int count);
+
+    // Compressor metering
+    float getCompressorGainReductionDb() const;
 
     // Performance metrics
     float getCPULoad() const;
@@ -727,6 +743,11 @@ private:
     void initMasterFilter();
     void updateMasterFilterParameters();
     void processMasterFilter(float& left, float& right);
+
+    // Master compressor
+    std::unique_ptr<MasterCompressor> m_masterCompressor;
+    void initMasterCompressor();
+    void processMasterCompressor(float& left, float& right);
 
     // Channel metering (peak levels, updated per buffer)
     std::atomic<float> m_channelLevels[kNumMixerChannels];
