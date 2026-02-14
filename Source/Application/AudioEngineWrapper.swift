@@ -39,6 +39,21 @@ func AudioEngine_GetParameter(_ handle: OpaquePointer, _ parameterId: Int32, _ v
 @_silgen_name("AudioEngine_SetChannelSendLevel")
 func AudioEngine_SetChannelSendLevel(_ handle: OpaquePointer, _ channelIndex: Int32, _ sendIndex: Int32, _ level: Float)
 
+// Per-channel insert processing (for VST3/AU plugin hosting in C++)
+typealias InsertProcessCallbackFn = @convention(c) (UnsafeMutableRawPointer?, UnsafeMutablePointer<Float>?, UnsafeMutablePointer<Float>?, Int32) -> Void
+
+@_silgen_name("AudioEngine_SetInsertProcessCallback")
+func AudioEngine_SetInsertProcessCallback(_ handle: OpaquePointer, _ callback: InsertProcessCallbackFn?)
+
+@_silgen_name("AudioEngine_SetChannelInsert")
+func AudioEngine_SetChannelInsert(_ handle: OpaquePointer, _ channelIndex: Int32, _ slotIndex: Int32, _ pluginHandle: UnsafeMutableRawPointer?)
+
+@_silgen_name("AudioEngine_ClearChannelInsert")
+func AudioEngine_ClearChannelInsert(_ handle: OpaquePointer, _ channelIndex: Int32, _ slotIndex: Int32)
+
+@_silgen_name("AudioEngine_SetChannelInsertBypassed")
+func AudioEngine_SetChannelInsertBypassed(_ handle: OpaquePointer, _ channelIndex: Int32, _ slotIndex: Int32, _ bypassed: Bool)
+
 @_silgen_name("AudioEngine_GetCPULoad")
 func AudioEngine_GetCPULoad(_ handle: OpaquePointer) -> Float
 
@@ -1304,6 +1319,49 @@ class AudioEngineWrapper: ObservableObject {
 
         slot.unloadPlugin()
         // The onAudioUnitChanged callback will trigger rebuildChannelChain
+    }
+
+    // MARK: - VST3 Insert Processing (C++ path)
+
+    /// Install the VST3 insert process callback on the C++ engine.
+    /// Call once at startup when VST3 backend is selected.
+    func installVST3InsertCallback() {
+        guard let handle = cppEngineHandle else { return }
+        let callback: InsertProcessCallbackFn = { pluginHandle, left, right, numFrames in
+            guard let pluginHandle = pluginHandle, let left = left, let right = right else { return }
+            VST3Host_Process(OpaquePointer(pluginHandle), left, right, numFrames)
+        }
+        AudioEngine_SetInsertProcessCallback(handle, callback)
+    }
+
+    /// Remove the VST3 insert process callback from the C++ engine.
+    func removeVST3InsertCallback() {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_SetInsertProcessCallback(handle, nil)
+    }
+
+    /// Load a VST3 plugin into a channel insert slot (processes in C++ render path).
+    func loadVST3Insert(_ descriptor: PluginDescriptor, channelIndex: Int, slotIndex: Int, using vst3Host: VST3PluginHost) async throws {
+        guard let handle = cppEngineHandle else { throw AUPluginError.instantiationFailed }
+
+        let instance = try await vst3Host.instantiate(descriptor, outOfProcess: false)
+        guard let pluginHandle = instance.vst3Handle else {
+            throw AUPluginError.instantiationFailed
+        }
+
+        AudioEngine_SetChannelInsert(handle, Int32(channelIndex), Int32(slotIndex), UnsafeMutableRawPointer(pluginHandle))
+    }
+
+    /// Unload a VST3 plugin from a channel insert slot.
+    func unloadVST3Insert(channelIndex: Int, slotIndex: Int) {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_ClearChannelInsert(handle, Int32(channelIndex), Int32(slotIndex))
+    }
+
+    /// Toggle bypass for a VST3 insert slot.
+    func setVST3InsertBypassed(channelIndex: Int, slotIndex: Int, bypassed: Bool) {
+        guard let handle = cppEngineHandle else { return }
+        AudioEngine_SetChannelInsertBypassed(handle, Int32(channelIndex), Int32(slotIndex), bypassed)
     }
 
     /// Toggles bypass state for an insert slot (safe for use from button actions)

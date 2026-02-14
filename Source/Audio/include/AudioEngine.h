@@ -108,6 +108,12 @@ constexpr int kNumLegacyOutputBuses = 3; // 0=dry, 1=send A, 2=send B
 // Audio processing callback type
 typedef void (*AudioCallback)(float** outputBuffers, int numChannels, int numFrames, void* userData);
 
+// Insert processing callback — called on audio thread to process audio through an external plugin
+// Parameters: pluginHandle (opaque, e.g. VST3PluginInstance*), left/right stereo buffers, frame count
+typedef void (*InsertProcessCallback)(void* pluginHandle, float* left, float* right, int numFrames);
+
+constexpr int kMaxInsertsPerChannel = 2;
+
 /// Main audio engine class
 /// This is the C++ interface that will be called from Swift
 class AudioEngine {
@@ -376,6 +382,13 @@ public:
     float getChannelLevel(int channelIndex) const;  // 0=Plaits, 1=Rings, 2-5=tracks
     float getMasterLevel(int channel) const;        // 0=left, 1=right
     void setChannelSendLevel(int channelIndex, int sendIndex, float level);
+
+    // Per-channel insert processing (for VST3/AU plugin hosting in C++)
+    void setInsertProcessCallback(InsertProcessCallback callback);
+    void setChannelInsert(int channelIndex, int slotIndex, void* pluginHandle);
+    void clearChannelInsert(int channelIndex, int slotIndex);
+    void setChannelInsertBypassed(int channelIndex, int slotIndex, bool bypassed);
+    void* getChannelInsert(int channelIndex, int slotIndex) const;
 
     // Trigger control (legacy - uses voice 0)
     void triggerPlaits(bool state);
@@ -731,6 +744,15 @@ private:
     std::array<std::array<float, kMaxChannelDelaySamples + 1>, kNumMixerChannels> m_channelDelayBufferR;
     bool m_channelMute[kNumMixerChannels];
     bool m_channelSolo[kNumMixerChannels];
+
+    // Per-channel insert slots (for external plugin processing via callback)
+    struct ChannelInsertSlot {
+        void* pluginHandle = nullptr;
+        std::atomic<bool> bypassed{false};
+    };
+    ChannelInsertSlot m_channelInserts[kNumMixerChannels][kMaxInsertsPerChannel];
+    InsertProcessCallback m_insertProcessCallback = nullptr;
+
     float m_masterGain;          // Target master gain
     float m_masterGainSmoothed;  // Smoothed master gain
 

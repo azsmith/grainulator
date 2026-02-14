@@ -70,6 +70,30 @@ void AudioEngine_SetChannelSendLevel(AudioEngineHandle handle, int channelIndex,
     }
 }
 
+void AudioEngine_SetInsertProcessCallback(AudioEngineHandle handle, AudioEngine_InsertProcessCallback callback) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setInsertProcessCallback(callback);
+    }
+}
+
+void AudioEngine_SetChannelInsert(AudioEngineHandle handle, int channelIndex, int slotIndex, void* pluginHandle) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setChannelInsert(channelIndex, slotIndex, pluginHandle);
+    }
+}
+
+void AudioEngine_ClearChannelInsert(AudioEngineHandle handle, int channelIndex, int slotIndex) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->clearChannelInsert(channelIndex, slotIndex);
+    }
+}
+
+void AudioEngine_SetChannelInsertBypassed(AudioEngineHandle handle, int channelIndex, int slotIndex, bool bypassed) {
+    if (handle) {
+        static_cast<AudioEngine*>(handle)->setChannelInsertBypassed(channelIndex, slotIndex, bypassed);
+    }
+}
+
 float AudioEngine_GetCPULoad(AudioEngineHandle handle) {
     if (!handle) return 0.0f;
     return static_cast<AudioEngine*>(handle)->getCPULoad();

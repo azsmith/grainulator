@@ -822,6 +822,17 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
             m_channelDelayWritePos[channel] = writePos;
         };
 
+        // Process channel insert slots (called after synthesis, before gain/pan/send)
+        auto processChannelInserts = [&](int ch) {
+            if (!m_insertProcessCallback) return;
+            for (int slot = 0; slot < kMaxInsertsPerChannel; ++slot) {
+                auto& insert = m_channelInserts[ch][slot];
+                if (insert.pluginHandle && !insert.bypassed.load(std::memory_order_relaxed)) {
+                    m_insertProcessCallback(insert.pluginHandle, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
+                }
+            }
+        };
+
         // Clear main processing and send buffers for this chunk.
         std::memset(m_processingBuffer[0], 0, frameCount * sizeof(float));
         std::memset(m_processingBuffer[1], 0, frameCount * sizeof(float));
@@ -869,6 +880,9 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                 m_voiceBuffer[0][i] *= kPlaitsVoiceNorm;
                 m_voiceBuffer[1][i] *= kPlaitsVoiceNorm;
             }
+
+            // Process channel inserts (post-synthesis, pre-mixer)
+            processChannelInserts(ch);
 
             // Record from Plaits (channel 0) pre-mixer
             processRecordingForChannel(0, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
@@ -944,6 +958,9 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                 m_granularVoices[trackIndex]->Render(m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
                 totalActiveGrains += static_cast<int>(m_granularVoices[trackIndex]->GetNumActiveGrains());
             }
+
+            // Process channel inserts (post-synthesis, pre-mixer)
+            processChannelInserts(ch);
 
             // Record from track voice (channel ch) pre-mixer
             processRecordingForChannel(ch, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
@@ -1032,6 +1049,9 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                 }
             }
 
+            // Process channel inserts (post-synthesis, pre-mixer)
+            processChannelInserts(ch);
+
             // Record from DaisyDrum + all drum lanes mixed (channel 6) pre-mixer
             processRecordingForChannel(6, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
 
@@ -1108,6 +1128,9 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                 }
             }
 
+            // Process channel inserts (post-synthesis, pre-mixer)
+            processChannelInserts(ch);
+
             // Record from Sampler (channel 11) pre-mixer
             processRecordingForChannel(11, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
 
@@ -1183,6 +1206,9 @@ void AudioEngine::process(float** inputBuffers, float** outputBuffers, int numCh
                 }
                 m_ringsVoice->Render(exciterMono, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
             }
+
+            // Process channel inserts (post-synthesis, pre-mixer)
+            processChannelInserts(ch);
 
             // Record from Rings (channel 1) pre-mixer
             processRecordingForChannel(1, m_voiceBuffer[0], m_voiceBuffer[1], frameCount);
@@ -3151,6 +3177,36 @@ void AudioEngine::setChannelSendLevel(int channelIndex, int sendIndex, float lev
     } else if (sendIndex == 1) {
         m_channelSendB[channelIndex] = clamped;
     }
+}
+
+// ========== Per-Channel Insert Processing ==========
+
+void AudioEngine::setInsertProcessCallback(InsertProcessCallback callback) {
+    m_insertProcessCallback = callback;
+}
+
+void AudioEngine::setChannelInsert(int channelIndex, int slotIndex, void* pluginHandle) {
+    if (channelIndex < 0 || channelIndex >= kNumMixerChannels) return;
+    if (slotIndex < 0 || slotIndex >= kMaxInsertsPerChannel) return;
+    m_channelInserts[channelIndex][slotIndex].pluginHandle = pluginHandle;
+}
+
+void AudioEngine::clearChannelInsert(int channelIndex, int slotIndex) {
+    if (channelIndex < 0 || channelIndex >= kNumMixerChannels) return;
+    if (slotIndex < 0 || slotIndex >= kMaxInsertsPerChannel) return;
+    m_channelInserts[channelIndex][slotIndex].pluginHandle = nullptr;
+}
+
+void AudioEngine::setChannelInsertBypassed(int channelIndex, int slotIndex, bool bypassed) {
+    if (channelIndex < 0 || channelIndex >= kNumMixerChannels) return;
+    if (slotIndex < 0 || slotIndex >= kMaxInsertsPerChannel) return;
+    m_channelInserts[channelIndex][slotIndex].bypassed.store(bypassed, std::memory_order_relaxed);
+}
+
+void* AudioEngine::getChannelInsert(int channelIndex, int slotIndex) const {
+    if (channelIndex < 0 || channelIndex >= kNumMixerChannels) return nullptr;
+    if (slotIndex < 0 || slotIndex >= kMaxInsertsPerChannel) return nullptr;
+    return m_channelInserts[channelIndex][slotIndex].pluginHandle;
 }
 
 // ========== Effects Implementation ==========

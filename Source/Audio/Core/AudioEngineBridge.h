@@ -32,6 +32,13 @@ void AudioEngine_SetParameter(AudioEngineHandle handle, int parameterId, int voi
 float AudioEngine_GetParameter(AudioEngineHandle handle, int parameterId, int voiceIndex);
 void AudioEngine_SetChannelSendLevel(AudioEngineHandle handle, int channelIndex, int sendIndex, float level);
 
+// Per-channel insert processing (for VST3/AU plugin hosting in C++)
+typedef void (*AudioEngine_InsertProcessCallback)(void* pluginHandle, float* left, float* right, int numFrames);
+void AudioEngine_SetInsertProcessCallback(AudioEngineHandle handle, AudioEngine_InsertProcessCallback callback);
+void AudioEngine_SetChannelInsert(AudioEngineHandle handle, int channelIndex, int slotIndex, void* pluginHandle);
+void AudioEngine_ClearChannelInsert(AudioEngineHandle handle, int channelIndex, int slotIndex);
+void AudioEngine_SetChannelInsertBypassed(AudioEngineHandle handle, int channelIndex, int slotIndex, bool bypassed);
+
 // Performance metrics
 float AudioEngine_GetCPULoad(AudioEngineHandle handle);
 
