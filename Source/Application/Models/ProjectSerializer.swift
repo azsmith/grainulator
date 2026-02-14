@@ -119,6 +119,19 @@ struct ProjectSerializer {
             model: engine.getParameter(id: .masterFilterModel)
         )
 
+        let masterCompressor = MasterCompressorSnapshot(
+            threshold: engine.getParameter(id: .masterCompThreshold),
+            ratio: engine.getParameter(id: .masterCompRatio),
+            attack: engine.getParameter(id: .masterCompAttack),
+            release: engine.getParameter(id: .masterCompRelease),
+            knee: engine.getParameter(id: .masterCompKnee),
+            makeupGain: engine.getParameter(id: .masterCompMakeup),
+            mix: engine.getParameter(id: .masterCompMix),
+            enabled: engine.getParameter(id: .masterCompEnabled) > 0.5,
+            limiterEnabled: engine.getParameter(id: .masterCompLimiter) > 0.5,
+            autoMakeup: engine.getParameter(id: .masterCompAutoMakeup) > 0.5
+        )
+
         // Capture 2 loopers (voice indices 1, 2)
         var loopers: [LooperSnapshot] = []
         for i in 1...2 {
@@ -139,6 +152,7 @@ struct ProjectSerializer {
             delay: delay,
             reverb: reverb,
             masterFilter: masterFilter,
+            masterCompressor: masterCompressor,
             loopers: loopers
         )
     }
@@ -465,6 +479,21 @@ struct ProjectSerializer {
         // 6. Push all C++ engine parameters
         restoreEngineParameters(snapshot.engineParameters, engine: audioEngine)
 
+        // 6b. Sync compressor UI state from engine snapshot
+        if let mc = snapshot.engineParameters.masterCompressor {
+            let m = mixerState.master
+            m.compThreshold = mc.threshold
+            m.compRatio = mc.ratio
+            m.compAttack = mc.attack
+            m.compRelease = mc.release
+            m.compKnee = mc.knee
+            m.compMakeup = mc.makeupGain
+            m.compMix = mc.mix
+            m.compEnabled = mc.enabled
+            m.compLimiter = mc.limiterEnabled
+            m.compAutoMakeup = mc.autoMakeup
+        }
+
         // 7. Restore drum sequencer state (if present in project)
         if let drumSeq = drumSequencer {
             if let drumSnapshot = snapshot.drumSequencer {
@@ -727,6 +756,20 @@ struct ProjectSerializer {
         engine.setParameter(id: .masterFilterCutoff, value: mf.cutoff)
         engine.setParameter(id: .masterFilterResonance, value: mf.resonance)
         engine.setParameter(id: .masterFilterModel, value: mf.model)
+
+        // Master compressor (optional for backward compat with old projects)
+        if let mc = snapshot.masterCompressor {
+            engine.setParameter(id: .masterCompThreshold, value: mc.threshold)
+            engine.setParameter(id: .masterCompRatio, value: mc.ratio)
+            engine.setParameter(id: .masterCompAttack, value: mc.attack)
+            engine.setParameter(id: .masterCompRelease, value: mc.release)
+            engine.setParameter(id: .masterCompKnee, value: mc.knee)
+            engine.setParameter(id: .masterCompMakeup, value: mc.makeupGain)
+            engine.setParameter(id: .masterCompMix, value: mc.mix)
+            engine.setParameter(id: .masterCompEnabled, value: mc.enabled ? 1.0 : 0.0)
+            engine.setParameter(id: .masterCompLimiter, value: mc.limiterEnabled ? 1.0 : 0.0)
+            engine.setParameter(id: .masterCompAutoMakeup, value: mc.autoMakeup ? 1.0 : 0.0)
+        }
 
         // Loopers
         for looper in snapshot.loopers {

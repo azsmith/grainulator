@@ -83,7 +83,7 @@ private:
     float m_mix         = 1.0f;    // 100% wet
     bool  m_limiterEnabled = true;
     bool  m_autoMakeup     = false;
-    bool  m_enabled        = true;
+    bool  m_enabled        = false;
 
     // Ballistic coefficients
     float m_attackCoeff  = 0.0f;

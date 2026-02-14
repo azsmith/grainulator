@@ -41,6 +41,7 @@ struct EngineParametersSnapshot: Codable {
     var delay: DelaySnapshot
     var reverb: ReverbSnapshot
     var masterFilter: MasterFilterSnapshot
+    var masterCompressor: MasterCompressorSnapshot?  // Optional for backward compat
     var loopers: [LooperSnapshot]  // 2 loopers (indices 1-2)
 }
 
@@ -109,6 +110,19 @@ struct MasterFilterSnapshot: Codable {
     var cutoff: Float
     var resonance: Float
     var model: Float
+}
+
+struct MasterCompressorSnapshot: Codable {
+    var threshold: Float
+    var ratio: Float
+    var attack: Float
+    var release: Float
+    var knee: Float
+    var makeupGain: Float
+    var mix: Float
+    var enabled: Bool
+    var limiterEnabled: Bool
+    var autoMakeup: Bool
 }
 
 struct LooperSnapshot: Codable {

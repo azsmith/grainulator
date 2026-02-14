@@ -947,6 +947,23 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                 ],
             ],
             [
+                "module": "fx",
+                "description": "Master bus effects (compressor/limiter)",
+                "actions": ["set", "toggle"],
+                "paths": [
+                    "fx.compressor.enabled",
+                    "fx.compressor.threshold",
+                    "fx.compressor.ratio",
+                    "fx.compressor.attack",
+                    "fx.compressor.release",
+                    "fx.compressor.knee",
+                    "fx.compressor.makeup",
+                    "fx.compressor.mix",
+                    "fx.compressor.limiter",
+                    "fx.compressor.autoMakeup",
+                ],
+            ],
+            [
                 "module": "drums",
                 "description": "4-lane x 16-step drum trigger sequencer (Analog Kick, Synth Kick, Analog Snare, Hi-Hat)",
                 "actions": ["set", "toggle"],
@@ -1137,7 +1154,20 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             ],
             "drums": canonicalDrumSequencerStatePayload(),
             "scramble": canonicalScrambleStatePayload(),
-            "fx": [:],
+            "fx": [
+                "compressor": [
+                    "threshold": readGlobalParameter(id: .masterCompThreshold),
+                    "ratio": readGlobalParameter(id: .masterCompRatio),
+                    "attack": readGlobalParameter(id: .masterCompAttack),
+                    "release": readGlobalParameter(id: .masterCompRelease),
+                    "knee": readGlobalParameter(id: .masterCompKnee),
+                    "makeup": readGlobalParameter(id: .masterCompMakeup),
+                    "mix": readGlobalParameter(id: .masterCompMix),
+                    "enabled": readGlobalParameter(id: .masterCompEnabled) > 0.5,
+                    "limiter": readGlobalParameter(id: .masterCompLimiter) > 0.5,
+                    "autoMakeup": readGlobalParameter(id: .masterCompAutoMakeup) > 0.5,
+                ] as [String: Any],
+            ],
             "files": [:],
             "scenes": [],
         ]
@@ -2142,6 +2172,31 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return (true, nil)
         }
 
+        // Master compressor continuous params
+        let compContinuousTargets: Set<String> = [
+            "fx.compressor.threshold", "fx.compressor.ratio", "fx.compressor.attack",
+            "fx.compressor.release", "fx.compressor.knee", "fx.compressor.makeup",
+            "fx.compressor.mix",
+        ]
+        if compContinuousTargets.contains(target) {
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Compressor parameter must be within [0.0, 1.0]"))
+            }
+            return (true, nil)
+        }
+
+        // Master compressor boolean params
+        if target == "fx.compressor.enabled" || target == "fx.compressor.limiter" ||
+           target == "fx.compressor.autoMakeup" {
+            if action.type == "toggle" || boolValueFromAction(action) != nil {
+                return (true, nil)
+            }
+            guard let value = feedbackValueFromAction(action), value == 0.0 || value == 1.0 else {
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Compressor toggle requires boolean value or 'toggle' type"))
+            }
+            return (true, nil)
+        }
+
         // Scramble targets — validate then delegate to applyScrambleAction
         if target.hasPrefix("scramble.") {
             return validateScrambleAction(action, target: target)
@@ -2679,6 +2734,55 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
                 changedPaths: [target],
                 additionalEvents: [
                     (type: "synth.param_changed", payload: ["synth": "sampler", "param": paramName, "value": value]),
+                ]
+            )
+            return (true, nil)
+        }
+
+        // Master compressor continuous params apply
+        let compressorParamMap: [String: ParameterID] = [
+            "fx.compressor.threshold": .masterCompThreshold,
+            "fx.compressor.ratio": .masterCompRatio,
+            "fx.compressor.attack": .masterCompAttack,
+            "fx.compressor.release": .masterCompRelease,
+            "fx.compressor.knee": .masterCompKnee,
+            "fx.compressor.makeup": .masterCompMakeup,
+            "fx.compressor.mix": .masterCompMix,
+        ]
+        if let paramId = compressorParamMap[target] {
+            guard let value = feedbackValueFromAction(action), value >= 0.0, value <= 1.0 else {
+                let paramName = String(target.split(separator: ".").last ?? "")
+                return (true, ActionFailure(actionId: action.actionId, code: .actionOutOfRange, message: "Compressor \(paramName) must be within [0.0, 1.0]"))
+            }
+            writeSynthMode(parameter: paramId, normalizedValue: Float(value))
+            let paramName = String(target.split(separator: ".").last ?? "")
+            recordMutation(
+                changedPaths: [target],
+                additionalEvents: [
+                    (type: "fx.compressor_param_changed", payload: ["param": paramName, "value": value]),
+                ]
+            )
+            return (true, nil)
+        }
+
+        // Master compressor boolean params apply
+        let compressorBoolMap: [String: ParameterID] = [
+            "fx.compressor.enabled": .masterCompEnabled,
+            "fx.compressor.limiter": .masterCompLimiter,
+            "fx.compressor.autoMakeup": .masterCompAutoMakeup,
+        ]
+        if let paramId = compressorBoolMap[target] {
+            let current = readGlobalParameter(id: paramId) > 0.5
+            guard let desired = desiredBoolValue(for: action, current: current) else {
+                let paramName = String(target.split(separator: ".").last ?? "")
+                return (true, ActionFailure(actionId: action.actionId, code: .badRequest, message: "Compressor \(paramName) requires boolean value"))
+            }
+            writeSynthMode(parameter: paramId, normalizedValue: desired ? 1.0 : 0.0)
+            let paramName = String(target.split(separator: ".").last ?? "")
+            recordMutation(
+                changedPaths: [target],
+                additionalEvents: [
+                    (type: "fx.compressor_param_changed", payload: ["param": paramName, "value": desired]),
                 ]
             )
             return (true, nil)
@@ -5015,6 +5119,29 @@ final class ConversationalControlBridge: ObservableObject, @unchecked Sendable {
             return readGlobalParameter(id: .samplerTuning)
         case "synth.sampler.level":
             return readGlobalParameter(id: .samplerLevel)
+
+        // Master compressor paths
+        case "fx.compressor.threshold":
+            return readGlobalParameter(id: .masterCompThreshold)
+        case "fx.compressor.ratio":
+            return readGlobalParameter(id: .masterCompRatio)
+        case "fx.compressor.attack":
+            return readGlobalParameter(id: .masterCompAttack)
+        case "fx.compressor.release":
+            return readGlobalParameter(id: .masterCompRelease)
+        case "fx.compressor.knee":
+            return readGlobalParameter(id: .masterCompKnee)
+        case "fx.compressor.makeup":
+            return readGlobalParameter(id: .masterCompMakeup)
+        case "fx.compressor.mix":
+            return readGlobalParameter(id: .masterCompMix)
+        case "fx.compressor.enabled":
+            return readGlobalParameter(id: .masterCompEnabled) > 0.5
+        case "fx.compressor.limiter":
+            return readGlobalParameter(id: .masterCompLimiter) > 0.5
+        case "fx.compressor.autoMakeup":
+            return readGlobalParameter(id: .masterCompAutoMakeup) > 0.5
+
         case "drums.playing":
             return readDrumSequencerProperty { $0.isPlaying }
         case "drums.syncToTransport":

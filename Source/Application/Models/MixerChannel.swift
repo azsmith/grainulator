@@ -250,7 +250,7 @@ class MasterChannelState: ObservableObject {
     @Published var compKnee: Float = 0.5          // → 6 dB
     @Published var compMakeup: Float = 0.0        // → 0 dB
     @Published var compMix: Float = 1.0           // → 100%
-    @Published var compEnabled: Bool = true
+    @Published var compEnabled: Bool = false
     @Published var compLimiter: Bool = true
     @Published var compAutoMakeup: Bool = false
     @Published var compGainReduction: Float = 0.0 // Updated from metering timer
