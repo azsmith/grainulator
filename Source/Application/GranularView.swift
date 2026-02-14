@@ -184,6 +184,24 @@ struct GranularView: View {
                 .buttonStyle(.plain)
                 .help("Load audio file")
 
+                // Save buffer button
+                Button(action: {
+                    saveBufferToFile()
+                }) {
+                    Image(systemName: "square.and.arrow.down")
+                        .font(.system(size: 12))
+                        .foregroundColor(ColorPalette.textMuted)
+                        .frame(width: 32, height: 32)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(ColorPalette.backgroundTertiary)
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(audioEngine.getReelLength(voiceIndex) == 0)
+                .opacity(audioEngine.getReelLength(voiceIndex) == 0 ? 0.4 : 1.0)
+                .help("Save buffer as WAV")
+
                 // Record button
                 Button(action: {
                     isRecording.toggle()
@@ -567,6 +585,30 @@ struct GranularView: View {
 
         if panel.runModal() == .OK, let url = panel.url {
             loadAudioFile(url: url)
+        }
+    }
+
+    private func saveBufferToFile() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.wav]
+        panel.canCreateDirectories = true
+        panel.message = "Save buffer from granular voice \(voiceIndex + 1)"
+
+        // Default filename based on loaded file or voice index
+        if let loadedURL = audioEngine.loadedAudioFilePaths[voiceIndex] {
+            let baseName = loadedURL.deletingPathExtension().lastPathComponent
+            panel.nameFieldStringValue = "\(baseName)_export.wav"
+        } else {
+            panel.nameFieldStringValue = "granular_\(voiceIndex + 1)_buffer.wav"
+        }
+
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                try audioEngine.exportReelToWAV(reelIndex: voiceIndex, url: url)
+                print("[GranularView] Exported buffer to \(url.path)")
+            } catch {
+                print("[GranularView] Export failed: \(error)")
+            }
         }
     }
 

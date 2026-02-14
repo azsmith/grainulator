@@ -174,6 +174,16 @@ size_t AudioEngine_GetReelLength(AudioEngineHandle handle, int reelIndex) {
     return static_cast<AudioEngine*>(handle)->getReelLength(reelIndex);
 }
 
+float AudioEngine_GetReelSampleRate(AudioEngineHandle handle, int reelIndex) {
+    if (!handle) return 48000.0f;
+    return static_cast<AudioEngine*>(handle)->getReelSampleRate(reelIndex);
+}
+
+size_t AudioEngine_CopyReelData(AudioEngineHandle handle, int reelIndex, float* leftOut, float* rightOut, size_t maxSamples) {
+    if (!handle) return 0;
+    return static_cast<AudioEngine*>(handle)->copyReelData(reelIndex, leftOut, rightOut, maxSamples);
+}
+
 void AudioEngine_GetWaveformOverview(AudioEngineHandle handle, int reelIndex, float* output, size_t outputSize) {
     if (handle) {
         static_cast<AudioEngine*>(handle)->getWaveformOverview(reelIndex, output, outputSize);

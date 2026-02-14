@@ -60,6 +60,8 @@ uint64_t AudioEngine_GetCurrentSampleTime(AudioEngineHandle handle);
 bool AudioEngine_LoadAudioData(AudioEngineHandle handle, int reelIndex, const float* leftChannel, const float* rightChannel, size_t numSamples, float sampleRate);
 void AudioEngine_ClearReel(AudioEngineHandle handle, int reelIndex);
 size_t AudioEngine_GetReelLength(AudioEngineHandle handle, int reelIndex);
+float AudioEngine_GetReelSampleRate(AudioEngineHandle handle, int reelIndex);
+size_t AudioEngine_CopyReelData(AudioEngineHandle handle, int reelIndex, float* leftOut, float* rightOut, size_t maxSamples);
 void AudioEngine_GetWaveformOverview(AudioEngineHandle handle, int reelIndex, float* output, size_t outputSize);
 void AudioEngine_SetGranularPlaying(AudioEngineHandle handle, int voiceIndex, bool playing);
 int AudioEngine_GetActiveGrainCount(AudioEngineHandle handle);

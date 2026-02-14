@@ -2972,6 +2972,28 @@ size_t AudioEngine::getReelLength(int reelIndex) const {
     return m_reelBuffers[reelIndex]->GetLength();
 }
 
+float AudioEngine::getReelSampleRate(int reelIndex) const {
+    if (reelIndex < 0 || reelIndex >= 32) return 48000.0f;
+    if (!m_reelBuffers[reelIndex]) return 48000.0f;
+    return m_reelBuffers[reelIndex]->GetSampleRate();
+}
+
+size_t AudioEngine::copyReelData(int reelIndex, float* leftOut, float* rightOut, size_t maxSamples) const {
+    if (reelIndex < 0 || reelIndex >= 32) return 0;
+    if (!m_reelBuffers[reelIndex] || !leftOut || !rightOut) return 0;
+
+    size_t length = m_reelBuffers[reelIndex]->GetLength();
+    size_t toCopy = std::min(length, maxSamples);
+    if (toCopy == 0) return 0;
+
+    const float* srcL = m_reelBuffers[reelIndex]->GetBufferPointer(0);
+    const float* srcR = m_reelBuffers[reelIndex]->GetBufferPointer(1);
+    std::memcpy(leftOut, srcL, toCopy * sizeof(float));
+    std::memcpy(rightOut, srcR, toCopy * sizeof(float));
+
+    return toCopy;
+}
+
 void AudioEngine::getWaveformOverview(int reelIndex, float* output, size_t outputSize) const {
     if (reelIndex < 0 || reelIndex >= 32) return;
     if (!m_reelBuffers[reelIndex] || !output || outputSize == 0) return;

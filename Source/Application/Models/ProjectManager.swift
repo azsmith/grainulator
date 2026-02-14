@@ -51,9 +51,13 @@ class ProjectManager: ObservableObject {
         self.scrambleManager = scrambleManager
     }
 
-    // MARK: - File Type
+    // MARK: - File Types
 
-    static let projectFileType = UTType(exportedAs: "com.grainulator.project", conformingTo: .json)
+    /// Bundle format (.grainulator directory)
+    static let bundleType = UTType(exportedAs: "com.grainulator.project", conformingTo: .package)
+
+    /// Legacy format (.json file) for backward compatibility
+    static let legacyJSONType = UTType.json
 
     // MARK: - New Project
 
@@ -143,14 +147,10 @@ class ProjectManager: ObservableObject {
     func saveProjectAs() {
         let panel = NSSavePanel()
         panel.title = "Save Grainulator Project"
-        panel.nameFieldStringValue = currentProjectName
-        panel.allowedContentTypes = [UTType.json]
+        panel.nameFieldStringValue = "\(currentProjectName).grainulator"
+        panel.allowedContentTypes = [Self.bundleType]
         panel.allowsOtherFileTypes = false
         panel.canCreateDirectories = true
-
-        if let ext = panel.allowedContentTypes.first?.preferredFilenameExtension {
-            panel.nameFieldStringValue = "\(currentProjectName).\(ext)"
-        }
 
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
@@ -161,6 +161,89 @@ class ProjectManager: ObservableObject {
     }
 
     private func saveToURL(_ url: URL) {
+        // Route to bundle or legacy save based on file extension
+        if url.pathExtension == "grainulator" {
+            saveBundleToURL(url)
+        } else {
+            saveLegacyJSON(url)
+        }
+    }
+
+    /// Save as .grainulator bundle directory containing project.json + audio/
+    private func saveBundleToURL(_ bundleURL: URL) {
+        guard let audioEngine, let mixerState, let sequencer, let masterClock, let appState else {
+            lastError = "Cannot save: subsystems not connected"
+            return
+        }
+
+        let fm = FileManager.default
+        let projectName = bundleURL.deletingPathExtension().lastPathComponent
+        let audioDir = bundleURL.appendingPathComponent("audio")
+
+        do {
+            // Create bundle directory and audio subdirectory
+            try fm.createDirectory(at: audioDir, withIntermediateDirectories: true)
+
+            // Export audio files for reels 0-3
+            for reelIndex in 0..<4 {
+                let length = audioEngine.getReelLength(reelIndex)
+                guard length > 0 else { continue }
+
+                let wavURL = audioDir.appendingPathComponent("reel_\(reelIndex).wav")
+
+                // If the reel isn't dirty (not recorded into) and has a loaded file,
+                // copy the original file to save time and preserve quality
+                if !audioEngine.reelBufferDirty.contains(reelIndex),
+                   let originalURL = audioEngine.loadedAudioFilePaths[reelIndex],
+                   fm.fileExists(atPath: originalURL.path) {
+                    // Remove existing file if overwriting
+                    if fm.fileExists(atPath: wavURL.path) {
+                        try fm.removeItem(at: wavURL)
+                    }
+                    try fm.copyItem(at: originalURL, to: wavURL)
+                } else {
+                    // Dirty buffer or no original file — export from C++ engine
+                    try audioEngine.exportReelToWAV(reelIndex: reelIndex, url: wavURL)
+                }
+            }
+
+            // Capture and write snapshot
+            var snapshot = ProjectSerializer.captureSnapshot(
+                name: projectName,
+                audioEngine: audioEngine,
+                mixerState: mixerState,
+                sequencer: sequencer,
+                masterClock: masterClock,
+                appState: appState,
+                drumSequencer: drumSequencer,
+                chordSequencer: chordSequencer,
+                scrambleManager: scrambleManager
+            )
+
+            if currentProjectURL == bundleURL {
+                snapshot.modifiedAt = Date()
+            }
+
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(snapshot)
+            let jsonURL = bundleURL.appendingPathComponent("project.json")
+            try data.write(to: jsonURL, options: .atomic)
+
+            currentProjectURL = bundleURL
+            currentProjectName = projectName
+            hasUnsavedChanges = false
+            lastError = nil
+            print("[ProjectManager] Saved bundle to \(bundleURL.path)")
+        } catch {
+            lastError = "Save failed: \(error.localizedDescription)"
+            print("[ProjectManager] Bundle save error: \(error)")
+        }
+    }
+
+    /// Legacy save as single .json file (for backward compatibility)
+    private func saveLegacyJSON(_ url: URL) {
         guard let audioEngine, let mixerState, let sequencer, let masterClock, let appState else {
             lastError = "Cannot save: subsystems not connected"
             return
@@ -208,9 +291,13 @@ class ProjectManager: ObservableObject {
     func openProject() {
         let panel = NSOpenPanel()
         panel.title = "Open Grainulator Project"
-        panel.allowedContentTypes = [UTType.json]
+        // Accept both bundle directories and legacy JSON files
+        panel.allowedContentTypes = [Self.bundleType, UTType.json]
         panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
+        // Must allow directories to select .grainulator bundles
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.treatsFilePackagesAsDirectories = false
 
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
@@ -231,7 +318,29 @@ class ProjectManager: ObservableObject {
         lastError = nil
 
         do {
-            let data = try Data(contentsOf: url)
+            let fm = FileManager.default
+            var isDir: ObjCBool = false
+            fm.fileExists(atPath: url.path, isDirectory: &isDir)
+
+            let jsonURL: URL
+            let bundleURL: URL?
+
+            if isDir.boolValue || url.pathExtension == "grainulator" {
+                // Bundle format: read project.json from inside the bundle
+                bundleURL = url
+                jsonURL = url.appendingPathComponent("project.json")
+                guard fm.fileExists(atPath: jsonURL.path) else {
+                    lastError = "Invalid bundle: project.json not found"
+                    isLoading = false
+                    return
+                }
+            } else {
+                // Legacy JSON format
+                bundleURL = nil
+                jsonURL = url
+            }
+
+            let data = try Data(contentsOf: jsonURL)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             let snapshot = try decoder.decode(ProjectSnapshot.self, from: data)
@@ -253,7 +362,8 @@ class ProjectManager: ObservableObject {
                 pluginManager: pluginManager,
                 drumSequencer: drumSequencer,
                 chordSequencer: chordSequencer,
-                scrambleManager: scrambleManager
+                scrambleManager: scrambleManager,
+                bundleURL: bundleURL
             )
 
             currentProjectURL = url

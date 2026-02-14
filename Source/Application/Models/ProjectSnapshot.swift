@@ -29,7 +29,7 @@ struct ProjectSnapshot: Codable {
     var chordSequencer: ChordSequencerSnapshot? // Added in version 4
     var scramble: ScrambleManager.SavedState?   // Added in version 5
 
-    static let currentVersion = 5
+    static let currentVersion = 6
 }
 
 // MARK: - Engine Parameters Snapshot
@@ -257,7 +257,25 @@ struct AudioFilesSnapshot: Codable {
 
 struct AudioReelReference: Codable {
     var reelIndex: Int
-    var filePath: String  // Relative or absolute path
+    var filePath: String              // Relative path in bundle ("audio/reel_0.wav") or absolute legacy path
+    var originalAbsolutePath: String? // Legacy fallback for old projects
+    var isEmbedded: Bool              // true = file lives inside the .grainulator bundle
+
+    init(reelIndex: Int, filePath: String, originalAbsolutePath: String? = nil, isEmbedded: Bool = false) {
+        self.reelIndex = reelIndex
+        self.filePath = filePath
+        self.originalAbsolutePath = originalAbsolutePath
+        self.isEmbedded = isEmbedded
+    }
+
+    // Backward-compatible decoding: old projects lack isEmbedded/originalAbsolutePath
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        reelIndex = try container.decode(Int.self, forKey: .reelIndex)
+        filePath = try container.decode(String.self, forKey: .filePath)
+        originalAbsolutePath = try container.decodeIfPresent(String.self, forKey: .originalAbsolutePath)
+        isEmbedded = try container.decodeIfPresent(Bool.self, forKey: .isEmbedded) ?? false
+    }
 }
 
 // MARK: - Drum Sequencer Snapshot

@@ -90,6 +90,12 @@ func AudioEngine_ClearReel(_ handle: OpaquePointer, _ reelIndex: Int32)
 @_silgen_name("AudioEngine_GetReelLength")
 func AudioEngine_GetReelLength(_ handle: OpaquePointer, _ reelIndex: Int32) -> Int
 
+@_silgen_name("AudioEngine_GetReelSampleRate")
+func AudioEngine_GetReelSampleRate(_ handle: OpaquePointer, _ reelIndex: Int32) -> Float
+
+@_silgen_name("AudioEngine_CopyReelData")
+func AudioEngine_CopyReelData(_ handle: OpaquePointer, _ reelIndex: Int32, _ leftOut: UnsafeMutablePointer<Float>?, _ rightOut: UnsafeMutablePointer<Float>?, _ maxSamples: Int) -> Int
+
 @_silgen_name("AudioEngine_GetWaveformOverview")
 func AudioEngine_GetWaveformOverview(_ handle: OpaquePointer, _ reelIndex: Int32, _ output: UnsafeMutablePointer<Float>?, _ outputSize: Int)
 
@@ -351,6 +357,9 @@ class AudioEngineWrapper: ObservableObject {
 
     // Loaded audio file paths for project save/load (indexed by reel)
     @Published var loadedAudioFilePaths: [Int: URL] = [:]
+
+    // Tracks which reel buffers have been modified by recording (not just loaded from file)
+    @Published var reelBufferDirty: Set<Int> = []
 
     // Playhead positions for granular voices (0-1, indexed by voice)
     @Published var granularPositions: [Int: Float] = [:]
@@ -1979,6 +1988,7 @@ class AudioEngineWrapper: ObservableObject {
 
                         // Track loaded file path for project save/load
                         self.loadedAudioFilePaths[reelIndex] = url
+                        self.reelBufferDirty.remove(reelIndex)
 
                         // Generate waveform overview for display
                         self.updateWaveformOverview(reelIndex: reelIndex)
@@ -1998,12 +2008,94 @@ class AudioEngineWrapper: ObservableObject {
         AudioEngine_ClearReel(handle, Int32(reelIndex))
         waveformOverviews[reelIndex] = nil
         loadedAudioFilePaths[reelIndex] = nil
+        reelBufferDirty.remove(reelIndex)
     }
 
     /// Gets the length of a reel in samples
     func getReelLength(_ reelIndex: Int) -> Int {
         guard let handle = cppEngineHandle else { return 0 }
         return AudioEngine_GetReelLength(handle, Int32(reelIndex))
+    }
+
+    /// Gets the sample rate of a reel buffer
+    func getReelSampleRate(_ reelIndex: Int) -> Float {
+        guard let handle = cppEngineHandle else { return 48000 }
+        return AudioEngine_GetReelSampleRate(handle, Int32(reelIndex))
+    }
+
+    /// Copy raw buffer data from a reel for WAV export.
+    /// Returns (leftChannel, rightChannel, sampleRate) or nil if reel is empty.
+    func copyReelData(reelIndex: Int) -> (left: [Float], right: [Float], sampleRate: Float)? {
+        guard let handle = cppEngineHandle else { return nil }
+        let length = getReelLength(reelIndex)
+        guard length > 0 else { return nil }
+
+        var leftData = [Float](repeating: 0, count: length)
+        var rightData = [Float](repeating: 0, count: length)
+
+        let copied = AudioEngine_CopyReelData(handle, Int32(reelIndex), &leftData, &rightData, length)
+        guard copied > 0 else { return nil }
+
+        if copied < length {
+            leftData = Array(leftData.prefix(copied))
+            rightData = Array(rightData.prefix(copied))
+        }
+
+        let sampleRate = AudioEngine_GetReelSampleRate(handle, Int32(reelIndex))
+        return (leftData, rightData, sampleRate)
+    }
+
+    /// Export a reel buffer to a WAV file at the given URL (24-bit stereo PCM).
+    func exportReelToWAV(reelIndex: Int, url: URL) throws {
+        guard let data = copyReelData(reelIndex: reelIndex) else {
+            throw NSError(domain: "Grainulator", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "Reel \(reelIndex) is empty"
+            ])
+        }
+
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: Double(data.sampleRate),
+            AVNumberOfChannelsKey: 2,
+            AVLinearPCMBitDepthKey: 24,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false
+        ]
+
+        let file = try AVAudioFile(forWriting: url, settings: settings)
+
+        guard let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: Double(data.sampleRate),
+            channels: 2,
+            interleaved: false
+        ) else {
+            throw NSError(domain: "Grainulator", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "Failed to create audio format"
+            ])
+        }
+
+        let frameCount = AVAudioFrameCount(data.left.count)
+        guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+            throw NSError(domain: "Grainulator", code: 3, userInfo: [
+                NSLocalizedDescriptionKey: "Failed to create PCM buffer"
+            ])
+        }
+
+        pcmBuffer.frameLength = frameCount
+        data.left.withUnsafeBufferPointer { srcL in
+            data.right.withUnsafeBufferPointer { srcR in
+                if let dstL = pcmBuffer.floatChannelData?[0] {
+                    memcpy(dstL, srcL.baseAddress!, Int(frameCount) * MemoryLayout<Float>.size)
+                }
+                if let dstR = pcmBuffer.floatChannelData?[1] {
+                    memcpy(dstR, srcR.baseAddress!, Int(frameCount) * MemoryLayout<Float>.size)
+                }
+            }
+        }
+
+        try file.write(from: pcmBuffer)
     }
 
     /// Updates waveform overview for display.
@@ -2106,6 +2198,9 @@ class AudioEngineWrapper: ObservableObject {
         if !anyExternalRecording && inputTapInstalled {
             removeInputTap()
         }
+
+        // Mark buffer as dirty (modified by recording, not loaded from file)
+        reelBufferDirty.insert(reelIndex)
 
         // Refresh waveform
         updateWaveformOverview(reelIndex: reelIndex)

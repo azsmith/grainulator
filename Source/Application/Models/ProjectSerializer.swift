@@ -308,9 +308,23 @@ struct ProjectSerializer {
     // MARK: - Audio Files
 
     private static func captureAudioFiles(_ engine: AudioEngineWrapper) -> AudioFilesSnapshot {
-        let reels = engine.loadedAudioFilePaths.map { (index, url) in
-            AudioReelReference(reelIndex: index, filePath: url.path)
-        }.sorted { $0.reelIndex < $1.reelIndex }
+        var reels: [AudioReelReference] = []
+
+        // Iterate reels 0-3 (Granular 1, Looper 1, Looper 2, Granular 2)
+        for reelIndex in 0..<4 {
+            let length = engine.getReelLength(reelIndex)
+            guard length > 0 else { continue }
+
+            let relativePath = "audio/reel_\(reelIndex).wav"
+            let originalPath = engine.loadedAudioFilePaths[reelIndex]?.path
+
+            reels.append(AudioReelReference(
+                reelIndex: reelIndex,
+                filePath: relativePath,
+                originalAbsolutePath: originalPath,
+                isEmbedded: true
+            ))
+        }
 
         return AudioFilesSnapshot(reels: reels)
     }
@@ -422,7 +436,8 @@ struct ProjectSerializer {
         pluginManager: AUPluginManager,
         drumSequencer: DrumSequencer? = nil,
         chordSequencer: ChordSequencer? = nil,
-        scrambleManager: ScrambleManager? = nil
+        scrambleManager: ScrambleManager? = nil,
+        bundleURL: URL? = nil
     ) async {
         // 1. Stop playback
         if sequencer.isPlaying {
@@ -503,7 +518,7 @@ struct ProjectSerializer {
         await restoreAUPlugins(snapshot.auPlugins, engine: audioEngine, pluginManager: pluginManager)
 
         // 12. Reload audio files
-        restoreAudioFiles(snapshot.audioFiles, engine: audioEngine)
+        restoreAudioFiles(snapshot.audioFiles, engine: audioEngine, bundleURL: bundleURL)
     }
 
     // MARK: - Restore Helpers
@@ -754,13 +769,37 @@ struct ProjectSerializer {
         }
     }
 
-    private static func restoreAudioFiles(_ snapshot: AudioFilesSnapshot, engine: AudioEngineWrapper) {
+    private static func restoreAudioFiles(_ snapshot: AudioFilesSnapshot, engine: AudioEngineWrapper, bundleURL: URL? = nil) {
+        let fm = FileManager.default
+
         for reel in snapshot.reels {
-            let url = URL(fileURLWithPath: reel.filePath)
-            if FileManager.default.fileExists(atPath: reel.filePath) {
+            var resolvedURL: URL?
+
+            if reel.isEmbedded, let bundle = bundleURL {
+                // Bundle-relative path (e.g. "audio/reel_0.wav")
+                let bundlePath = bundle.appendingPathComponent(reel.filePath)
+                if fm.fileExists(atPath: bundlePath.path) {
+                    resolvedURL = bundlePath
+                }
+            }
+
+            // Fallback 1: original absolute path (for embedded reels whose bundle file is missing)
+            if resolvedURL == nil, let absPath = reel.originalAbsolutePath, fm.fileExists(atPath: absPath) {
+                resolvedURL = URL(fileURLWithPath: absPath)
+            }
+
+            // Fallback 2: filePath as absolute (legacy v1-5 projects)
+            if resolvedURL == nil, !reel.isEmbedded {
+                let legacyURL = URL(fileURLWithPath: reel.filePath)
+                if fm.fileExists(atPath: legacyURL.path) {
+                    resolvedURL = legacyURL
+                }
+            }
+
+            if let url = resolvedURL {
                 engine.loadAudioFile(url: url, reelIndex: reel.reelIndex)
             } else {
-                print("[ProjectSerializer] Audio file not found: \(reel.filePath)")
+                print("[ProjectSerializer] Audio file not found for reel \(reel.reelIndex): \(reel.filePath)")
             }
         }
     }

@@ -407,6 +407,8 @@ public:
     bool loadAudioData(int reelIndex, const float* leftChannel, const float* rightChannel, size_t numSamples, float sampleRate);
     void clearReel(int reelIndex);
     size_t getReelLength(int reelIndex) const;
+    float getReelSampleRate(int reelIndex) const;
+    size_t copyReelData(int reelIndex, float* leftOut, float* rightOut, size_t maxSamples) const;
     void getWaveformOverview(int reelIndex, float* output, size_t outputSize) const;
 
     // Wavetable loading
