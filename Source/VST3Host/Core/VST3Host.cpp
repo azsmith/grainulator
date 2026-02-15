@@ -250,10 +250,10 @@ void VST3Host::scanBundle(const std::string& bundlePath) {
         }
     }
 
-    // Don't unload the bundle yet — we may need it for instantiation
-    // Store the bundle reference if we want to instantiate later
-    // For now, unload (we'll reload on instantiation)
-    CFBundleUnloadExecutable(bundle);
+    // Keep the bundle loaded after scanning — unloading with
+    // CFBundleUnloadExecutable triggers plugin finalizers that race
+    // with the audio thread if any VST3 instances are already active.
+    // CFBundle caches loaded bundles, so re-loading on instantiate is free.
     CFRelease(bundle);
 #endif
 }
